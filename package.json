@@ -1,0 +1,25 @@
+{
+  "name": "hl7-bench",
+  "version": "0.1.0",
+  "description": "A portable HL7 v2 transformation bench. No installer, no admin rights, no service. One bun executable and four files.",
+  "license": "MIT",
+  "author": "Shawn Iachetta",
+  "type": "module",
+  "module": "bench.ts",
+  "keywords": [
+    "hl7",
+    "hl7v2",
+    "healthcare",
+    "interoperability",
+    "interface-engine",
+    "integration",
+    "transformation",
+    "mirth",
+    "notepad-plus-plus"
+  ],
+  "scripts": {
+    "bench": "bun bench.ts",
+    "gui": "bun gui.ts",
+    "test": "bun test"
+  }
+}

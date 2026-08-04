@@ -1,0 +1,20 @@
+# Bun / node
+node_modules/
+bun.lockb
+*.tsbuildinfo
+
+# Local editor / assistant settings
+.claude/
+.vscode/
+.idea/
+
+# Scratch
+*.bak
+req-*.json
+
+# Real messages. sample.hl7 is synthetic and IS tracked; anything else you drop
+# in here almost certainly is not. Keeping PHI out of git is not recoverable
+# after the fact.
+*.hl7
+!sample.hl7
+messages/

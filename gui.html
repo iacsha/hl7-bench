@@ -1,0 +1,267 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>hl7-bench</title>
+<style>
+:root {
+  --bg: #ffffff; --panel: #f6f7f9; --border: #d7dbe0; --text: #1b1f24;
+  --muted: #6b737c; --accent: #2f6feb; --ok: #1a7f37; --bad: #b3261e;
+  --chg-bg: #fff3c4; --chg-text: #6b4e00; --seg: #7b3fbf; --sep: #9aa2ab;
+  --mono: ui-monospace, "Cascadia Mono", Consolas, "Courier New", monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #0f1115; --panel: #161a20; --border: #2a3039; --text: #e4e7eb;
+    --muted: #8b939d; --accent: #4d8dfd; --ok: #4ac26b; --bad: #ff6b60;
+    --chg-bg: #4a3a00; --chg-text: #ffdf7a; --seg: #c08bff; --sep: #6b737c;
+  }
+}
+* { box-sizing: border-box; }
+html, body { height: 100%; margin: 0; }
+body {
+  background: var(--bg); color: var(--text); font: 14px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif;
+  display: flex; flex-direction: column;
+}
+header {
+  display: flex; align-items: center; gap: 12px; padding: 10px 14px;
+  border-bottom: 1px solid var(--border); background: var(--panel); flex: 0 0 auto; flex-wrap: wrap;
+}
+h1 { font-size: 14px; margin: 0; font-weight: 600; letter-spacing: .01em; }
+h1 span { color: var(--muted); font-weight: 400; }
+button {
+  font: inherit; font-weight: 600; padding: 6px 14px; border-radius: 6px;
+  border: 1px solid var(--border); background: var(--bg); color: var(--text); cursor: pointer;
+}
+button:hover { border-color: var(--accent); }
+button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+button.primary:disabled { opacity: .55; cursor: default; }
+kbd {
+  font: 11px var(--mono); border: 1px solid var(--border); border-bottom-width: 2px;
+  border-radius: 4px; padding: 1px 5px; color: var(--muted);
+}
+#status { margin-left: auto; font: 12px var(--mono); color: var(--muted); }
+#status.ok { color: var(--ok); }
+#status.bad { color: var(--bad); }
+
+main { flex: 1 1 auto; display: grid; grid-template-columns: 1fr 1fr; gap: 1px; background: var(--border); min-height: 0; }
+.col { display: grid; grid-template-rows: 1fr 1fr; gap: 1px; background: var(--border); min-height: 0; min-width: 0; }
+.pane { display: flex; flex-direction: column; background: var(--bg); min-height: 0; min-width: 0; }
+.pane > h2 {
+  font-size: 11px; text-transform: uppercase; letter-spacing: .08em; color: var(--muted);
+  margin: 0; padding: 7px 12px; border-bottom: 1px solid var(--border); background: var(--panel);
+  display: flex; align-items: center; gap: 8px; flex: 0 0 auto;
+}
+.pane > h2 .hint { text-transform: none; letter-spacing: 0; margin-left: auto; font-size: 11px; }
+textarea, .out {
+  flex: 1 1 auto; margin: 0; border: 0; padding: 10px 12px; resize: none; outline: none;
+  font: 12.5px/1.65 var(--mono); background: var(--bg); color: var(--text);
+  white-space: pre; overflow: auto; tab-size: 2;
+}
+.out { user-select: text; }
+.out .segid { color: var(--seg); font-weight: 600; }
+.out .sep { color: var(--sep); }
+.out .chg { background: var(--chg-bg); color: var(--chg-text); border-radius: 2px; }
+.out .empty { color: var(--muted); }
+.diag { font: 12px/1.6 var(--mono); padding: 10px 12px; white-space: pre-wrap; overflow: auto; flex: 1 1 auto; margin: 0; }
+.diag.bad { color: var(--bad); }
+.diag.quiet { color: var(--muted); }
+@media (max-width: 900px) { main { grid-template-columns: 1fr; } }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>hl7-bench <span>&mdash; portable transform bench</span></h1>
+  <button id="run" class="primary">Run</button>
+  <kbd>Ctrl</kbd><kbd>Enter</kbd>
+  <button id="reload">Reload from disk</button>
+  <button id="savemsg">Save message</button>
+  <div id="status">ready</div>
+</header>
+
+<main>
+  <div class="col">
+    <section class="pane">
+      <h2>Message <span class="hint">sample.hl7</span></h2>
+      <textarea id="message" spellcheck="false"></textarea>
+    </section>
+    <section class="pane">
+      <h2>Transform <span class="hint">transform.ts &mdash; saved on every run</span></h2>
+      <textarea id="code" spellcheck="false"></textarea>
+    </section>
+  </div>
+  <div class="col">
+    <section class="pane">
+      <h2>Output <span class="hint">changed fields highlighted</span></h2>
+      <div class="out" id="output"></div>
+    </section>
+    <section class="pane">
+      <h2>Diagnostics <span class="hint">stderr</span></h2>
+      <pre class="diag quiet" id="diag">Run to see output.</pre>
+    </section>
+  </div>
+</main>
+
+<script type="module">
+import { Message } from "./hl7.js";
+
+const $ = (id) => document.getElementById(id);
+const els = {
+  message: $("message"), code: $("code"), output: $("output"),
+  diag: $("diag"), status: $("status"), run: $("run"),
+};
+
+function setStatus(text, kind) {
+  els.status.textContent = text;
+  els.status.className = kind ?? "";
+}
+
+// Field-level diff. Delimiters come from the same parser bench.ts uses, then
+// segments are compared by (id, occurrence) and fields by raw split index --
+// which sidesteps the MSH off-by-one entirely, since both sides of the
+// comparison are the same segment and shift identically.
+function indexSegments(raw, delims) {
+  const map = new Map();
+  const seen = new Map();
+  const lines = raw.split(/\r\n|\r|\n/).filter((l) => l.trim() !== "");
+  for (const line of lines) {
+    const parts = line.split(delims.field);
+    const id = parts[0];
+    const occ = (seen.get(id) ?? 0) + 1;
+    seen.set(id, occ);
+    map.set(id + "#" + occ, parts);
+  }
+  return map;
+}
+
+function renderDiff(before, after) {
+  let delims;
+  try {
+    delims = new Message(after).delims;
+  } catch {
+    delims = { field: "|", comp: "^", rep: "~", esc: "\\", sub: "&" };
+  }
+
+  let beforeMap = new Map();
+  try { beforeMap = indexSegments(before, delims); } catch { /* no baseline, show plain */ }
+
+  const seen = new Map();
+  const frag = document.createDocumentFragment();
+  let changed = 0;
+
+  for (const line of after.split(/\r\n|\r|\n/)) {
+    if (line.trim() === "") continue;
+    const parts = line.split(delims.field);
+    const id = parts[0];
+    const occ = (seen.get(id) ?? 0) + 1;
+    seen.set(id, occ);
+    const old = beforeMap.get(id + "#" + occ);
+
+    const row = document.createElement("div");
+    parts.forEach((value, i) => {
+      if (i > 0) {
+        const sep = document.createElement("span");
+        sep.className = "sep";
+        sep.textContent = delims.field;
+        row.appendChild(sep);
+      }
+      const span = document.createElement("span");
+      if (i === 0) {
+        span.className = "segid";
+      } else if (old && (old[i] ?? "") !== value) {
+        span.className = "chg";
+        changed++;
+      }
+      span.textContent = value;
+      row.appendChild(span);
+    });
+    frag.appendChild(row);
+  }
+
+  els.output.replaceChildren(frag);
+  return changed;
+}
+
+async function load() {
+  const r = await fetch("/state");
+  const s = await r.json();
+  els.message.value = s.message;
+  els.code.value = s.code;
+  els.output.replaceChildren();
+  els.diag.textContent = "Run to see output.";
+  els.diag.className = "diag quiet";
+  setStatus("loaded from disk");
+}
+
+async function run() {
+  els.run.disabled = true;
+  setStatus("running...");
+  try {
+    const r = await fetch("/run", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ message: els.message.value, code: els.code.value }),
+    });
+    const res = await r.json();
+
+    if (res.error) {
+      els.output.replaceChildren();
+      els.diag.textContent = res.error;
+      els.diag.className = "diag bad";
+      setStatus("failed", "bad");
+      return;
+    }
+
+    if (res.exitCode !== 0) {
+      // The failure a learner hits constantly. stderr carries the line number
+      // in transform.ts, which is the single most useful thing on screen.
+      els.output.replaceChildren();
+      els.diag.textContent = res.stderr.trim() || "(the transform failed but wrote nothing to stderr)";
+      els.diag.className = "diag bad";
+      setStatus(`exit ${res.exitCode}`, "bad");
+      return;
+    }
+
+    const changed = renderDiff(els.message.value, res.stdout);
+    els.diag.textContent = res.stderr.trim() || "(no diagnostics)";
+    els.diag.className = "diag quiet";
+    setStatus(`ok — ${changed} field${changed === 1 ? "" : "s"} changed — ${res.ms} ms`, "ok");
+  } catch (e) {
+    els.diag.textContent = String(e);
+    els.diag.className = "diag bad";
+    setStatus("server unreachable", "bad");
+  } finally {
+    els.run.disabled = false;
+  }
+}
+
+els.run.addEventListener("click", run);
+$("reload").addEventListener("click", load);
+$("savemsg").addEventListener("click", async () => {
+  await fetch("/save-message", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ message: els.message.value }),
+  });
+  setStatus("message saved to sample.hl7", "ok");
+});
+
+document.addEventListener("keydown", (e) => {
+  if ((e.ctrlKey || e.metaKey) && e.key === "Enter") { e.preventDefault(); run(); }
+});
+
+// Tab should indent in the code pane, not escape it.
+els.code.addEventListener("keydown", (e) => {
+  if (e.key !== "Tab") return;
+  e.preventDefault();
+  const { selectionStart: a, selectionEnd: b, value } = els.code;
+  els.code.value = value.slice(0, a) + "  " + value.slice(b);
+  els.code.selectionStart = els.code.selectionEnd = a + 2;
+});
+
+await load();
+</script>
+</body>
+</html>

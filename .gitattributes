@@ -1,0 +1,8 @@
+# HL7 line endings are protocol, not formatting. Segments are CR-terminated on
+# the wire; checkout/commit conversion would silently rewrite test fixtures and
+# make a message that round-trips locally fail against a real receiver.
+*.hl7 -text
+
+# Everything else is ordinary source.
+* text=auto eol=lf
+*.md text eol=lf
