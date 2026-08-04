@@ -54,16 +54,21 @@ writes a file and executes it — it has no business listening anywhere else.
 
 ### Notepad++ (with [PipeHat](https://github.com/iacsha/PipeHat-npp))
 
-PipeHat's External Transform Provider speaks the contract directly:
+This repo ships `hl7-bench.provider`, so installing is a copy:
 
 ```
-js.command = C:\Users\you\tools\bun.exe C:\Users\you\hl7-bench\bench.ts
-js.workdir = C:\Users\you\hl7-bench
-js.desc    = JavaScript transformer
+<Notepad++>\plugins\Config\PipeHat\providers\hl7-bench\
 ```
+
+Drop `bun.exe` in the same folder and restart Notepad++. Nothing to edit — the
+provider file uses `${DIR}` for its own location, so it contains no username and
+works wherever you unzip it. Uninstall by deleting the folder.
 
 `Ctrl+Alt+Shift+X` picks the provider, `Ctrl+Alt+Shift+A` re-runs it. The result
 lands in the other view and PipeHat diffs it field by field.
+
+If you would rather declare it by hand, `PipeHat.providers` still works and
+takes precedence over any drop-in that reuses the same name.
 
 ### Or neither
 

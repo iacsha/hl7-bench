@@ -1,0 +1,21 @@
+# hl7-bench as a PipeHat drop-in provider.
+#
+# Install: copy this whole folder into
+#     <Notepad++>\plugins\Config\PipeHat\providers\
+# so you end up with ...\providers\hl7-bench\hl7-bench.provider
+# Then restart Notepad++. Uninstall: delete the folder.
+#
+# ${DIR} is this file's own folder, so nothing here contains a username and the
+# package works wherever it is unzipped.
+
+# If bun.exe sits beside these files, this line needs no editing at all.
+bench.command = ${DIR}\bun.exe ${DIR}\bench.ts
+bench.workdir = .
+bench.timeout = 15000
+bench.desc    = JavaScript transformer (hl7-bench)
+
+# If instead bun.exe is on PATH or somewhere central, comment the line above and
+# use one of these:
+#
+# bench.command = bun.exe ${DIR}\bench.ts
+# bench.command = C:\Users\you\tools\bun.exe ${DIR}\bench.ts
