@@ -57,7 +57,7 @@ writes a file and executes it — it has no business listening anywhere else.
 This repo ships `hl7-bench.provider`, so installing is a copy:
 
 ```
-<Notepad++>\plugins\Config\PipeHat\providers\hl7-bench\
+<Notepad++>\plugins\config\providers\hl7-bench\
 ```
 
 Drop `bun.exe` in the same folder and restart Notepad++. Nothing to edit — the

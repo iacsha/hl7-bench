@@ -1,8 +1,14 @@
 # hl7-bench as a PipeHat drop-in provider.
 #
-# Install: copy this whole folder into
-#     <Notepad++>\plugins\Config\PipeHat\providers\
-# so you end up with ...\providers\hl7-bench\hl7-bench.provider
+# Install: copy this whole folder into the plugin config dir's providers folder,
+# which is NOT under a PipeHat\ subfolder -- PipeHat writes straight into
+# Notepad++'s plugin config directory:
+#     %APPDATA%\Notepad++\plugins\config\providers\
+# (portable install: <Notepad++>\plugins\config\providers\)
+# so you end up with ...\config\providers\hl7-bench\hl7-bench.provider
+#
+# Not sure? Plugins > PipeHat > Open Event Log opens PipeHat.log from that exact
+# directory -- the providers folder sits beside it.
 # Then restart Notepad++. Uninstall: delete the folder.
 #
 # ${DIR} is this file's own folder, so nothing here contains a username and the
