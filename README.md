@@ -145,15 +145,100 @@ declares `!` as its field separator parses correctly.
 
 ---
 
+## Mapping tables: `toolbox.ts`
+
+`transform.ts` tells you what the output is. It does not tell you *why* a field
+came out empty, which source path fed it, or which of five rules quietly did
+nothing. When you are reverse-engineering somebody else's interface, or writing
+a spec for a receiving team, that "why" is the whole deliverable.
+
+So declare the mapping as data instead:
+
+```ts
+import { Message } from "./hl7";
+import { mapEach, renderTrace, date8, upper, signed, join, type Rule } from "./toolbox";
+
+const rules: Rule[] = [
+  { to: "Facility",      from: "MSH-6.1", required: true },
+  { to: "AccountNumber", from: "PID-3.1", required: true },
+  { to: "LastName",      from: "PID-5.1", via: [upper()], required: true },
+  { to: "FirstName",     from: join(" ", "PID-5.2", "PID-5.3") },
+  { to: "ServiceDate",   from: "FT1-4",   via: [date8()], required: true },
+  { to: "ChargeCode",    from: "FT1-7.1", required: true },
+  { to: "Quantity",      from: "FT1-10",  via: [signed("FT1-6", ["CH"], ["CG","R"])] },
+];
+
+console.log(renderTrace(mapEach(msg, "FT1", rules)));
+```
+
+```
+--- record 1 of 2 ---
+TARGET           SOURCE                       RAW             STEPS                        FINAL
+---------------  ---------------------------  --------------  ---------------------------  -----------
+Facility *       MSH-6.1                      RECVFAC                                      RECVFAC
+AccountNumber *  PID-3.1                      MRN9                                         MRN9
+LastName *       PID-5.1                      doe             uppercase                    DOE
+FirstName        join(" ", PID-5.2, PID-5.3)  john q                                       john q
+ServiceDate *    FT1-4                        20260811093000  date8 (YYYYMMDD)             20260811
+ChargeCode *     LAB001                       LAB001                                       LAB001
+Quantity         FT1-10                       2               signed by FT1-6 (+CH -CG/R)  2
+```
+
+Rules are data, so they print. That table is the artifact you hand an analyst.
+
+### `mapEach` is the point
+
+`mapEach(msg, "FT1", rules)` maps once per repeating segment. A DFT with four
+FT1 segments is four charges; an ORU with twenty OBX is twenty results. If your
+target is one flat record, **one message legitimately becomes N records**, and
+a mapping written against the first segment drops the rest without a word.
+
+The record count in the output tells you immediately whether you are looking at
+a 1:1 or a 1:N interface. That question is cheap to ask here and expensive to
+discover in production.
+
+### `signed` refuses to guess
+
+Signing a quantity off a transaction type is usually written:
+
+```ts
+qty = type === "CH" ? q : "-" + q;   // don't
+```
+
+Every type that is not `CH` now becomes a credit: blank, unknown, a new code the
+vendor shipped last month, a typo at the sender. Flip the branches and unknown
+types silently become charges instead. Two feeds into one billing system with
+opposite defaults is not hypothetical.
+
+`signed(typePath, positive[], negative[])` takes both lists explicitly and
+throws on anything in neither. If you want a default, say so with `defaultTo`
+before it, where the next reader can see it. The same reasoning is why `lookup`
+makes you pass `"passthrough" | "blank" | { error: true }` rather than picking
+one for you.
+
+### What is in there
+
+| | |
+|---|---|
+| Runners | `mapOne`, `mapEach` |
+| Getters | `literal`, `join`, `coalesce`, `compute` |
+| Steps | `date8`, `truncate`, `upper`, `stripDelims`, `defaultTo`, `lookup`, `lookupChain`, `signed` |
+| Output | `renderTrace`, `toPipeDelimited` |
+
+`required: true` collects **every** missing field, not the first one. An
+operator who has to resubmit a record once per missing field will stop telling
+you about them.
+
 ## Files
 
 | File | |
 |------|--|
 | `transform.ts` | **the file you edit** |
+| `toolbox.ts` | declarative mapping tables and the field trace |
 | `hl7.ts` | parse, serialize, path lookup |
 | `bench.ts` | the stdin/stdout wrapper |
 | `gui.ts` + `gui.html` | the local browser UI |
-| `hl7.test.ts` | 31 tests |
+| `hl7.test.ts` + `toolbox.test.ts` | 58 tests |
 | `sample.hl7` | synthetic ADT^A01 |
 
 ## PHI
