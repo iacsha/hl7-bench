@@ -20,6 +20,16 @@ bench.workdir = .
 bench.timeout = 15000
 bench.desc    = JavaScript transformer (hl7-bench)
 
+# Lets PipeHat's Check for Updates say when this package is behind. It only
+# reports and offers to open the page -- it never downloads or installs, because
+# a provider names a command PipeHat executes.
+#
+# Bump `version` when you cut a release. Until a release is published on the
+# repo, the check reports "no release found" and everything else still works.
+bench.version     = 1.0.0
+bench.updatecheck = iacsha/hl7-bench
+bench.updateurl   = https://github.com/iacsha/hl7-bench/releases
+
 # If instead bun.exe is on PATH or somewhere central, comment the line above and
 # use one of these:
 #
