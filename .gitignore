@@ -25,4 +25,3 @@ messages/
 transform.local.ts
 mapping.*.ts
 PORT-TO-IRIS.md
-verify.ts
