@@ -23,14 +23,41 @@
  * listening anywhere but the loopback interface.
  */
 
-import { readFileSync, writeFileSync, existsSync } from "node:fs";
-import { join } from "node:path";
+import { readFileSync, writeFileSync, existsSync, mkdirSync } from "node:fs";
+import { join, resolve, relative, isAbsolute, dirname, basename } from "node:path";
 
 const DIR = import.meta.dir;
 const PORT = Number(process.env.BENCH_PORT ?? 7317);
 const TRANSFORM = join(DIR, "transform.ts");
-const SAMPLE = join(DIR, "sample.hl7");
 const PAGE = join(DIR, "gui.html");
+
+/**
+ * Which message file the left pane loads from and saves back to.
+ *
+ *   bun gui.ts                             sample.hl7 (synthetic, tracked in git)
+ *   bun gui.ts messages\real.hl7           a real message
+ *
+ * The argument matters more than it looks. sample.hl7 is the ONE .hl7 file
+ * .gitignore does not exclude, because it is synthetic. Pasting a real message
+ * into the page and pressing Save with no argument writes PHI into the one file
+ * that gets committed. Name the file you mean, and keep real ones in messages\.
+ */
+const arg = process.argv.slice(2).find((a) => a.endsWith(".hl7"));
+const MESSAGE = arg ? resolve(arg) : join(DIR, "sample.hl7");
+
+/**
+ * Nothing outside the bench folder gets written, whatever the page asks for.
+ *
+ * `relative` is computed from DIR rather than from the process working
+ * directory. Resolving a relative path against cwd would make the guard depend
+ * on where bun was launched from, which is exactly the kind of thing that holds
+ * in testing and gives way in use.
+ */
+function insideBench(rel: string): boolean {
+  if (isAbsolute(rel) || /^[A-Za-z]:/.test(rel)) return false;
+  const r = relative(DIR, resolve(DIR, rel));
+  return r !== "" && !r.startsWith("..") && !isAbsolute(r);
+}
 
 // The same parser the bench uses, bundled for the browser, so the field diff in
 // the page and the transform on disk can never disagree about what PID-3(2).5
@@ -72,6 +99,19 @@ function runBench(message: string) {
   };
 }
 
+/**
+ * A malformed body must come back as our own 400, not as Bun's HTML error
+ * overlay. The page only ever shows `res.error`, so an unhandled throw here
+ * surfaces as a wall of markup in the status bar and tells you nothing.
+ */
+async function body<T>(req: Request): Promise<T | null> {
+  try {
+    return (await req.json()) as T;
+  } catch {
+    return null;
+  }
+}
+
 const server = Bun.serve({
   hostname: "127.0.0.1",
   port: PORT,
@@ -92,15 +132,18 @@ const server = Bun.serve({
 
     if (url.pathname === "/state") {
       return json({
-        message: read(SAMPLE, "MSH|^~\\&|SEND|FAC|RECV|FAC|20260101120000||ADT^A01^ADT_A01|1|P|2.5\r\n"),
+        message: read(MESSAGE, "MSH|^~\\&|SEND|FAC|RECV|FAC|20260101120000||ADT^A01^ADT_A01|1|P|2.5\r\n"),
         code: read(TRANSFORM),
+        messageFile: relative(DIR, MESSAGE) || basename(MESSAGE),
+        defaultOut: `messages/output.hl7`,
       });
     }
 
     if (url.pathname === "/run" && req.method === "POST") {
-      const body = (await req.json()) as { message?: string; code?: string };
-      const message = body.message ?? "";
-      const code = body.code ?? "";
+      const b = await body<{ message?: string; code?: string }>(req);
+      if (!b) return json({ error: "Malformed request body." }, 400);
+      const message = b.message ?? "";
+      const code = b.code ?? "";
 
       if (message.trim() === "") return json({ error: "No message to transform." }, 400);
 
@@ -116,10 +159,35 @@ const server = Bun.serve({
     }
 
     if (url.pathname === "/save-message" && req.method === "POST") {
-      const body = (await req.json()) as { message?: string };
+      const b = await body<{ message?: string }>(req);
+      if (!b) return json({ error: "Malformed request body." }, 400);
       try {
-        writeFileSync(SAMPLE, body.message ?? "", "utf8");
-        return json({ ok: true });
+        writeFileSync(MESSAGE, b.message ?? "", "utf8");
+        return json({ ok: true, file: relative(DIR, MESSAGE) || basename(MESSAGE) });
+      } catch (e) {
+        return json({ error: String(e) }, 500);
+      }
+    }
+
+    // Save the transformed message. The page sends the output text it is
+    // already displaying, so what lands on disk is exactly what you verified on
+    // screen -- no second run, no chance of the two disagreeing.
+    if (url.pathname === "/save-output" && req.method === "POST") {
+      const b = await body<{ output?: string; file?: string }>(req);
+      if (!b) return json({ error: "Malformed request body." }, 400);
+      const target = (b.file ?? "").trim() || "messages/output.hl7";
+
+      if (!target.endsWith(".hl7")) return json({ error: "Output filename must end in .hl7" }, 400);
+      if (!insideBench(target)) return json({ error: "Refusing to write outside the bench folder." }, 400);
+      if (!b.output) return json({ error: "Nothing to save -- run the transform first." }, 400);
+
+      const full = join(DIR, target);
+      try {
+        mkdirSync(dirname(full), { recursive: true });
+        // Written as UTF-8 with no BOM. A PowerShell `>` redirect would prepend
+        // EF BB BF and break byte comparison against a golden file.
+        writeFileSync(full, b.output, "utf8");
+        return json({ ok: true, file: target, bytes: Buffer.byteLength(b.output) });
       } catch (e) {
         return json({ error: String(e) }, 500);
       }
@@ -132,6 +200,12 @@ const server = Bun.serve({
 const url = `http://127.0.0.1:${server.port}`;
 console.log(`hl7-bench GUI  ->  ${url}`);
 console.log(`editing        ->  ${TRANSFORM}`);
+console.log(`message        ->  ${MESSAGE}`);
+if (!arg) {
+  console.log(`\n  Loading sample.hl7 -- the one .hl7 file git DOES track, because it is`);
+  console.log(`  synthetic. Pressing "Save message" with a real message in the pane writes`);
+  console.log(`  PHI into it. Pass a file instead:  bun gui.ts messages\\yours.hl7\n`);
+}
 console.log(`Ctrl+C to stop.`);
 
 if (!process.argv.includes("--no-open")) {

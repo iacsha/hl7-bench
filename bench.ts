@@ -13,6 +13,17 @@
  * No install, no admin, no service, no container. One bun.exe and these files.
  *
  * You edit transform.ts. This file you can ignore.
+ *
+ * SAVING THE OUTPUT
+ *
+ *   bun bench.ts -o messages\out.hl7  < messages\in.hl7
+ *
+ * Use -o rather than a PowerShell `>` redirect. PowerShell writes a UTF-8 BOM
+ * ahead of the first byte, so the file starts EF BB BF 4D 53 48 instead of
+ * "MSH". This bench survives it -- JavaScript's trim() happens to strip U+FEFF
+ * -- but a byte comparison against a golden file fails, and plenty of receivers
+ * and diff tools reject the message outright. -o writes the bytes and nothing
+ * else.
  */
 
 import { Message } from "./hl7";
@@ -53,5 +64,20 @@ try {
   die(`transform() threw:\n${detail}`);
 }
 
-process.stdout.write(msg.toString());
-process.stderr.write(`OK  transform.ts  ${Math.round(performance.now() - t0)} ms\n`);
+const out = msg.toString();
+const ms = Math.round(performance.now() - t0);
+
+// -o writes the file itself instead of leaning on the shell. See the header:
+// a PowerShell redirect prepends a BOM and quietly breaks byte comparison.
+const oi = process.argv.findIndex((a) => a === "-o" || a === "--out");
+const outFile = oi === -1 ? null : process.argv[oi + 1];
+
+if (oi !== -1 && !outFile) die("-o needs a filename after it.");
+
+if (outFile) {
+  await Bun.write(outFile, out);
+  process.stderr.write(`OK  transform.ts  ${ms} ms  ->  ${outFile}\n`);
+} else {
+  process.stdout.write(out);
+  process.stderr.write(`OK  transform.ts  ${ms} ms\n`);
+}

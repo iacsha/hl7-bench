@@ -78,6 +78,7 @@ textarea, .out {
   <kbd>Ctrl</kbd><kbd>Enter</kbd>
   <button id="reload">Reload from disk</button>
   <button id="savemsg">Save message</button>
+  <button id="saveout">Save output</button>
   <div id="status">ready</div>
 </header>
 
@@ -184,15 +185,26 @@ function renderDiff(before, after) {
   return changed;
 }
 
+// The transformed text from the last successful run. "Save output" writes THIS
+// rather than re-running, so what lands on disk is exactly what you just read on
+// screen. Cleared whenever the run fails, so a stale success cannot be saved as
+// if it were the current one.
+let lastOutput = "";
+let messageFile = "sample.hl7";
+let defaultOut = "messages/output.hl7";
+
 async function load() {
   const r = await fetch("/state");
   const s = await r.json();
   els.message.value = s.message;
   els.code.value = s.code;
+  messageFile = s.messageFile ?? messageFile;
+  defaultOut = s.defaultOut ?? defaultOut;
+  lastOutput = "";
   els.output.replaceChildren();
   els.diag.textContent = "Run to see output.";
   els.diag.className = "diag quiet";
-  setStatus("loaded from disk");
+  setStatus(`loaded ${messageFile}`);
 }
 
 async function run() {
@@ -207,6 +219,7 @@ async function run() {
     const res = await r.json();
 
     if (res.error) {
+      lastOutput = "";
       els.output.replaceChildren();
       els.diag.textContent = res.error;
       els.diag.className = "diag bad";
@@ -215,6 +228,7 @@ async function run() {
     }
 
     if (res.exitCode !== 0) {
+      lastOutput = "";
       // The failure a learner hits constantly. stderr carries the line number
       // in transform.ts, which is the single most useful thing on screen.
       els.output.replaceChildren();
@@ -224,11 +238,13 @@ async function run() {
       return;
     }
 
+    lastOutput = res.stdout;
     const changed = renderDiff(els.message.value, res.stdout);
     els.diag.textContent = res.stderr.trim() || "(no diagnostics)";
     els.diag.className = "diag quiet";
     setStatus(`ok — ${changed} field${changed === 1 ? "" : "s"} changed — ${res.ms} ms`, "ok");
   } catch (e) {
+    lastOutput = "";
     els.diag.textContent = String(e);
     els.diag.className = "diag bad";
     setStatus("server unreachable", "bad");
@@ -237,15 +253,36 @@ async function run() {
   }
 }
 
+async function saveOutput() {
+  if (!lastOutput) {
+    setStatus("nothing to save — run first", "bad");
+    return;
+  }
+  const file = prompt("Save transformed message as:", defaultOut);
+  if (!file) return;
+
+  const r = await fetch("/save-output", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ output: lastOutput, file }),
+  });
+  const res = await r.json();
+  if (res.error) setStatus(res.error, "bad");
+  else setStatus(`saved ${res.bytes} bytes to ${res.file}`, "ok");
+}
+
 els.run.addEventListener("click", run);
 $("reload").addEventListener("click", load);
+$("saveout").addEventListener("click", saveOutput);
 $("savemsg").addEventListener("click", async () => {
-  await fetch("/save-message", {
+  const r = await fetch("/save-message", {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ message: els.message.value }),
   });
-  setStatus("message saved to sample.hl7", "ok");
+  const res = await r.json();
+  if (res.error) setStatus(res.error, "bad");
+  else setStatus(`message saved to ${res.file}`, "ok");
 });
 
 document.addEventListener("keydown", (e) => {

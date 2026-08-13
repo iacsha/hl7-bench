@@ -18,3 +18,11 @@ req-*.json
 *.hl7
 !sample.hl7
 messages/
+
+# Interface work belongs to the employer, not to this public repo. The bench and
+# its patterns are general; a specific feed's transform, field spec, port notes
+# and golden gate are not. Keep them local and carry them by hand.
+transform.local.ts
+mapping.*.ts
+PORT-TO-IRIS.md
+verify.ts
