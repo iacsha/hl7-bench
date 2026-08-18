@@ -238,8 +238,14 @@ you about them.
 | `hl7.ts` | parse, serialize, path lookup |
 | `bench.ts` | the stdin/stdout wrapper |
 | `gui.ts` + `gui.html` | the local browser UI |
-| `hl7.test.ts` + `toolbox.test.ts` | 58 tests |
+| `hl7.test.ts` + `toolbox.test.ts` + `dtl.test.ts` | 78 tests |
 | `sample.hl7` | synthetic ADT^A01 |
+| `check.ts` | the golden gate |
+| `classify.ts` | diff what you have against what you want |
+| `patterns.ts` | twelve moves, each with its IRIS DTL |
+| `WORKFLOW.md` | **start here.** New interface to IRIS, eight steps |
+| `METHOD.md` | the five questions, path syntax, the traps |
+| `dtl.ts` | spec types plus the DTL emitter, and a worked example |
 
 ## PHI
 

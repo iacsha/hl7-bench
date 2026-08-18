@@ -36,6 +36,10 @@
  * meant three months ago.
  */
 
+// The transform writes per-message diagnostics to stderr for the GUI pane. Here
+// they would bury the PASS/FAIL lines, so turn them off before importing it.
+process.env.HL7_BENCH_NOTES = "off";
+
 import { Message } from "./hl7";
 import { transform } from "./transform";
 import { readdirSync, readFileSync, existsSync } from "node:fs";

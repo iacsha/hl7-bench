@@ -25,3 +25,5 @@ messages/
 transform.local.ts
 mapping.*.ts
 PORT-TO-IRIS.md
+dtl.*.ts
+!dtl.test.ts
