@@ -7,12 +7,14 @@ Nothing here needs a second person or a chat window.
 button-pressing. Read METHOD.md once, keep this one open while you work.
 
 One thing to know before you start: **nothing here figures out the mapping for
-you.** Steps 1 through 5 are you deciding what the interface does, in JavaScript,
-where the loop is fast and a golden file can prove you right. Step 6 turns that
-settled decision into an IRIS DTL class. `dtl.ts` writes the ObjectScript, but
-only from a spec you hand it, and it refuses to guess at the rows it cannot
-express. The leverage is that the mapping is already correct and already proven
-before any ObjectScript exists. Not code generation.
+you.** Steps 1 through 5 are you deciding what the interface does, as a spec,
+where the loop is fast and a golden file can prove you right. Step 6 prints the
+IRIS DTL class from that same spec.
+
+You author the interface exactly once. The runner, the document you hand the
+receiving team, and the ObjectScript are all derived from that one object, so
+they cannot drift apart. The leverage is that the mapping is already correct and
+already proven before any ObjectScript exists. Not code generation.
 
 ---
 
@@ -24,14 +26,17 @@ Files that matter:
 
 ```
 hl7.ts               the parser. Never edit.
-toolbox.ts           the mapping helpers. Rarely edit.
-transform.ts         YOUR WORK. One interface at a time.
+spec.ts              the vocabulary. Grows; rarely edited by hand.
+run.ts               the runner. Never edit.
+trace.ts             the mapping document. Never edit.
+emit.ts + emit\      the ObjectScript backends. Never edit.
+transform.ts         YOUR WORK. One interface at a time. Holds the spec.
 bench.ts             stdin to stdout runner
 gui.ts + gui.html    the browser editor, 127.0.0.1:7317
 check.ts             the golden gate
 classify.ts          the in-versus-want diff
 patterns.ts          twelve moves, each with its IRIS DTL
-dtl.ts               the DTL emitter, plus a worked example spec
+toolbox.ts           flat-record extraction, for non-HL7 targets
 METHOD.md            the doctrine
 WORKFLOW.md          this file
 messages\            gitignored. Real messages live here and nowhere else.
@@ -66,9 +71,9 @@ call the single exported `transform()`. Two interfaces in one file means an `if`
 on message type at the top, and that `if` grows an else branch nobody tested.
 Separate folders instead.
 
-That split also keeps interface work out of this repo. `messages\`,
-`mapping.*.ts` and `dtl.*.ts` are gitignored for the same reason: the bench and
-its patterns are general, a specific feed's mapping is not.
+That split also keeps interface work out of this repo. `messages\` is
+gitignored for the same reason: the bench and its patterns are general, a
+specific feed's mapping is not.
 
 ---
 
@@ -160,7 +165,7 @@ bun patterns.ts P7 messages\<name>.in.hl7
 ```
 
 Write down which patterns your diff needs. That list is your build plan, and it
-is also your DTL outline, because each pattern maps onto a `dtl.ts` source kind
+is also your DTL outline, because each pattern maps onto a `spec.ts` source kind
 in step 6.
 
 Almost every ADT interface is these twelve. When you hit something that is not
@@ -168,30 +173,53 @@ here, it is usually two of them composed.
 
 ---
 
-## Step 4. Write `transform.ts` in JavaScript
+## Step 4. Write the spec
 
-Open the editor:
+Open `transform.ts`. What you are writing is one exported object. The GUI is
+still useful for watching the message change as you edit:
 
 ```powershell
 bun gui.ts messages\<name>.in.hl7
 ```
 
 Browser at `http://127.0.0.1:7317`. Left pane is the message, right pane is
-`transform.ts`, bottom is output and stderr.
+`transform.ts`, bottom is output and stderr. `Ctrl+Enter` runs.
 
-**The code pane is JavaScript.** It writes straight into `transform.ts` and runs
-it with bun. Pasting an ObjectScript class in there gives you a bun parse error
-naming the first token of the class line, and nothing else. That is the only
-thing that error ever means. ObjectScript comes later and it goes in Studio, not
-here.
+**The code pane is TypeScript, not ObjectScript.** Pasting an ObjectScript class
+in there gives you a bun parse error naming the first token of the class line,
+and nothing else. That is the only thing that error ever means. ObjectScript is
+step 6, and it is generated rather than typed.
 
-Write in this order. It is not a style preference, it is the order that keeps
-each step's assumptions true for the next:
+Write the spec in this order. It is not a style preference, it is the order that
+keeps each step's assumptions true for the next:
 
-1. **Gate first.** Refuse messages you do not handle, before doing any work.
-2. **Structure second.** Which segments exist in the target.
-3. **Values third.** Field by field.
-4. **Guards last.** Check the things that must be non-empty, and say so loudly.
+1. **`gate` first.** Which triggers you accept and what each one is delivered
+   as. Anything not in `permit` is refused before any work happens.
+2. **`iris` second.** The class name and both DocTypes. Wrong here and the
+   engine fails closed later, so write down what the schema browser says.
+3. **`blocks` third**, in target segment order. Block order **is** output
+   segment order.
+4. **`rows` inside each block**, one per target field.
+5. **`required: true` last**, on the fields the receiver cannot work without.
+
+A block that repeats gets a `repeat`:
+
+```ts
+{
+  id: "IN1",
+  group: "INSURANCEgrp",                                   // if the target groups it
+  repeat: { over: "IN1", skipWhenEmpty: "IN1-4", max: 3 },
+  rows: [
+    { target: "IN1-1",  from: counter() },
+    { target: "IN1-4",  from: copy("IN1-4"), label: "Insurer", required: true },
+    { target: "IN1-22", from: counter(), label: "Coverage Priority" },
+  ],
+}
+```
+
+`skipWhenEmpty` names the field that proves the segment is real, because feeds
+send shell segments. `counter()` numbers by **output ordinal**, so a skipped
+occurrence leaves no hole in the set ids.
 
 Path syntax is in `METHOD.md` and is the same shape as the DTL:
 
@@ -202,23 +230,41 @@ PID-3(2).5     repetition 2, component 5
 MSH-9.2        trigger event
 ```
 
-Two rules that save the most pain:
+Three rules that save the most pain:
 
-- **Every lookup needs a stated unmapped branch.** Blank, passthrough, or throw.
-  Pick one on purpose. An unmapped code silently becoming an empty field is the
-  bug you find six weeks later in a claims report.
-- **Never gate on `if/else`.** Use a table, a `PERMITTED` set keyed by trigger
-  event. An if/else grows an implicit everything-else branch, and that branch is
-  how an A03 discharge reaches the receiver as a registration.
+- **Every lookup needs a stated unmapped branch.** `blank()`, `passthrough()`,
+  `constant(v)` or `{ error: true }`. Pick one on purpose. An unmapped code
+  silently becoming an empty field is the bug you find six weeks later in a
+  claims report. `lookup()` will not let you leave it out.
+- **Never gate on `if/else`.** That is what `gate.permit` is: a table keyed by
+  trigger event. An if/else grows an implicit everything-else branch, and that
+  branch is how an A03 discharge reaches the receiver as a registration.
+- **Say what you left out.** `outOfScope` is a list of strings that prints on
+  every run and lands in the emitted class header. "Not sent" and "nobody
+  thought about it" look identical to the receiver otherwise.
 
-Use stderr for anything a human needs to read. It shows in the GUI's bottom
-pane, and `check.ts` mutes it so your PASS lines stay readable:
+Anything a human needs to read goes in a `note` on the row or the block, or in
+`sourceInventory`. Those print to stderr on every run, show in the GUI's bottom
+pane, and `check.ts` mutes them so your PASS lines stay readable.
 
-```js
-process.stderr.write("PV1-3 empty: department table has no row for X\n");
-```
+Run `bun bench.ts` as you go and iterate until the output matches your `.want`
+file by eye.
 
-Iterate until the output pane matches your `.want` file by eye.
+### When the vocabulary is short of something
+
+Grow it. `spec.ts` is a tagged union and a `switch` in each backend, and
+`spec.test.ts` fails the build if you teach a kind to one backend and not the
+other, so it is a small, safe change with a test that catches the half of it you
+forgot.
+
+What you must not do is smuggle raw JavaScript into a row. There is deliberately
+no escape hatch, because the moment one exists the bench can express things the
+ObjectScript cannot, and the two drift apart silently. That is the exact problem
+this whole design closes.
+
+If you genuinely need imperative code for one message, `transform()` still
+receives the parsed `Message` and can mutate it after `runSpec` returns. Treat
+that as a signal that the vocabulary needs a word, not as a place to live.
 
 ---
 
@@ -251,50 +297,55 @@ Green means you changed what you meant to change and nothing else.
 
 ---
 
-## Step 5b. Print the spec trace
+## Step 5b. Print the mapping document
 
 Before you write any ObjectScript, produce the document that says what the
 interface does, field by field, in the receiver's language.
 
-Copy the `mapping.*.ts` shape from `toolbox.ts`'s header comment into
-`mapping.<interface>.ts` and write two rule lists: one against the source paths,
-one against the target paths. Run it:
-
 ```powershell
-bun mapping.<interface>.ts messages\<name>.in.hl7
+bun trace.ts < messages\<name>.in.hl7
 ```
 
-That prints source path, target path, raw value, transformation steps, final
-value, plus a MISSING REQUIRED list, once per audience. The inbound MISSING list
-is the conversation you owe the sending system. The delivered MISSING list is
-the one you owe the receiver. They are rarely the same list. Attach both to the
-build ticket.
+No second file to write. `trace.ts` walks the same spec through the same
+resolver `run.ts` uses, so the table cannot describe an interface the bench does
+not actually produce.
 
-Run it against **two parses of the message, not one.** If `transform()` builds a
-fresh target, reading the same `Message` object before and after gives you the
-transformed message twice and a trace that agrees with itself for the wrong
-reason.
+It prints two tables, for two different audiences:
+
+**The delivered trace** is what the RECEIVER gets: target field, name, which
+source fed it, the raw value, the steps that ran, and the final value. Required
+fields are starred and every empty one is listed at the bottom. That is the
+mapping document. Attach it to the build ticket.
+
+**The source inventory** is what the SENDER emits, mapped or not, driven by the
+`sourceInventory` list in your spec. The READ BY column says which target rows
+read each path, gathered from the spec itself. An inventory row nothing reads is
+a real finding: either the receiver does not want it, or you missed it.
+
+Those are rarely the same conversation. "We map PID-4" and "PID-4 is empty at
+this site" are different statements, and the second one is the reason a go-live
+slips.
+
+Underneath both, a NOTES block collects everything the run noticed and nothing
+else would show you: which path a `firstOf` actually used, how many repetitions
+were skipped or dropped by a cap, every lookup table with no rows in it, and
+every row note you wrote. Read it before you call the mapping settled.
 
 ---
 
 ## Step 6. Emit the ObjectScript
 
 Now, and not before. The mapping is settled, the goldens are green, and the
-questions have been asked. What is left is translation.
+questions have been asked. What is left is translation, and you do not type it.
 
 ```powershell
-bun dtl.ts                      # print the worked example
+bun emit.ts > MyTransform.cls
 ```
 
-Copy `EXAMPLE` out of `dtl.ts` into `dtl.<interface>.ts`, import `emitDtl` from
-`./dtl`, and rewrite the rows straight off your step 5b trace, one row per line
-of the table. Then:
+Diagnostics go to stderr, so the redirected file is clean ObjectScript. The
+routing rule condition and the empty-lookup-table warnings land on your screen.
 
-```powershell
-bun dtl.<interface>.ts > MyTransform.cls
-```
-
-The spec is data. Each row says where a target field's value comes from:
+The spec drives the whole class. Each row's source becomes an expression:
 
 | Source | What it emits | Pattern |
 |---|---|---|
@@ -302,24 +353,25 @@ The spec is data. Each row says where a target field's value comes from:
 | `literal("VALUE")` | a quoted constant | P4 |
 | `firstOf("PID-4", "PID-3")` | nested `$SELECT`, first non-empty | P6 |
 | `lookup("Table", "PID-8", passthrough())` | `..Lookup` with a stated unmapped branch | P7 |
+| `event()` | a `$SELECT` over the permit table | P1 |
 | `counter()` | the loop's output ordinal | P8 |
-| `raw("...")` | ObjectScript verbatim, the escape hatch | any |
-| `manual("why")` | a TODO comment and no assign | none |
+| `pickRepeat("PV1-7", 13, "NPI", 1)` | a `<code>` scan over the repetitions | P9 |
+| `fromFirst("IN1", "IN1-4")` | the first non-shell occurrence | P8 |
+| `todo("why")` | a TODO comment and no assign | none |
 
-`loops` handles repeating segments: `foreach` over the source, an emptiness
-guard, and a counter that numbers by **output ordinal** rather than source
-repeat index. That distinction matters. A message whose second IN1 is a shell
-and gets skipped delivers a single coverage numbered `2` if you number from the
-source, and a receiver reading priority ordinally sees a secondary with no
-primary.
+A block with a `repeat` becomes a `<foreach>` with an emptiness guard and a
+counter that numbers by **output ordinal** rather than source repeat index. That
+distinction matters. A message whose first IN1 is a shell and gets skipped
+delivers a single coverage numbered `2` if you number from the source, and a
+receiver reading priority ordinally sees a secondary with no primary.
 
-`manual()` is not a failure. It is the emitter refusing to fake a row it cannot
-express, so the gap shows up as a TODO in the right place in the file rather
-than as a silent hole you find at validation. Branching, string surgery and date
-arithmetic all land there. Write those by hand, take the ObjectScript from the
-pattern you noted in step 3.
+`todo()` is not a failure. It is the spec refusing to fake a row nobody has
+decided yet, so the gap shows up as a TODO in the right place in the file rather
+than as a silent hole you find at validation. Take the ObjectScript for it from
+the pattern you noted in step 3.
 
-Four things `dtl.ts` cannot know, and you must check before compiling:
+Four things the emitter cannot know, and you must check before compiling. It
+prints all four in the class header so they are in front of you:
 
 **Version.** Your bench does not care about HL7 versions. IRIS does. Set
 `sourceDocType` and `targetDocType` to the real schema names in your namespace,
@@ -331,20 +383,33 @@ the single most common way an hour disappears.
 **Grouped segments.** In some structures, segments sit inside groups. IN1 inside
 `INSURANCE` means `target.{IN1(1):2}` resolves to nothing where
 `target.{INSURANCEgrp(1).IN1:2}` works. Same fail-closed silence. Set `group` on
-the loop when it applies. If a segment you assigned is missing from the output
+the block when it applies. If a segment you assigned is missing from the output
 and there is no error, this is why. Check the structure in the schema browser.
 
-**`create='new'` versus editing the source.** If your bench transform builds a
-fresh target, the DTL needs `create='new'`, which is the emitter's default. If
-it edits the message in place, set `create: "copy"`. Mismatch here means fields
-you never assigned show up in the output because they rode along from the
-source.
+**`create='new'` versus editing the source.** The default is `create: "new"`,
+which matches what the bench does: block order is the output, and nothing rides
+along. Set `create: "copy"` only if you mean to edit the message in place.
+Mismatch here means fields you never assigned show up in the output.
 
 **Lookup table rows.** A `$case` in ObjectScript needs a recompile every time a
 code is added. `Ens.Util.LookupTable` does not, which is why the emitter uses
 it. But an empty table returns the default for every message, and that looks
-exactly like a working lookup. Populate the table before go-live and check the
-row count.
+exactly like a working lookup. `emit.ts` names every empty table on stderr as a
+go-live gate. Populate them and check the row count.
+
+### The routing rule
+
+`emit.ts` also prints the condition your routing rule needs, built from
+`gate.permit` and `gate.require`:
+
+```
+HL7.{MSH:9.1}="ADT" && (HL7.{MSH:9.2}="A01" || HL7.{MSH:9.2}="A08")
+```
+
+The gate belongs in the rule, not in the DTL, so a message you do not handle is
+never delivered rather than delivered wrong. Note the parentheses: `||` binds
+looser than `&&`, and unparenthesised, that condition would deliver every ADT
+message regardless of trigger.
 
 ---
 
@@ -353,11 +418,9 @@ row count.
 1. Import the emitted `.cls` into Studio or VS Code, compile it.
 2. Work down the TODO comments the emitter left. Nothing else in the file needs
    touching.
-3. Build the routing rule. The gate from step 4 becomes a rule condition, for
-   example `HL7.{MSH:9.2}` in `("A01","A08")`. It belongs in the rule, not in
-   the DTL, so a message you do not handle is never delivered rather than
-   delivered wrong.
-4. Create the lookup tables and load their rows. Verify the row count.
+3. Build the routing rule, pasting the condition `emit.ts` printed on stderr.
+4. Create the lookup tables and load their rows. Verify the row count. The
+   emitter listed every one it calls, and starred the empty ones.
 5. Use the DTL editor's Test button with your `.in.hl7` pasted in. This is the
    fastest loop in IRIS and it does not need the interface running.
 
@@ -398,11 +461,17 @@ can hand somebody who asks what this interface does.
 | `check.ts` says SKIP | You have an `.in.hl7` with no matching `.want.hl7` |
 | A code you never saw before arrives blank at the receiver | A lookup with no stated unmapped branch |
 | A repeating segment delivers set id 2 with no set id 1 | Numbering from the source repeat index instead of the output ordinal |
-| The spec trace says every field is populated and the receiver disagrees | One `Message` parsed once and read as both source and target |
+| The bench segment is shorter than the one IRIS produces | Skipping empty assigns. `<assign>` creates the field either way, so `run.ts` always sets |
+| Every ADT reaches the receiver, whatever the trigger | Routing condition missing the parentheses around the `||` group |
+| `bun emit.ts` exits 1 and lists problems | `validate()` caught a row in the wrong block, an unknown table, a `counter()` outside a repeat, or a malformed path |
+| `bun test` fails naming a backend and a kind | A source or step kind taught to one backend and not the other. That test exists for exactly this |
 
 ## Where the rest lives
 
 - `METHOD.md`: the five questions, path syntax card, the traps collected
 - `patterns.ts`: the twelve moves, each with its IRIS DTL
-- `dtl.ts`: the spec types, the emitter, and a worked example
+- `spec.ts`: the vocabulary, with the reasoning for each kind in its doc comment
+- `emit/iris.ts`: the DTL backend. The only one shipped, and not the only shape
+  the seam allows
+- `toolbox.ts`: flat-record extraction, for targets that are not HL7
 - `iris-lab/recipes/`: numbered ObjectScript recipes, 01 through 18

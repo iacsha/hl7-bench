@@ -18,10 +18,11 @@ That is the whole interface. Anything that can spawn a process can drive it.
 
 ## What it is and is not
 
-**Is:** a real transform loop. Edit a JavaScript function, run it, see the
-transformed message with every changed field highlighted. The transformer
-contract is the one Mirth taught you — you get the parsed message, you mutate
-it, you are done.
+**Is:** a real transform loop. Write the interface as a spec, run it, see the
+transformed message with every changed field highlighted, and generate the
+engine's own transformation language from the same spec. The escape hatch is
+still there: `transform()` receives the parsed message and may mutate it
+directly, which is the contract Mirth taught you.
 
 **Is not:** an interface engine. There is no channel, no queue, no listener, no
 persistence. It transforms one message and exits. If you need routing and
@@ -83,7 +84,7 @@ Get-Content message.hl7 -Raw | bun bench.ts
 1. Download `bun-windows-x64.zip` from [bun releases](https://github.com/oven-sh/bun/releases).
 2. Extract `bun.exe` anywhere writable — `C:\Users\<you>\tools\` is fine.
 3. Clone or unzip this repo next to it.
-4. `bun test` — 31 tests, no network, no dependencies.
+4. `bun test` — 187 tests, no network, no dependencies.
 
 Nothing is installed. Nothing touches the registry. Notepad++ has an official
 portable build too, so editor, plugin, and bench all fit on a stick.
@@ -128,6 +129,139 @@ That is the feedback loop. Break things on purpose while it is cheap.
 
 ---
 
+## The spec is the interface
+
+Writing the transform as code works, and for a one-off it is the shortest path.
+It stops working the moment the same interface has to exist in three places at
+once: running on the bench, written down for the receiving team, and built in
+the engine. Three copies, hand-synced, with nothing checking that they agree.
+
+So the interface is declared as data, and everything else is derived from it.
+
+```ts
+export const spec: Spec = {
+  name: "Registration ADT to downstream",
+  gate: {
+    path: "MSH-9.2",
+    permit: { A01: "A28", A08: "A31" },
+    require: [{ path: "MSH-9.1", equals: "ADT" }],
+  },
+  iris: {
+    className: "Demo.DTL.AdtToDownstream",
+    sourceDocType: "2.3:ADT_A01",
+    targetDocType: "2.3.1:ADT_A05",
+  },
+  tables: { Department: { "S45": "2^TEST DEPT" } },
+  blocks: [
+    {
+      id: "PID",
+      rows: [
+        { target: "PID-3", from: firstOf("PID-4", "PID-3"), label: "MRN", required: true },
+        { target: "PID-5", from: copy("PID-5"), label: "Patient Name", required: true },
+        { target: "PID-19", from: copy("PID-19"), via: [stripChars("- ")], label: "SSN" },
+      ],
+    },
+    {
+      id: "IN1",
+      group: "INSURANCEgrp",
+      repeat: { over: "IN1", skipWhenEmpty: "IN1-4", max: 3 },
+      rows: [
+        { target: "IN1-1",  from: counter() },
+        { target: "IN1-4",  from: copy("IN1-4"), label: "Insurer", required: true },
+        { target: "IN1-22", from: counter(), label: "Coverage Priority" },
+      ],
+    },
+  ],
+};
+```
+
+That one object drives four things:
+
+| | |
+|---|---|
+| `bun bench.ts` | runs it, and the message comes out |
+| `bun check.ts` | proves it against golden files |
+| `bun trace.ts` | the field table you hand the receiving team |
+| `bun emit.ts` | the IRIS DTL class, ObjectScript and all |
+
+Change a row and all four change together, or none of them do. There is no
+second copy to keep in step.
+
+### Why data and not closures
+
+A rule could just as easily be a function. It is a tagged union instead, so the
+spec stays serializable: the GUI can edit it as a form rather than as code, and
+a backend for a second engine is a pure function over the same object.
+
+There is deliberately no `raw(javascript)` escape hatch inside a spec. The
+moment one exists, the JavaScript side can express things the ObjectScript side
+cannot, which is precisely the split this design closes. When the vocabulary is
+short of something, the vocabulary grows.
+
+### The completeness test
+
+`spec.test.ts` walks `SOURCE_KINDS` and `STEP_KINDS` and asserts that **every**
+backend handles **every** kind. Add a source kind, teach it to the runner only,
+and the build fails naming the backend you forgot. A vocabulary that one backend
+understands and another silently ignores is the failure this design exists to
+prevent, so it is a compile-time failure rather than a production one.
+
+### What is in the vocabulary
+
+| | |
+|---|---|
+| Sources | `copy`, `literal`, `firstOf`, `lookup`, `counter`, `event`, `pickRepeat`, `fromFirst`, `todo` |
+| Steps | `date8`, `truncate`, `upper`, `stripDelims`, `stripChars`, `defaultTo` |
+| Unmapped branches | `blank()`, `passthrough()`, `constant(v)`, `{ error: true }` |
+| Block controls | `group`, `repeat.over`, `repeat.skipWhenEmpty`, `repeat.max` |
+
+### Things it says out loud
+
+Every one of these is silent in a hand-written transform, and each one has cost
+somebody a go-live:
+
+- **An empty lookup table returns the unmapped branch for every message.** It
+  looks exactly like a working lookup. Both backends flag it on every run.
+- **Assigning an empty value creates the field.** That is what `<assign>` does
+  in a DTL, so the bench does it too. Skipping empty assigns produces a shorter
+  segment than the engine, and a receiver reading by ordinal position sees a
+  different message than the one that was signed off.
+- **Set ids number by output ordinal, not source repeat index.** A skipped
+  first coverage would otherwise deliver a lone `IN1` numbered 2, with priority
+  2 and no priority 1.
+- **`firstOf` says which path it actually used.** "We map PID-4" and "PID-4 is
+  empty at this site" are different statements.
+- **Skipped and capped repetitions are counted.** Nothing else on the wire shows
+  that three coverages arrived and one was dropped.
+- **`||` binds looser than `&&`**, so the emitted routing condition parenthesises
+  the trigger group. Unparenthesised, one requirement term lets everything else
+  through.
+
+### Generating the ObjectScript
+
+```powershell
+bun emit.ts > MyTransform.cls        # diagnostics go to stderr, so the file stays clean
+bun emit.ts iris                     # same thing, named explicitly
+```
+
+The emitter cannot check four things for you, and says so in the class header:
+the DocTypes against your own schema browser, whether a target segment sits
+inside a group, whether every lookup table has rows, and the routing rule.
+
+A wrong DocType **fails closed**: paths stop resolving, the output comes out
+empty, and nothing useful reaches the log. Same for a grouped segment addressed
+without its group — `target.{IN1(1):2}` resolves to nothing where
+`target.{INSURANCEgrp(1).IN1:2}` works, with the same silence.
+
+### A second engine later
+
+`emit/iris.ts` is the only backend shipped, because IRIS is the engine in front
+of us. `emit.ts` dispatches on a name and the completeness test already knows
+how to fail a half-finished backend, so adding one is a new file and a new row
+in a table, not a rewrite.
+
+---
+
 ## The MSH off-by-one
 
 `MSH-1` **is** the field separator and `MSH-2` **is** the encoding characters, so
@@ -145,14 +279,17 @@ declares `!` as its field separator parses correctly.
 
 ---
 
-## Mapping tables: `toolbox.ts`
+## Flat-record extraction: `toolbox.ts`
 
-`transform.ts` tells you what the output is. It does not tell you *why* a field
-came out empty, which source path fed it, or which of five rules quietly did
-nothing. When you are reverse-engineering somebody else's interface, or writing
-a spec for a receiving team, that "why" is the whole deliverable.
+The spec above targets HL7 out. `toolbox.ts` targets everything else: a CSV, a
+billing record, a REST payload, anything where the destination is a flat list of
+named fields rather than segments. Same idea, different shape, and it does the
+one thing the spec deliberately does not, which is turn **one message into N
+records**.
 
-So declare the mapping as data instead:
+Use `spec.ts` when the output is HL7 and an engine has to run it. Use this when
+you are pulling a flat extract out of a message, or reverse-engineering a feed
+before you know what the interface is yet.
 
 ```ts
 import { Message } from "./hl7";
@@ -233,19 +370,23 @@ you about them.
 
 | File | |
 |------|--|
-| `transform.ts` | **the file you edit** |
-| `toolbox.ts` | declarative mapping tables and the field trace |
+| `transform.ts` | **the file you edit.** Holds the spec |
+| `spec.ts` | the vocabulary: source kinds, step kinds, `validate` |
+| `run.ts` | the runner. Walks the spec and produces the message |
+| `trace.ts` | the same walk, rendered as the mapping document |
+| `emit.ts` | picks a backend and writes its transformation language |
+| `emit/iris.ts` | the IRIS DTL backend |
 | `hl7.ts` | parse, serialize, path lookup |
 | `bench.ts` | the stdin/stdout wrapper |
-| `gui.ts` + `gui.html` | the local browser UI |
-| `hl7.test.ts` + `toolbox.test.ts` + `dtl.test.ts` | 78 tests |
-| `sample.hl7` | synthetic ADT^A01 |
 | `check.ts` | the golden gate |
+| `gui.ts` + `gui.html` | the local browser UI |
+| `toolbox.ts` | flat-record extraction and its field trace |
+| `hl7.test.ts` + `toolbox.test.ts` + `spec.test.ts` | 187 tests |
+| `sample.hl7` | synthetic ADT^A01 |
 | `classify.ts` | diff what you have against what you want |
 | `patterns.ts` | twelve moves, each with its IRIS DTL |
 | `WORKFLOW.md` | **start here.** New interface to IRIS, eight steps |
 | `METHOD.md` | the five questions, path syntax, the traps |
-| `dtl.ts` | spec types plus the DTL emitter, and a worked example |
 
 ## PHI
 
