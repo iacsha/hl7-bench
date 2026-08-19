@@ -74,6 +74,16 @@ textarea, .out, .mono {
   white-space: pre; overflow: auto; tab-size: 2;
 }
 .out .segid { color: var(--seg); font-weight: 600; }
+.picker { display: none; flex: 0 0 auto; max-height: 50%; overflow: auto;
+  border-bottom: 1px solid var(--border); background: var(--panel); padding: 8px 12px; }
+.picker.on { display: block; }
+.picker .prow { padding: 1px 0; }
+.picker .prow label { display: flex; align-items: center; gap: 8px; cursor: pointer;
+  min-width: 0; font: 12px/1.6 var(--mono); }
+.picker .pid { color: var(--seg); font-weight: 600; flex: 0 0 62px; }
+.picker .pcount { color: var(--text); flex: 0 0 74px; }
+.picker .ptext { color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.picker .pbar { display: flex; gap: 6px; align-items: center; margin-top: 9px; }
 .out .sep { color: var(--sep); }
 .out .chg { background: var(--chg-bg); color: var(--chg-text); border-radius: 2px; }
 .diag { font: 12px/1.6 var(--mono); padding: 10px 12px; white-space: pre-wrap; overflow: auto; flex: 1 1 auto; margin: 0; }
@@ -155,7 +165,11 @@ input.md { width: 116px; }
 <main>
   <div class="col">
     <section class="pane half">
-      <h2>Message in <span class="hint" id="msgfile"></span></h2>
+      <h2>Message in
+        <button id="grab" class="tiny" type="button" title="Build spec rows from the segments in this message">Copy segments to spec</button>
+        <span class="hint" id="msgfile"></span>
+      </h2>
+      <div class="picker" id="picker"></div>
       <textarea id="message" spellcheck="false"></textarea>
     </section>
     <section class="pane half">
@@ -916,9 +930,183 @@ async function load() {
 }
 
 // ---------------------------------------------------------------------------
+// Copy segments out of the message and into the spec
+//
+// Typing a row per field for a segment that mostly passes straight through is
+// the slowest part of describing an interface, and it is the part with nothing
+// to think about. This reads the message on the left, and for every segment you
+// tick it writes one copy() row per populated field.
+//
+// What comes out is a starting point, not an answer. Every row lands as a
+// straight copy. The fields that need a lookup, a firstOf, a literal or a date
+// step are yours to change, and the ones the receiver does not want are yours
+// to delete. Nothing is written to disk until Ctrl+Enter.
+// ---------------------------------------------------------------------------
+
+/**
+ * MSH-1 is the field separator and MSH-2 is the encoding characters. Neither is
+ * a value you map. MSH-1 cannot be assigned at all, and MSH-2 is written by
+ * whatever emits the message, so a copy() row for either one is a row that
+ * throws or a row that lies. The picker never offers them.
+ */
+const NOT_COPYABLE = { MSH: [1, 2] };
+
+/**
+ * Field numbers carrying something in ANY occurrence of this segment.
+ *
+ * Reading only the first occurrence is the obvious version and it is wrong.
+ * The first NK1 on a message often carries three fields and the second carries
+ * ten, so the first one alone would quietly decide that seven fields the sender
+ * populates do not exist. Union across every occurrence instead, then let the
+ * empty ones be deleted by hand.
+ */
+function copyableFields(segs) {
+  const list = [].concat(segs);
+  const skip = NOT_COPYABLE[list[0].id] ?? [];
+  const out = new Set();
+  for (const seg of list) {
+    for (let f = 1; f <= seg.fieldCount; f++) {
+      if (skip.includes(f)) continue;
+      if (seg.getField(f) === "") continue;
+      out.add(f);
+    }
+  }
+  return [...out].sort((a, b) => a - b);
+}
+
+const existingBlock = (id) => spec.blocks.find((b) => b.id === id);
+
+function renderPicker() {
+  const host = $("picker");
+  host.textContent = "";
+
+  let msg;
+  try {
+    msg = new Message($("message").value);
+  } catch (err) {
+    host.appendChild(el("div", { class: "note", text: `Cannot read this message: ${err.message}` }));
+    host.appendChild(el("div", { class: "pbar" }, [btn("close", "hide this list", () => togglePicker(false))]));
+    return;
+  }
+
+  host.appendChild(el("div", { class: "note", text: "Every field below arrives as a straight copy. MSH-9 and MSH-10 usually want event() and the control id rather than a copy, and any coded field usually wants a lookup, so treat this as the first draft of the segment." }));
+
+  // One row per segment id, not per occurrence. A block for NK1 already covers
+  // every NK1 on the wire, so listing three of them would only invite three
+  // identical blocks.
+  const seen = new Map();
+  for (const s of msg.segments) {
+    if (!seen.has(s.id)) seen.set(s.id, { id: s.id, segs: [] });
+    seen.get(s.id).segs.push(s);
+  }
+
+  const boxes = [];
+  for (const info of seen.values()) {
+    info.count = info.segs.length;
+    info.first = info.segs[0];
+    const fields = copyableFields(info.segs);
+    const already = !!existingBlock(info.id);
+
+    const box = el("input", { type: "checkbox" });
+    // Default the tick to the segments you do not have yet, because that is the
+    // usual reason to open this at all.
+    box.checked = !already && fields.length > 0;
+    box.dataset.id = info.id;
+    boxes.push(box);
+
+    const count = `${fields.length} field${fields.length === 1 ? "" : "s"}`;
+    const tail = info.count > 1 ? ` x${info.count}` : "";
+    const note = already ? "  [in the spec already]" : "";
+
+    host.appendChild(el("div", { class: "prow" }, [
+      el("label", {}, [
+        box,
+        el("span", { class: "pid", text: info.id + tail }),
+        el("span", { class: "pcount", text: count }),
+        el("span", { class: "ptext", text: info.first.toString() + note }),
+      ]),
+    ]));
+  }
+
+  host.appendChild(el("div", { class: "pbar" }, [
+    btn("all", "tick every segment", () => boxes.forEach((b) => { b.checked = true; })),
+    btn("none", "clear the selection", () => boxes.forEach((b) => { b.checked = false; })),
+    btn("Add to spec", "build a segment block per ticked line", () => {
+      addSegments(msg, boxes.filter((b) => b.checked).map((b) => b.dataset.id));
+    }),
+    btn("close", "hide this list", () => togglePicker(false)),
+  ]));
+}
+
+/**
+ * Build a block per selected segment id, one copy() row per populated field.
+ *
+ * Rows that are already in the block are left alone, so running this a second
+ * time after the message grows a field adds only the new one and never
+ * disturbs the mapping you have already corrected by hand.
+ */
+function addSegments(msg, ids) {
+  if (ids.length === 0) {
+    setStatus("nothing ticked", "edited");
+    return;
+  }
+
+  let added = 0;
+  let skipped = 0;
+  let newBlocks = 0;
+
+  for (const id of ids) {
+    const occurrences = msg.all(id);
+    if (occurrences.length === 0) continue;
+
+    let block = existingBlock(id);
+    if (!block) {
+      block = { id, rows: [] };
+      // More than one on the wire means the spec has to say so, or only the
+      // first one is ever delivered.
+      if (occurrences.length > 1) block.repeat = { over: id };
+      spec.blocks.push(block);
+      newBlocks++;
+    }
+
+    const have = new Set(block.rows.map((r) => r.target));
+    for (const f of copyableFields(occurrences)) {
+      const target = `${id}-${f}`;
+      if (have.has(target)) {
+        skipped++;
+        continue;
+      }
+      const from = SOURCE_DEFAULT.copy();
+      from.path = target;
+      block.rows.push({ target, from });
+      have.add(target);
+      added++;
+    }
+  }
+
+  markEdited();
+  renderSpec();
+  schedulePreview();
+  togglePicker(false);
+
+  const bits = [`${added} field${added === 1 ? "" : "s"} added`];
+  if (newBlocks) bits.push(`${newBlocks} new segment${newBlocks === 1 ? "" : "s"}`);
+  if (skipped) bits.push(`${skipped} already mapped`);
+  setStatus(`${bits.join(", ")}. All copies. Ctrl+Enter writes transform.ts`, "edited");
+}
+
+function togglePicker(on) {
+  const host = $("picker");
+  const show = on === undefined ? !host.classList.contains("on") : on;
+  host.classList.toggle("on", show);
+  if (show) renderPicker();
+}
+
+// ---------------------------------------------------------------------------
 // Wiring
 // ---------------------------------------------------------------------------
 
+$("grab").addEventListener("click", () => togglePicker());
 $("run").addEventListener("click", run);
 $("reload").addEventListener("click", () => {
   if (dirty && !confirm("Reload from disk and lose the edits you have not written yet?")) return;

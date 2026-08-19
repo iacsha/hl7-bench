@@ -202,6 +202,31 @@ the dropdowns are built from the vocabulary the server reports rather than from
 a list inside the page, so a kind added to `spec.ts` and not to the page shows
 up as a visible gap instead of an option that quietly does nothing.
 
+**`Copy segments to spec`** is the fast way to start. It sits on the Message in
+header, reads the message in front of you, and lists every segment id it found
+with the number of populated fields and the raw line. Tick the ones you want and
+press `Add to spec`. Each ticked segment becomes a block, and every field that
+carries something in any occurrence of that segment becomes one `copy()` row.
+
+That output is a first draft, not a mapping. Everything lands as a straight
+copy, so the coded fields still need their lookups, `MSH-9` and `MSH-10` still
+want `event()` and a real control id, and the fields the receiver never asked
+for still need deleting. It saves the typing, not the thinking.
+
+Details worth knowing:
+
+- **A segment that appears more than once gets `repeat: { over: <id> }`.**
+  Without it only the first occurrence is ever delivered.
+- **Fields are unioned across every occurrence.** The first `NK1` often carries
+  three fields and the second carries ten. Reading only the first would decide
+  that seven fields the sender populates do not exist.
+- **`MSH-1` and `MSH-2` are never offered.** MSH-1 is the field separator and
+  cannot be assigned; MSH-2 is written by whatever emits the message.
+- **Rows you already have are left alone.** Run it again after the sender adds a
+  field and it adds that field only, leaving the mapping you corrected by hand
+  exactly as you left it.
+- Nothing reaches disk until `Ctrl+Enter`.
+
 The right column recomputes as you type. Four of its five tabs are pure
 functions of the spec in front of you, computed without touching disk, so the
 ObjectScript tab is a live answer to "what does this become in IRIS" while you

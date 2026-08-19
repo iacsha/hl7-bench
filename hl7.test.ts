@@ -36,6 +36,32 @@ describe("non-MSH segments are not shifted", () => {
   test("empty field reads as empty string", () => expect(m.get("PID-2")).toBe(""));
 });
 
+describe("fieldCount finds the end of a segment", () => {
+  const m = new Message(SAMPLE);
+
+  // The GUI walks 1..fieldCount to offer a copy() row per populated field.
+  // getField returns "" past the end and cannot tell absent from empty, so
+  // without a real edge the walk is a guess about how far to probe.
+  test("MSH counts to 12, its last field", () => expect(m.seg("MSH")!.fieldCount).toBe(12));
+  test("and MSH-12 is the last thing on the line", () => expect(m.get("MSH-12")).toBe("2.5"));
+  test("PID counts to 8", () => expect(m.seg("PID")!.fieldCount).toBe(8));
+  test("OBX counts to 6", () => expect(m.seg("OBX")!.fieldCount).toBe(6));
+
+  test("one past the end reads empty", () => {
+    const pid = m.seg("PID")!;
+    expect(pid.getField(pid.fieldCount + 1)).toBe("");
+  });
+
+  test("the last counted field is not empty on any segment here", () => {
+    for (const s of m.segments) expect(s.getField(s.fieldCount)).not.toBe("");
+  });
+
+  test("a segment with nothing but an id counts zero", () => {
+    const bare = new Message("MSH|^~\\&|A\r\nZZZ\r\n");
+    expect(bare.seg("ZZZ")!.fieldCount).toBe(0);
+  });
+});
+
 describe("repetitions", () => {
   const m = new Message(SAMPLE);
   test("counts them", () => expect(m.seg("PID")!.repCount(3)).toBe(2));

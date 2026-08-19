@@ -56,6 +56,14 @@ and the right column recomputes as you type without touching disk, so the
 ObjectScript tab answers "what does this become in IRIS" while you are still
 deciding what the interface does.
 
+`Copy segments to spec`, on the Message in header, reads the message in front of
+you and lists the segments it found. Tick some, press `Add to spec`, and each
+becomes a block with one `copy()` row per field that is populated in any
+occurrence of it. A segment that appears more than once gets a `repeat`. Rows
+you already have are left alone, so a second run adds only what the message
+grew. It is a first draft: every row is a straight copy, and the lookups, the
+control id and the deletions are still yours.
+
 `Ctrl+Enter` validates, rewrites the spec literal in `transform.ts`, and runs
 it. A spec that does not validate is not written. Everything above and below
 the literal survives byte for byte, comments inside it do not, and the first
@@ -96,7 +104,7 @@ Get-Content message.hl7 -Raw | bun bench.ts
 1. Download `bun-windows-x64.zip` from [bun releases](https://github.com/oven-sh/bun/releases).
 2. Extract `bun.exe` anywhere writable. `C:\Users\<you>\tools\` is fine.
 3. Clone or unzip this repo next to it.
-4. `bun test`, 212 tests, no network, no dependencies.
+4. `bun test`, 219 tests, no network, no dependencies.
 
 Nothing is installed. Nothing touches the registry. Notepad++ has an official
 portable build too, so editor, plugin, and bench all fit on a stick.
@@ -394,7 +402,7 @@ you about them.
 | `serialize.ts` | prints a spec back into `transform.ts`, so the GUI can save |
 | `gui.ts` + `gui.html` | the local browser spec editor |
 | `toolbox.ts` | flat-record extraction and its field trace |
-| `hl7.test.ts` + `toolbox.test.ts` + `spec.test.ts` + `serialize.test.ts` | 212 tests |
+| `hl7.test.ts` + `toolbox.test.ts` + `spec.test.ts` + `serialize.test.ts` | 219 tests |
 | `sample.hl7` | synthetic ADT^A01 |
 | `classify.ts` | diff what you have against what you want |
 | `patterns.ts` | twelve moves, each with its IRIS DTL |

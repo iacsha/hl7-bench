@@ -124,6 +124,18 @@ export class Segment {
     this.setField(p.field, reps.join(this.d.rep));
   }
 
+  /**
+   * Highest field number this segment carries, so a caller can walk it.
+   *
+   * `getField` returns "" past the end and cannot tell an absent field from an
+   * empty one, so probing for the end is guesswork. This is the real edge.
+   * MSH counts from 1 even though MSH-1 has no slot in `parts`, which is the
+   * same off-by-one `indexOf` exists to absorb.
+   */
+  get fieldCount(): number {
+    return this.isMSH ? this.parts.length : this.parts.length - 1;
+  }
+
   /** How many repetitions field `f` currently has. */
   repCount(f: number): number {
     const v = this.getField(f);
