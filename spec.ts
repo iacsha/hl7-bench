@@ -216,6 +216,28 @@ export interface Spec {
     targetDocType: string;
     /** "new" builds a fresh target, which is what block order below describes. */
     create?: "new" | "copy";
+    /**
+     * What the GENERATED CLASS logs at run time, inside IRIS. Nothing to do
+     * with HL7_BENCH_LOG, which is the bench writing files on your machine.
+     *
+     *   "off"    the class says nothing
+     *   "warn"   $$LOGWARNING on an unmapped lookup code and on a required
+     *            target that came out empty. Default.
+     *   "trace"  the above plus $$TRACE per assigned field, which shows up in
+     *            Visual Trace when tracing is on for the host
+     *
+     * `warn` is the default because both things it reports are silent failures
+     * otherwise: the message is delivered, it looks well formed, and the field
+     * is wrong or absent. The cost is real and worth stating -- a sender that
+     * routinely emits an unmapped code produces one Event Log warning PER
+     * MESSAGE until the table is fixed, which is the point, but it will fill
+     * the log while you get around to it.
+     *
+     * Gate refusals are deliberately not in here. The gate belongs in the
+     * routing rule, so a refused message never reaches the transform at all;
+     * there is nothing in the DTL to log. `emit.ts` prints the rule condition.
+     */
+    log?: "off" | "warn" | "trace";
   };
   /**
    * The twin of Ens.Util.LookupTable. Rows live here so the bench and the

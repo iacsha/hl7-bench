@@ -223,8 +223,24 @@ if (import.meta.main) {
     raw = readFileSync(fallback, "utf8");
   }
 
+  const { logEvent } = await import("./log");
+
   const m = new Message(raw);
-  process.stdout.write(trace(spec, m));
+  const doc = trace(spec, m);
   const inv = inventory(spec, m);
+
+  // No notes here. A trace is entirely message content, so there is nothing
+  // about this run that could be logged at `full` and not at `summary`: it
+  // would be the whole document or none of it, and the document is already
+  // on stdout where you asked for it.
+  logEvent("trace", {
+    spec: spec.name,
+    source: piped.trim().length > 0 ? "stdin" : "sample.hl7",
+    segments: m.segments.length,
+    chars: doc.length + inv.length,
+    result: "ok",
+  });
+
+  process.stdout.write(doc);
   if (inv) process.stdout.write("\n" + inv);
 }

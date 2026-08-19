@@ -268,6 +268,32 @@ function stepCode(expr: string, step: Step): string {
 // Rows and blocks
 // ---------------------------------------------------------------------------
 
+/**
+ * What the generated class logs at run time. Nothing to do with the bench's
+ * own HL7_BENCH_LOG, which writes files on your machine. This one runs inside
+ * IRIS and writes to the Event Log.
+ */
+function irisLog(spec: Spec): "off" | "warn" | "trace" {
+  return spec.iris.log ?? "warn";
+}
+
+/**
+ * `$CHAR(0)` as the "not in the table" sentinel.
+ *
+ * The obvious test for an unmapped code is "did Lookup come back empty", and
+ * it is wrong for two of the three unmapped branches: with `passthrough` the
+ * fallback IS the source value and with `constant` it is a real code, so a
+ * miss and a hit are indistinguishable by result. A second Lookup with a
+ * value no table can contain answers the question the fallback erases. It
+ * costs one extra global read per lookup per message, only when logging is on.
+ */
+const MISS = "$CHAR(0)";
+
+/** A `<code>` block. Indented rather than inlined so the DTL stays readable. */
+function code(indent: string, body: string): string[] {
+  return [`${indent}<code>`, `${indent}  <![CDATA[ ${body} ]]>`, `${indent}</code>`];
+}
+
 function emitRow(st: State, row: Row, scope: Scope, indent: string, out: string[]): void {
   if (row.note) out.push(`${indent}<!-- ${text(row.note)} -->`);
 
@@ -286,7 +312,46 @@ function emitRow(st: State, row: Row, scope: Scope, indent: string, out: string[
   for (const step of row.via ?? []) value = stepCode(value, step);
 
   const prop = `target.${dtlPath(row.target, scope.targetPrefix)}`;
+  const level = irisLog(st.spec);
+  const label = row.label ?? row.target;
+
+  // An unmapped code, reported before the assign that swallows it. This is
+  // one of exactly two silent failures the class can see for itself: the
+  // message is delivered, it is well formed, and the field is wrong.
+  if (level !== "off" && row.from.kind === "lookup") {
+    const ref = `source.${dtlPath(row.from.path, scope.sourcePrefix)}`;
+    const t = os(row.from.table);
+    // Built with os() on both halves rather than typed as one literal: a
+    // table name or a label is free text out of the spec, and one quote in it
+    // would otherwise close the ObjectScript string early and fail to compile.
+    const where =
+      row.from.path === row.target ? row.target : `${row.from.path} to ${row.target}`;
+    const msg =
+      `${os(`${row.from.table} has no row for "`)}_${ref}_${os(`" (${where})`)}`;
+    out.push(
+      ...code(
+        indent,
+        `if $LENGTH(${ref}),..Lookup(${t},${ref},${MISS})=${MISS} { $$$LOGWARNING(${msg}) }`,
+      ),
+    );
+  }
+
   out.push(`${indent}<assign value='${attr(value)}' property='${attr(prop)}' action='set' />`);
+
+  // The other silent failure: a required target that came out empty. Checked
+  // on the TARGET after the assign rather than on the source before it, so it
+  // catches a source that was populated and a step that emptied it.
+  if (level !== "off" && row.required) {
+    const msg = os(`${row.target} (${label}) is required and came out empty`);
+    out.push(...code(indent, `if '$LENGTH(${prop}) { $$$LOGWARNING(${msg}) }`));
+  }
+
+  // A trace carries the VALUE, which is message content. That is not a new
+  // exposure -- Visual Trace already shows you the whole message either side
+  // of this transform -- but it is the reason this is not the default.
+  if (level === "trace") {
+    out.push(...code(indent, `$$$TRACE(${os(`${row.target} = `)}_${prop})`));
+  }
 }
 
 function emitRepeat(st: State, block: Block, index: number, out: string[]): void {
@@ -404,6 +469,26 @@ export function emitIris(spec: Spec): string {
     out.push(`///`, `/// Out of scope, decided rather than overlooked:`);
     for (const s of spec.outOfScope) out.push(`///   ${s}`);
   }
+
+  const level = irisLog(spec);
+  if (level !== "off") {
+    out.push(
+      `///`,
+      `/// Run-time logging: ${level}.`,
+      level === "warn"
+        ? `///   $$$LOGWARNING on an unmapped lookup code and on an empty required field.`
+        : `///   $$$LOGWARNING as above, plus $$$TRACE per assigned field.`,
+      `///   A sender that routinely emits an unmapped code writes one Event Log`,
+      `///   warning PER MESSAGE until the table is fixed. Set iris.log to "off"`,
+      `///   in the spec if that is not what you want.`,
+    );
+  }
+
+  // The macros below are Ensemble's. Without this line the class does not
+  // compile, and the error names the macro rather than the missing include.
+  // It goes at the TOP of the file, ahead of the header comment: a /// block
+  // only documents the Class when it sits immediately above it.
+  if (level !== "off") out.unshift(`Include Ensemble`, ``);
 
   out.push(
     `Class ${className} Extends Ens.DataTransformDTL [ DependsOn = (EnsLib.HL7.Message, EnsLib.HL7.Message) ]`,

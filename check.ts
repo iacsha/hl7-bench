@@ -42,6 +42,7 @@ process.env.HL7_BENCH_NOTES = "off";
 
 import { Message } from "./hl7";
 import { transform } from "./transform";
+import { logEvent } from "./log";
 import { readdirSync, readFileSync, existsSync } from "node:fs";
 import { join } from "node:path";
 
@@ -101,9 +102,11 @@ function run(c: Case): boolean {
       transform(msg);
     } catch (e) {
       const m = e instanceof Error ? e.message : String(e);
+      logEvent("check", { case: c.name, kind: "reject", result: "pass" }, [m]);
       console.log(`PASS  ${c.name}  refused: ${m.slice(0, 58)}${m.length > 58 ? "..." : ""}`);
       return true;
     }
+    logEvent("check", { case: c.name, kind: "reject", result: "fail", why: "not-refused" });
     console.log(`FAIL  ${c.name}  was NOT refused -- it transformed and would have been delivered`);
     return false;
   }
@@ -111,7 +114,9 @@ function run(c: Case): boolean {
   try {
     transform(msg);
   } catch (e) {
-    console.log(`FAIL  ${c.name}  threw: ${e instanceof Error ? e.message : String(e)}`);
+    const m = e instanceof Error ? e.message : String(e);
+    logEvent("check", { case: c.name, kind: "golden", result: "fail", why: "threw" }, [m]);
+    console.log(`FAIL  ${c.name}  threw: ${m}`);
     return false;
   }
 
@@ -126,14 +131,30 @@ function run(c: Case): boolean {
   }
 
   if (bad.length === 0) {
+    logEvent("check", { case: c.name, kind: "golden", segments: got.length, result: "pass" });
     console.log(`PASS  ${c.name}  ${got.length} segments identical`);
     return true;
   }
+  // The diff lines ARE message content, so they are notes and land on disk
+  // only at `full`. At `summary` the log says which case failed and how many
+  // lines differed, which is enough to know to go and look.
+  logEvent(
+    "check",
+    { case: c.name, kind: "golden", segments: got.length, differing: bad.length, result: "fail" },
+    bad,
+  );
   console.log(`FAIL  ${c.name}  ${bad.length} differing line(s):\n${bad.join("\n")}`);
   return false;
 }
 
 const results = chosen.map(run);
 const failed = results.filter((r) => !r).length;
+logEvent("check", {
+  filter: filter ?? "(all)",
+  cases: results.length,
+  passed: results.length - failed,
+  failed,
+  result: failed === 0 ? "pass" : "fail",
+});
 console.log(`\n${results.length - failed}/${results.length} cases passed`);
 process.exit(failed === 0 ? 0 : 1);

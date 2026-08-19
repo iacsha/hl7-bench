@@ -30,3 +30,9 @@ PORT-TO-IRIS.md
 # class emitted from a real interface carries that interface's class name, its
 # DocTypes and its field notes. Regenerate it with `bun emit.ts` instead.
 *.cls
+
+# Logs. Off by default; `HL7_BENCH_LOG=full` writes diagnostic note text, and a
+# note can carry a source value (an unmapped lookup code, whatever a `require`
+# rule read). The authoring log records spec names and shapes. Neither belongs
+# in git.
+logs/

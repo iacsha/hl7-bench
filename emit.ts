@@ -18,6 +18,7 @@
 import { spec } from "./transform";
 import { emitIris, routingCondition } from "./emit/iris";
 import { emptyTables, validate } from "./spec";
+import { logEvent } from "./log";
 
 const BACKENDS: Record<string, (s: typeof spec) => string> = {
   iris: emitIris,
@@ -35,18 +36,34 @@ if (!backend) {
 // from a broken spec is worse than no class, because it looks finished.
 const problems = validate(spec);
 if (problems.length > 0) {
+  // Validation problems name rows and paths, never message values, so they
+  // would be safe as fields. They go in as notes anyway: one rule about what
+  // reaches disk at `summary` is easier to trust than a rule with exceptions.
+  logEvent("emit", { spec: spec.name, engine: which, problems: problems.length, result: "invalid" }, problems);
   process.stderr.write(`Spec "${spec.name}" has ${problems.length} problem(s):\n`);
   for (const p of problems) process.stderr.write(`  - ${p}\n`);
   process.exit(1);
 }
 
-process.stdout.write(backend(spec));
+const artifact = backend(spec);
+const empties = emptyTables(spec);
+
+logEvent("emit", {
+  spec: spec.name,
+  engine: which,
+  blocks: spec.blocks.length,
+  rows: spec.blocks.reduce((n, b) => n + b.rows.length, 0),
+  chars: artifact.length,
+  emptyTables: empties.length,
+  result: "ok",
+});
+
+process.stdout.write(artifact);
 
 // Diagnostics on stderr so `bun emit.ts > My.cls` still shows them and the file
 // still holds nothing but the class.
 process.stderr.write(`\nROUTING RULE CONDITION\n  ${routingCondition(spec)}\n`);
 
-const empties = emptyTables(spec);
 if (empties.length > 0) {
   process.stderr.write(
     `\nEMPTY LOOKUP TABLES (${empties.length}), each one a go-live gate:\n`,

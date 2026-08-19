@@ -28,6 +28,7 @@
 
 import { Message } from "./hl7";
 import { transform } from "./transform";
+import { logEvent } from "./log";
 import { readFileSync, existsSync } from "node:fs";
 import { join } from "node:path";
 
@@ -40,7 +41,12 @@ function die(msg: string): never {
 
 const piped = await Bun.stdin.text();
 let raw = piped;
+// Named for the log. A piped message has no filename to record, and saying
+// so is more honest than recording the fallback path for a run that never
+// touched it.
+let source = "stdin";
 if (raw.trim().length === 0) {
+  source = FALLBACK;
   // Run by hand with no pipe -- use the sample so the thing is never a no-op.
   if (!existsSync(FALLBACK)) die(`No message on stdin and no ${FALLBACK} to fall back to.`);
   raw = readFileSync(FALLBACK, "utf8");
@@ -52,7 +58,9 @@ let msg: Message;
 try {
   msg = new Message(raw);
 } catch (e) {
-  die(`Could not parse the message.\n${e instanceof Error ? e.message : String(e)}`);
+  const detail = e instanceof Error ? e.message : String(e);
+  logEvent("bench", { source, bytes: raw.length, result: "unparseable" }, [detail]);
+  die(`Could not parse the message.\n${detail}`);
 }
 
 try {
@@ -61,6 +69,10 @@ try {
   // The error a learner hits constantly. Show the stack: the line number in
   // transform.ts is the single most useful thing on the screen.
   const detail = e instanceof Error ? (e.stack ?? e.message) : String(e);
+  // The detail goes in as a note, not a field. A gate refusal reaches here
+  // carrying the value that was refused, and a `require` rule can read any
+  // path, so this text is exactly as sensitive as the notes are.
+  logEvent("bench", { source, bytes: raw.length, result: "threw" }, [detail]);
   die(`transform() threw:\n${detail}`);
 }
 
@@ -73,6 +85,16 @@ const oi = process.argv.findIndex((a) => a === "-o" || a === "--out");
 const outFile = oi === -1 ? null : process.argv[oi + 1];
 
 if (oi !== -1 && !outFile) die("-o needs a filename after it.");
+
+logEvent("bench", {
+  source,
+  out: outFile ?? "stdout",
+  bytesIn: raw.length,
+  bytesOut: out.length,
+  segments: msg.segments.length,
+  ms,
+  result: "ok",
+});
 
 if (outFile) {
   await Bun.write(outFile, out);

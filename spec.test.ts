@@ -639,6 +639,92 @@ describe("emitIris", () => {
 // Completeness. The test that keeps the backends honest.
 // ---------------------------------------------------------------------------
 
+describe("iris.log puts the class's own logging in the spec", () => {
+  const withLog = (log: Spec["iris"]["log"], blocks?: Spec["blocks"]) =>
+    emitIris(base({
+      iris: { sourceDocType: "2.3:ADT_A01", targetDocType: "2.3.1:ADT_A05", log },
+      blocks: blocks ?? [{
+        id: "PID",
+        rows: [
+          { target: "PID-3", from: copy("PID-3.1"), label: "MRN", required: true },
+          { target: "PID-8", from: lookup("Sex", "PID-8", blank()) },
+        ],
+      }],
+    }));
+
+  test("warn is the default, because both things it catches are silent", () => {
+    expect(withLog(undefined)).toContain("$$$LOGWARNING");
+  });
+
+  test("off emits no macros at all", () => {
+    const out = withLog("off");
+    expect(out).not.toContain("$$$");
+  });
+
+  test("off does not include Ensemble either, since nothing needs it", () => {
+    expect(withLog("off")).not.toContain("Include Ensemble");
+  });
+
+  // Without the include the class does not compile, and the error names the
+  // macro rather than the missing line, which is a bad half hour.
+  test("logging on pulls in the macro definitions", () => {
+    expect(withLog("warn").startsWith("Include Ensemble")).toBe(true);
+  });
+
+  test("a required target is checked AFTER the assign, on the target", () => {
+    const out = withLog("warn");
+    expect(out).toContain("if '$LENGTH(target.{PID:3}) { $$$LOGWARNING(");
+    expect(out.indexOf("property='target.{PID:3}'")).toBeLessThan(
+      out.indexOf("if '$LENGTH(target.{PID:3})"),
+    );
+  });
+
+  test("the warning names the label, not just the path", () => {
+    expect(withLog("warn")).toContain("PID-3 (MRN) is required and came out empty");
+  });
+
+  // The obvious test -- did Lookup come back empty -- cannot tell a miss from
+  // a hit under passthrough or constant, because the fallback IS a real value.
+  test("an unmapped code is detected with a sentinel, not with emptiness", () => {
+    expect(withLog("warn")).toContain('..Lookup("Sex",source.{PID:8},$CHAR(0))=$CHAR(0)');
+  });
+
+  test("the lookup check runs before the assign that swallows the miss", () => {
+    const out = withLog("warn");
+    expect(out.indexOf("$CHAR(0))=$CHAR(0)")).toBeLessThan(
+      out.indexOf("property='target.{PID:8}'"),
+    );
+  });
+
+  test("a passthrough fallback still gets a check, which is the whole point", () => {
+    const out = withLog("warn", [{
+      id: "PID",
+      rows: [{ target: "PID-8", from: lookup("Sex", "PID-8", passthrough()) }],
+    }]);
+    expect(out).toContain("$CHAR(0))=$CHAR(0)");
+  });
+
+  test("warn does not trace", () => {
+    expect(withLog("warn")).not.toContain("$$$TRACE");
+  });
+
+  test("trace adds one per assigned field and keeps the warnings", () => {
+    const out = withLog("trace");
+    expect(out).toContain("$$$TRACE");
+    expect(out).toContain("$$$LOGWARNING");
+  });
+
+  test("a quote in a label cannot close the ObjectScript string early", () => {
+    const out = withLog("warn", [{
+      id: "PID",
+      rows: [{ target: "PID-3", from: copy("PID-3.1"), label: 'the "real" MRN', required: true }],
+    }]);
+    expect(out).toContain('the ""real"" MRN');
+  });
+});
+
+// ---------------------------------------------------------------------------
+
 describe("every vocabulary kind is handled by every backend", () => {
   // One sample per kind. Adding a kind to spec.ts without adding it here fails
   // the first test below, and without handling it in a backend fails the rest.

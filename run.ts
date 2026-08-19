@@ -16,6 +16,7 @@
  */
 
 import { Message, Segment, type Delims } from "./hl7";
+import { logEvent } from "./log";
 import {
   validate, segmentOf, fieldOf,
   type Spec, type Source, type Step, type Row, type Block,
@@ -54,6 +55,8 @@ export interface RunResult {
   missing: string[];
   /** Everything worth saying on stderr: TODOs, unmapped codes, empty tables. */
   notes: string[];
+  /** How many target fields were actually assigned. Counted for the log. */
+  assigned: number;
 }
 
 // ---------------------------------------------------------------------------
@@ -255,6 +258,7 @@ function fill(ctx: Ctx, block: Block, out: Segment, result: RunResult): void {
     // a SHORTER segment than the engine does, and a receiver that reads by
     // ordinal position sees a different message than the one you signed off.
     out.set(row.target, value);
+    result.assigned++;
     if (row.required && value === "") result.missing.push(label);
   }
 }
@@ -319,12 +323,34 @@ export function assertRunnable(spec: Spec): void {
   }
 }
 
-/** Run a spec against a message, replacing its segments with the delivered ones. */
+/**
+ * Run a spec against a message, replacing its segments with the delivered ones.
+ *
+ * The two `logEvent` calls are the only impure thing in this file, and they do
+ * nothing at all unless HL7_BENCH_LOG is set. They live here rather than in
+ * `bench.ts` because this is the single place that holds the gate decision,
+ * the missing list and the notes together: `bench.ts` and `check.ts` both go
+ * through `transform()`, which returns nothing.
+ */
 export function runSpec(spec: Spec, msg: Message): RunResult {
   assertRunnable(spec);
-  const { event } = gate(spec, msg);
 
-  const result: RunResult = { event, missing: [], notes: [] };
+  let event: string;
+  try {
+    event = gate(spec, msg).event;
+  } catch (e) {
+    // A refusal is the interesting line in the log, not the boring one, so it
+    // gets recorded before the throw carries it away. The gate PATH is logged
+    // and the message is not, because a `require` rule can read any path --
+    // including PID-3 -- and the refusal text quotes the value it found. That
+    // text is a note, and notes only land on disk at `full`.
+    logEvent("run", { spec: spec.name, gate: spec.gate.path, result: "refused" }, [
+      (e as Error).message,
+    ]);
+    throw e;
+  }
+
+  const result: RunResult = { event, missing: [], notes: [], assigned: 0 };
   const out: Segment[] = [];
 
   walk(spec, msg, event, (block, ctx) => {
@@ -374,6 +400,19 @@ export function runSpec(spec: Spec, msg: Message): RunResult {
   // and the reason `create='new'` is the DTL default: block order above IS the
   // output segment order, stated rather than implied.
   msg.segments.splice(0, msg.segments.length, ...out);
+
+  logEvent(
+    "run",
+    {
+      spec: spec.name,
+      event: result.event,
+      segments: out.length,
+      fields: result.assigned,
+      missing: result.missing.length,
+      result: result.missing.length > 0 ? "missing-required" : "ok",
+    },
+    result.notes,
+  );
 
   return result;
 }

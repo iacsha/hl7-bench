@@ -104,7 +104,7 @@ Get-Content message.hl7 -Raw | bun bench.ts
 1. Download `bun-windows-x64.zip` from [bun releases](https://github.com/oven-sh/bun/releases).
 2. Extract `bun.exe` anywhere writable. `C:\Users\<you>\tools\` is fine.
 3. Clone or unzip this repo next to it.
-4. `bun test`, 219 tests, no network, no dependencies.
+4. `bun test`, 244 tests, no network, no dependencies.
 
 Nothing is installed. Nothing touches the registry. Notepad++ has an official
 portable build too, so editor, plugin, and bench all fit on a stick.
@@ -386,6 +386,68 @@ one for you.
 operator who has to resubmit a record once per missing field will stop telling
 you about them.
 
+## Logs
+
+There are two different logs here and they answer two different questions. One
+is this bench writing files on your machine. The other is the generated class
+writing to the IRIS Event Log on a server. They share nothing.
+
+### What the bench writes
+
+Off by default, and that is deliberate. The contract is stdin in, stdout out,
+stderr for diagnostics, nothing installed and nothing left behind. A tool that
+starts dropping files because you ran it breaks that quietly for anyone piping
+it out of PipeHat or a script.
+
+| `HL7_BENCH_LOG` | |
+|---|--|
+| unset | nothing is written |
+| `summary` | one line per event in `logs/hl7-bench.log`: timestamp, tool, spec, gate decision, fields written, missing count, how many notes, result |
+| `full` | the same line, plus every diagnostic note verbatim |
+
+`HL7_BENCH_LOG_FILE=<path>` moves the bench log somewhere else. `run.ts`,
+`bench.ts`, `check.ts`, `emit.ts` and `trace.ts` all write to it.
+
+**The split is about PHI, not about verbosity.** Most notes are paths and
+counts. Two are not. An unmapped lookup names the source value that missed the
+table, and a gate refusal on a `require` rule names whatever that rule read.
+Nothing stops a table or a rule being keyed on `PID-3`, and then the log has
+MRNs in it. `summary` never writes note text. `full` is a choice you make.
+`logs/` is gitignored either way, which is a seatbelt and not permission.
+
+The GUI keeps its own log, `logs/authoring.log`, and that one is **on by
+default**, because `Ctrl+Enter` already rewrites `transform.ts` and leaves a
+`.bak`. It records what happened, not what you wrote: spec name, whether it
+validated, blocks and rows before and after, saved or not, and the bench exit
+code. The spec content itself is what git is for. `HL7_BENCH_LOG=off` silences
+it along with everything else.
+
+### What the generated class writes
+
+That is a property of the interface, so it lives in the spec:
+
+```ts
+iris: {
+  sourceDocType: "2.3:ADT_A01",
+  targetDocType: "2.3.1:ADT_A05",
+  log: "warn",              // "off" | "warn" | "trace", default "warn"
+},
+```
+
+`warn` emits `$$LOGWARNING` at exactly two places: a lookup code with no row in
+its table, and a `required` target that came out empty after the assign. Both
+are the questions you actually get asked at 2am. `trace` adds `$$TRACE` per
+assigned field, which shows up in Visual Trace when tracing is on for that host.
+`off` emits neither, and skips `Include Ensemble` entirely.
+
+Gate refusals are not in there on purpose. The gate is a routing rule, so a
+refused message never reaches the transform at all. `bun emit.ts` prints the
+rule condition above the class.
+
+One thing to know before you leave it on `warn`: a sender that routinely emits
+an unmapped code writes one Event Log warning **per message** until the table is
+fixed. That is usually what you want, right up until it is not.
+
 ## Files
 
 | File | |
@@ -402,7 +464,8 @@ you about them.
 | `serialize.ts` | prints a spec back into `transform.ts`, so the GUI can save |
 | `gui.ts` + `gui.html` | the local browser spec editor |
 | `toolbox.ts` | flat-record extraction and its field trace |
-| `hl7.test.ts` + `toolbox.test.ts` + `spec.test.ts` + `serialize.test.ts` | 219 tests |
+| `log.ts` | the log switch. Off unless `HL7_BENCH_LOG` says otherwise |
+| `hl7.test.ts` + `toolbox.test.ts` + `spec.test.ts` + `serialize.test.ts` + `log.test.ts` | 244 tests |
 | `sample.hl7` | synthetic ADT^A01 |
 | `classify.ts` | diff what you have against what you want |
 | `patterns.ts` | twelve moves, each with its IRIS DTL |

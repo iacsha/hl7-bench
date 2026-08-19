@@ -71,6 +71,7 @@ const rich = (): Spec => ({
     sourceDocType: "2.3:ADT_A01",
     targetDocType: "2.3.1:ADT_A05",
     create: "new",
+    log: "trace",
   },
   tables: {
     Sex: { M: "1", F: "2" },
@@ -173,6 +174,17 @@ describe("the serializer", () => {
   test("a spec using every kind survives the trip out and back", async () => {
     const before = rich();
     expect(stable(await roundTrip(before))).toBe(stable(before));
+  });
+
+  test("iris.log survives, because a dropped one changes what IRIS logs", async () => {
+    // The iris block is printed field by field rather than dumped, so every
+    // field needs its own line in the printer. A field the printer forgets is
+    // not a crash: the GUI saves, the spec loads, and the setting is just gone.
+    // Called out separately from the rich round-trip so the failure names it.
+    const back = await roundTrip(base({
+      iris: { sourceDocType: "2.3:ADT_A01", targetDocType: "2.3.1:ADT_A05", log: "off" },
+    }));
+    expect(back.iris.log).toBe("off");
   });
 
   test("what comes back still validates and still runs", async () => {

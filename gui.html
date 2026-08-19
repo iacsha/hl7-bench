@@ -554,6 +554,11 @@ function renderSpec() {
       el("span", { text: "create" }),
       select(spec.iris.create ?? "new", ["new", "copy"], (v) => { spec.iris.create = v; markEdited(); schedulePreview(); }),
     ]),
+    el("label", { class: "f" }, [
+      el("span", { text: "log" }),
+      select(spec.iris.log ?? "warn", ["off", "warn", "trace"], (v) => { spec.iris.log = v; markEdited(); schedulePreview(); }),
+    ]),
+    el("div", { class: "note", text: "What the generated class writes to the IRIS Event Log, not what this bench writes here. warn: one warning on an unmapped lookup code and on a required field that came out empty. trace: that plus a $$TRACE per assigned field, visible in Visual Trace. A sender that routinely emits an unmapped code writes one warning PER MESSAGE until the table is fixed." }),
   ]));
 
   // ---- tables ----------------------------------------------------------

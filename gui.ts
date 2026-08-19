@@ -52,6 +52,7 @@ import { SOURCE_KINDS, STEP_KINDS, emptyTables, validate, type Spec } from "./sp
 import { rewriteTransform } from "./serialize";
 import { trace, inventory } from "./trace";
 import { emitIris, routingCondition } from "./emit/iris";
+import { logAuthoring } from "./log";
 
 const DIR = import.meta.dir;
 const PORT = Number(process.env.BENCH_PORT ?? 7317);
@@ -266,7 +267,33 @@ const server = Bun.serve({
 
       const problems = validate(b.spec);
       const derived = derive(b.spec, message);
+
+      // The shape currently on disk, read before anything overwrites it, so
+      // the log can say what this save actually changed rather than only what
+      // it ended up as. `loadSpec` cache-busts its import, so this is the real
+      // file and not the copy this process read at startup. A transform.ts
+      // that will not import is not an error here: it is the normal state
+      // halfway through a hand edit, and it means "before" is unknown.
+      let before: Spec | null = null;
+      try {
+        before = await loadSpec();
+      } catch {
+        before = null;
+      }
+      const shape = (s: Spec | null) =>
+        s ? { blocks: s.blocks.length, rows: s.blocks.reduce((n, x) => n + x.rows.length, 0) } : null;
+      const was = shape(before);
+      const now = shape(b.spec)!;
+
       if (problems.length > 0) {
+        // Validation problems name rows and paths, not values, but they are
+        // notes for the same reason the bench's are: one rule about what lands
+        // on disk, applied everywhere, with no exceptions to remember.
+        logAuthoring(
+          { spec: b.spec.name, action: "run", blocks: now.blocks, rows: now.rows,
+            problems: problems.length, saved: "no", result: "invalid" },
+          problems,
+        );
         return json({ problems, saved: false, ...derived });
       }
 
@@ -274,6 +301,7 @@ const server = Bun.serve({
       try {
         source = rewriteTransform(read(TRANSFORM), b.spec);
       } catch (e) {
+        logAuthoring({ spec: b.spec.name, action: "run", saved: "no", result: "serialize-failed" }, [String(e)]);
         return json({ error: `Could not write transform.ts: ${String(e)}` }, 500);
       }
 
@@ -281,10 +309,30 @@ const server = Bun.serve({
         backupOnce();
         writeFileSync(TRANSFORM, source, "utf8");
       } catch (e) {
+        logAuthoring({ spec: b.spec.name, action: "run", saved: "no", result: "write-failed" }, [String(e)]);
         return json({ error: `Could not write transform.ts: ${String(e)}` }, 500);
       }
 
-      return json({ problems: [], saved: true, source, ...derived, ...runBench(message) });
+      const bench = runBench(message);
+
+      // What changed and what the bench made of it, on one line. The spec
+      // itself is not in here: that is what git is for, and a log that
+      // duplicated the file would be a worse copy of it.
+      logAuthoring({
+        spec: b.spec.name,
+        action: "run",
+        blocksBefore: was?.blocks ?? "unknown",
+        rowsBefore: was?.rows ?? "unknown",
+        blocks: now.blocks,
+        rows: now.rows,
+        saved: "yes",
+        bytes: source.length,
+        exit: bench.exitCode,
+        ms: bench.ms,
+        result: bench.exitCode === 0 ? "ok" : "bench-failed",
+      });
+
+      return json({ problems: [], saved: true, source, ...derived, ...bench });
     }
 
     if (url.pathname === "/save-message" && req.method === "POST") {

@@ -38,9 +38,11 @@ check.ts             the golden gate
 classify.ts          the in-versus-want diff
 patterns.ts          twelve moves, each with its IRIS DTL
 toolbox.ts           flat-record extraction, for non-HL7 targets
+log.ts               the log switch. Off unless HL7_BENCH_LOG says otherwise.
 METHOD.md            the doctrine
 WORKFLOW.md          this file
 messages\            gitignored. Real messages live here and nowhere else.
+logs\                gitignored. Written only when logging is on.
 ```
 
 Copy the whole folder. The PipeHat provider directory on a work box is:
@@ -489,6 +491,34 @@ never delivered rather than delivered wrong. Note the parentheses: `||` binds
 looser than `&&`, and unparenthesised, that condition would deliver every ADT
 message regardless of trigger.
 
+### What the class logs once it is running
+
+The generated class carries its own run-time logging, set in the spec so it
+travels with the interface instead of living in somebody's memory:
+
+```ts
+iris: { sourceDocType: "...", targetDocType: "...", log: "warn" },
+```
+
+Default is `"warn"`, and it puts `$$LOGWARNING` at exactly two places: a lookup
+code with no row in its table, and a `required` target that came out empty after
+the assign. Those are the two questions you get asked when a message looks wrong
+in production, and neither is answerable from the message itself.
+
+`"trace"` adds `$$TRACE` per assigned field, which appears in Visual Trace when
+tracing is enabled on that host. Good for a bring-up, expensive to leave on.
+`"off"` emits neither, and skips `Include Ensemble`.
+
+Set it in the GUI's IRIS section, or in `transform.ts`. Either way it lands in
+the class header so whoever opens the `.cls` in Studio can see what it does
+before they run it.
+
+Two things worth knowing. A sender that routinely emits an unmapped code writes
+one Event Log warning **per message** until you fix the table, which is the
+point right up until it is noise. And gate refusals are deliberately not in
+here: the gate is a routing rule, so a refused message never reaches the
+transform at all.
+
 ---
 
 ## Step 7. Into IRIS Dev
@@ -529,6 +559,21 @@ can hand somebody who asks what this interface does.
 
 ## When something goes wrong
 
+Before the table: the bench can keep a record of its own runs, which is worth
+turning on when a failure will not reproduce on demand.
+
+```powershell
+$env:HL7_BENCH_LOG = "summary"   # one line per run into logs\hl7-bench.log
+$env:HL7_BENCH_LOG = "full"      # the same, plus every diagnostic note
+Remove-Item Env:\HL7_BENCH_LOG   # back off
+```
+
+It is off unless you set it, so a scripted `bench.ts` leaves nothing behind by
+default. Use `summary` freely. Think before you use `full`: a note can name a
+source value, so a table keyed on `PID-3` puts MRNs in that file. `logs/` is
+gitignored either way. The GUI's own `logs\authoring.log` is on by default and
+records shapes and outcomes rather than content. Full detail in `README.md`.
+
 | Symptom | Cause |
 |---|---|
 | The GUI says the spec does not validate and nothing was written | Working as designed. `transform.ts` is left alone until the listed problems are fixed |
@@ -547,6 +592,8 @@ can hand somebody who asks what this interface does.
 | Every ADT reaches the receiver, whatever the trigger | Routing condition missing the parentheses around the `||` group |
 | `bun emit.ts` exits 1 and lists problems | `validate()` caught a row in the wrong block, an unknown table, a `counter()` outside a repeat, or a malformed path |
 | `bun test` fails naming a backend and a kind | A source or step kind taught to one backend and not the other. That test exists for exactly this |
+| The Event Log fills with the same unmapped-code warning | Working as designed, and it is telling you the table is short a row. Fix the table, or set `iris.log` to `"off"` if that sender is known bad and out of scope |
+| `HL7_BENCH_LOG` is set and no file appears | The value has to be `summary` or `full`. Anything else is treated as off and says so once on stderr |
 
 ## Where the rest lives
 
@@ -557,5 +604,6 @@ can hand somebody who asks what this interface does.
   the seam allows
 - `serialize.ts`: how a GUI save becomes `transform.ts` again, and exactly what
   it does and does not preserve
+- `log.ts`: the log switch, what each level writes and why the split exists
 - `toolbox.ts`: flat-record extraction, for targets that are not HL7
 - `iris-lab/recipes/`: numbered ObjectScript recipes, 01 through 18

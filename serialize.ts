@@ -154,6 +154,7 @@ export function specToSource(spec: Spec): string {
   out.push(`    sourceDocType: ${q(spec.iris.sourceDocType)},`);
   out.push(`    targetDocType: ${q(spec.iris.targetDocType)},`);
   if (spec.iris.create) out.push(`    create: ${q(spec.iris.create)},`);
+  if (spec.iris.log) out.push(`    log: ${q(spec.iris.log)},`);
   out.push("  },");
 
   const tables = Object.keys(spec.tables ?? {});
