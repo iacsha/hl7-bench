@@ -30,9 +30,10 @@ spec.ts              the vocabulary. Grows; rarely edited by hand.
 run.ts               the runner. Never edit.
 trace.ts             the mapping document. Never edit.
 emit.ts + emit\      the ObjectScript backends. Never edit.
+serialize.ts         prints a spec back into transform.ts. Never edit.
 transform.ts         YOUR WORK. One interface at a time. Holds the spec.
 bench.ts             stdin to stdout runner
-gui.ts + gui.html    the browser editor, 127.0.0.1:7317
+gui.ts + gui.html    the browser spec editor, 127.0.0.1:7317
 check.ts             the golden gate
 classify.ts          the in-versus-want diff
 patterns.ts          twelve moves, each with its IRIS DTL
@@ -175,20 +176,68 @@ here, it is usually two of them composed.
 
 ## Step 4. Write the spec
 
-Open `transform.ts`. What you are writing is one exported object. The GUI is
-still useful for watching the message change as you edit:
+What you are writing is one exported object: `spec` in `transform.ts`. Two ways
+to write it, and they are the same object either way.
+
+### In the browser
 
 ```powershell
 bun gui.ts messages\<name>.in.hl7
 ```
 
-Browser at `http://127.0.0.1:7317`. Left pane is the message, right pane is
-`transform.ts`, bottom is output and stderr. `Ctrl+Enter` runs.
+Browser at `http://127.0.0.1:7317`. Three columns:
 
-**The code pane is TypeScript, not ObjectScript.** Pasting an ObjectScript class
-in there gives you a bun parse error naming the first token of the class line,
-and nothing else. That is the only thing that error ever means. ObjectScript is
-step 6, and it is generated rather than typed.
+```
+message in          the spec, as a form         message out
+diagnostics                                     ObjectScript
+                                                mapping document
+                                                source inventory
+                                                transform.ts
+```
+
+**There is no code pane and no JavaScript.** The middle column is the spec as
+fields and dropdowns: the gate table, the DocTypes, the lookup tables, the
+segments, and one row per target field. Every kind in `spec.ts` has a form, and
+the dropdowns are built from the vocabulary the server reports rather than from
+a list inside the page, so a kind added to `spec.ts` and not to the page shows
+up as a visible gap instead of an option that quietly does nothing.
+
+The right column recomputes as you type. Four of its five tabs are pure
+functions of the spec in front of you, computed without touching disk, so the
+ObjectScript tab is a live answer to "what does this become in IRIS" while you
+are still deciding what the interface does. `Save class` writes that tab to a
+`.cls`, which is step 6 done early if you want it.
+
+`Ctrl+Enter`, or `Write and run`, is the one action that touches disk. It
+validates the spec first and refuses to write a spec that does not validate, so
+`transform.ts` never holds something the CLI would reject. Then it rewrites the
+spec literal, shells out to `bench.ts`, and fills the Message out tab with a
+field-level diff against the message you started from.
+
+Three things to know about that write:
+
+- **Only the spec literal and the `"./spec"` import are regenerated.** Every
+  byte above and below is copied through untouched: your doc comment, your
+  `transform()` shim, any helper you added.
+- **Comments inside the spec literal do not survive.** Nothing else does either
+  in a data-driven design, and it points the right way: a `//` comment in the
+  spec literal is a copy of your reasoning that only a reader of that one file
+  sees. The same sentence in a `note`, `description` or `outOfScope` prints in
+  the mapping document AND lands in the emitted DTL as a comment the next
+  engineer reads in IRIS. Put it where all three consumers can reach it.
+- **The first write of a session leaves a `transform.ts.bak`** beside the file.
+  It is gitignored.
+
+### In an editor
+
+Open `transform.ts` and type the object. Nothing about the GUI is required, and
+for a long spec an editor with multi-line edit is faster. The GUI reads whatever
+is on disk when you press `Reload from disk`, so moving between the two is free.
+
+ObjectScript is never something you type in either place. It is step 6, and it
+is generated.
+
+### The order to write it in
 
 Write the spec in this order. It is not a style preference, it is the order that
 keeps each step's assumptions true for the next:
@@ -244,8 +293,8 @@ Three rules that save the most pain:
   thought about it" look identical to the receiver otherwise.
 
 Anything a human needs to read goes in a `note` on the row or the block, or in
-`sourceInventory`. Those print to stderr on every run, show in the GUI's bottom
-pane, and `check.ts` mutes them so your PASS lines stay readable.
+`sourceInventory`. Those print to stderr on every run, show in the GUI's
+Diagnostics pane, and `check.ts` mutes them so your PASS lines stay readable.
 
 Run `bun bench.ts` as you go and iterate until the output matches your `.want`
 file by eye.
@@ -344,6 +393,10 @@ bun emit.ts > MyTransform.cls
 
 Diagnostics go to stderr, so the redirected file is clean ObjectScript. The
 routing rule condition and the empty-lookup-table warnings land on your screen.
+
+The GUI's ObjectScript tab is the same class from the same emitter, and `Save
+class` writes it to a `.cls`. Use whichever is in front of you. The command line
+is the one to put in a script.
 
 The spec drives the whole class. Each row's source becomes an expression:
 
@@ -453,7 +506,11 @@ can hand somebody who asks what this interface does.
 
 | Symptom | Cause |
 |---|---|
-| `error: Expected ";" but found "<word>"` from the GUI | ObjectScript pasted into the JavaScript pane |
+| The GUI says the spec does not validate and nothing was written | Working as designed. `transform.ts` is left alone until the listed problems are fixed |
+| A comment you wrote inside the spec literal is gone after a GUI save | Expected. Put it in a `note`, `description` or `outOfScope`, where the document and the DTL both carry it |
+| The GUI shows `no form for "<kind>"` on a row | A kind exists in `spec.ts` with no form in `gui.html`. Edit that row in `transform.ts` and add the form |
+| A GUI save deleted an import your transform needed | `serialize.ts` regenerates only the `"./spec"` import. Restore from `transform.ts.bak` and open an issue, because that is a serializer bug |
+| `bun gui.ts` exits with `EADDRINUSE` | An older GUI still holds 7317. Close that terminal |
 | Golden diff fails on byte one, output looks identical | UTF-8 BOM from a PowerShell `>` redirect. Use `bench.ts -o` |
 | A segment you assigned is missing from IRIS output, no error | Wrong DocType, or a grouped path. Fails closed. Schema browser |
 | A lookup returns empty for every message | Table exists with zero rows |
@@ -473,5 +530,7 @@ can hand somebody who asks what this interface does.
 - `spec.ts`: the vocabulary, with the reasoning for each kind in its doc comment
 - `emit/iris.ts`: the DTL backend. The only one shipped, and not the only shape
   the seam allows
+- `serialize.ts`: how a GUI save becomes `transform.ts` again, and exactly what
+  it does and does not preserve
 - `toolbox.ts`: flat-record extraction, for targets that are not HL7
 - `iris-lab/recipes/`: numbered ObjectScript recipes, 01 through 18

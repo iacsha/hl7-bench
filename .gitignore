@@ -25,3 +25,8 @@ messages/
 transform.local.ts
 mapping.*.ts
 PORT-TO-IRIS.md
+
+# Emitted ObjectScript. It is derived from whatever transform.ts holds, so a
+# class emitted from a real interface carries that interface's class name, its
+# DocTypes and its field notes. Regenerate it with `bun emit.ts` instead.
+*.cls

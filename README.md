@@ -44,14 +44,26 @@ that machine is not available.
 bun gui.ts
 ```
 
-Opens `http://127.0.0.1:7317` — message on the left, transform below it, output
-on the right with changed fields highlighted, `stderr` underneath. `Ctrl+Enter`
-runs. Edits save straight back to `transform.ts`, so the transform you tuned in
-the browser is the one every other caller gets.
+Opens `http://127.0.0.1:7317`. Message on the left with `stderr` under it, the
+spec in the middle as a form, and on the right the transformed message with
+changed fields highlighted, the generated ObjectScript, the mapping document,
+the source inventory, and the `transform.ts` that is about to be written.
+
+The middle column is the spec, not code. There is no JavaScript pane, because
+the artifact you are after is ObjectScript and typing one language to produce
+another is the thing this design removes. Every kind in `spec.ts` has a form,
+and the right column recomputes as you type without touching disk, so the
+ObjectScript tab answers "what does this become in IRIS" while you are still
+deciding what the interface does.
+
+`Ctrl+Enter` validates, rewrites the spec literal in `transform.ts`, and runs
+it. A spec that does not validate is not written. Everything above and below
+the literal survives byte for byte, comments inside it do not, and the first
+write of a session leaves a `transform.ts.bak`.
 
 Bound to loopback deliberately. Binding a public interface is what triggers the
 Windows Firewall prompt you cannot approve without admin, and this endpoint
-writes a file and executes it — it has no business listening anywhere else.
+writes a file and executes it. It has no business listening anywhere else.
 
 ### Notepad++ (with [PipeHat](https://github.com/iacsha/PipeHat-npp))
 
@@ -61,7 +73,7 @@ This repo ships `hl7-bench.provider`, so installing is a copy:
 <Notepad++>\plugins\config\providers\hl7-bench\
 ```
 
-Drop `bun.exe` in the same folder and restart Notepad++. Nothing to edit — the
+Drop `bun.exe` in the same folder and restart Notepad++. Nothing to edit. The
 provider file uses `${DIR}` for its own location, so it contains no username and
 works wherever you unzip it. Uninstall by deleting the folder.
 
@@ -82,9 +94,9 @@ Get-Content message.hl7 -Raw | bun bench.ts
 ## Setup
 
 1. Download `bun-windows-x64.zip` from [bun releases](https://github.com/oven-sh/bun/releases).
-2. Extract `bun.exe` anywhere writable — `C:\Users\<you>\tools\` is fine.
+2. Extract `bun.exe` anywhere writable. `C:\Users\<you>\tools\` is fine.
 3. Clone or unzip this repo next to it.
-4. `bun test` — 187 tests, no network, no dependencies.
+4. `bun test`, 212 tests, no network, no dependencies.
 
 Nothing is installed. Nothing touches the registry. Notepad++ has an official
 portable build too, so editor, plugin, and bench all fit on a stick.
@@ -112,7 +124,7 @@ export function transform(msg: Message): void {
 }
 ```
 
-Paths are `SEG-F`, `SEG-F.C`, `SEG-F.C.S`, with an optional repetition index —
+Paths are `SEG-F`, `SEG-F.C`, `SEG-F.C.S`, with an optional repetition index.
 `PID-3(2).5` is the identifier type of the second repetition of PID-3.
 `msg.seg(id)` gets the first occurrence, `msg.all(id)` gets every one.
 
@@ -250,7 +262,7 @@ inside a group, whether every lookup table has rows, and the routing rule.
 
 A wrong DocType **fails closed**: paths stop resolving, the output comes out
 empty, and nothing useful reaches the log. Same for a grouped segment addressed
-without its group — `target.{IN1(1):2}` resolves to nothing where
+without its group. `target.{IN1(1):2}` resolves to nothing where
 `target.{INSURANCEgrp(1).IN1:2}` works, with the same silence.
 
 ### A second engine later
@@ -266,7 +278,7 @@ in a table, not a rewrite.
 
 `MSH-1` **is** the field separator and `MSH-2` **is** the encoding characters, so
 on the MSH line every field sits one slot left of where a naive split puts it.
-Get this wrong and you silently shift message type, control ID, and version —
+Get this wrong and you silently shift message type, control ID, and version,
 and it reads fine right up until a receiver rejects everything.
 
 `hl7.ts` handles it and `hl7.test.ts` locks it down. `MSH-2` is additionally
@@ -379,9 +391,10 @@ you about them.
 | `hl7.ts` | parse, serialize, path lookup |
 | `bench.ts` | the stdin/stdout wrapper |
 | `check.ts` | the golden gate |
-| `gui.ts` + `gui.html` | the local browser UI |
+| `serialize.ts` | prints a spec back into `transform.ts`, so the GUI can save |
+| `gui.ts` + `gui.html` | the local browser spec editor |
 | `toolbox.ts` | flat-record extraction and its field trace |
-| `hl7.test.ts` + `toolbox.test.ts` + `spec.test.ts` | 187 tests |
+| `hl7.test.ts` + `toolbox.test.ts` + `spec.test.ts` + `serialize.test.ts` | 212 tests |
 | `sample.hl7` | synthetic ADT^A01 |
 | `classify.ts` | diff what you have against what you want |
 | `patterns.ts` | twelve moves, each with its IRIS DTL |
@@ -392,7 +405,7 @@ you about them.
 
 `sample.hl7` is synthetic. `.gitignore` excludes every other `.hl7` and a
 `messages/` directory, because committed PHI is not recoverable after the fact.
-Scrub before you share — [PipeHat](https://github.com/iacsha/PipeHat-npp) has a
+Scrub before you share. [PipeHat](https://github.com/iacsha/PipeHat-npp) has a
 fail-closed scrubber if you need one.
 
 ## License
