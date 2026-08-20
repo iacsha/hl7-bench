@@ -342,6 +342,60 @@ Note the gate then exists in two places: the routing rule condition the DTL
 header prints, and the filter in the process. That is deliberate. A gate that
 exists in neither is the failure that matters, and it is silent.
 
+### Stamps: fixed values the process writes, not the DTL
+
+Most fixed values belong in the mapping. A field that carries one value for
+every message this interface sends is a block row and nothing else:
+
+```ts
+{ target: "MSH-4", from: literal("WEST_LAB") }
+```
+
+That way the delivered trace shows it, the fingerprint covers it, and there is
+one place to look.
+
+A **stamp** is for the value the transform cannot know, because it depends on
+where the message is going rather than on what it contains. One DTL feeding two
+receivers that each want their own sending facility is two processes, two
+`sendTo` values and two stamps over one shared transform. Expressing that in the
+DTL means forking the DTL.
+
+```ts
+process: {
+  className: "Site.Interface.Process.AdtToRegistration",
+  sendTo: "ToRegistration.ADT.TCP",
+  stamp: [
+    { path: "MSH-4", value: "WEST_LAB", why: "this receiver keys routing on sending facility" },
+  ],
+},
+```
+
+`why` is required, for the same reason `lookup` makes you name its unmapped
+branch. A stamp with no stated reason is indistinguishable from a leftover
+nobody was willing to delete.
+
+What it emits, after the transform and before the dispatch:
+
+```objectscript
+    set tTarget.IsMutable = 1
+    // this receiver keys routing on sending facility
+    do tTarget.SetValueAt("WEST_LAB", "MSH:4")
+```
+
+`IsMutable` is load bearing and is why this is a generator feature rather than
+two lines you type. A message that has been through a DTL or has been saved
+refuses `SetValueAt`, and it refuses at **run time**, per message, with
+`<Ens>ErrGeneral: Cannot modify immutable message`. The class compiles without
+that line.
+
+`bun check.ts` refuses two stamps on one path, a stamp with an empty `why`, and
+a stamp on a path a block row already assigns. The last one is the expensive
+one: the stamp runs after the transform and wins, so the trace document you hand
+the receiver describes a value they never see.
+
+The stamps are also listed in the class header, with that warning attached,
+because the delivered trace does not account for them.
+
 ### Lookup tables as a loadable file
 
 Lookup tables are namespace **data**, not code. They do not travel with a class
@@ -617,10 +671,11 @@ fixed. That is usually what you want, right up until it is not.
 | `gui.ts` + `gui.html` | the local browser spec editor |
 | `toolbox.ts` | flat-record extraction and its field trace |
 | `log.ts` | the log switch. Off unless `HL7_BENCH_LOG` says otherwise |
-| `*.test.ts` + `emit/*.test.ts` | 422 tests across 13 files |
+| `*.test.ts` + `emit/*.test.ts` | 440 tests across 13 files |
 | `sample.hl7` | synthetic ADT^A01 |
 | `classify.ts` | diff what you have against what you want |
 | `patterns.ts` | twelve moves, each with its IRIS DTL |
+| `CHEATSHEET.md` | which command, and when. The one to keep open on a call |
 | `WORKFLOW.md` | **start here.** New interface to IRIS, eight steps |
 | `METHOD.md` | the five questions, path syntax, the traps |
 

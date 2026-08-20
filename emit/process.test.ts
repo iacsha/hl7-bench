@@ -171,3 +171,75 @@ describe("ObjectScript that has to compile", () => {
     expect(lines.some((l) => l.trim() === "two")).toBe(false);
   });
 });
+
+describe("stamps", () => {
+  const withStamp = (stamp: NonNullable<Spec["iris"]["process"]>["stamp"]) =>
+    emitProcess(
+      base({
+        process: {
+          className: "Site.Interface.Process.Thing",
+          sendTo: "ToTarget.ADT.TCP",
+          stamp,
+        },
+      }),
+    );
+
+  test("no stamp array emits no SetValueAt and no IsMutable", () => {
+    const cls = emitProcess(base());
+    expect(cls).not.toContain("SetValueAt");
+    expect(cls).not.toContain("IsMutable");
+  });
+
+  test("an empty stamp array is the same as none", () => {
+    expect(withStamp([])).not.toContain("IsMutable");
+  });
+
+  test("a stamp becomes a SetValueAt with the colon path form", () => {
+    const cls = withStamp([{ path: "MSH-4", value: "WEST_LAB", why: "receiver routes on facility" }]);
+    expect(cls).toContain(`do tTarget.SetValueAt("WEST_LAB", "MSH:4")`);
+  });
+
+  // The whole point of the feature. Without this line the class compiles and
+  // then fails once per message, at run time, in a namespace.
+  test("IsMutable is set once, before the first write", () => {
+    const cls = withStamp([
+      { path: "MSH-4", value: "A", why: "one" },
+      { path: "MSH-6", value: "B", why: "two" },
+    ]);
+    expect(cls.match(/set tTarget\.IsMutable = 1/g)).toHaveLength(1);
+    expect(cls.indexOf("IsMutable")).toBeLessThan(cls.indexOf("SetValueAt"));
+  });
+
+  test("stamps land after the transform and before the dispatch", () => {
+    const cls = withStamp([{ path: "MSH-4", value: "A", why: "one" }]);
+    expect(cls.indexOf(").Transform(")).toBeLessThan(cls.indexOf("SetValueAt"));
+    expect(cls.indexOf("SetValueAt")).toBeLessThan(cls.indexOf("SendRequestAsync"));
+  });
+
+  test("each why is carried into the body as a comment", () => {
+    const cls = withStamp([{ path: "MSH-4", value: "A", why: "two receivers, two facility codes" }]);
+    expect(cls).toContain("    // two receivers, two facility codes");
+  });
+
+  test("the header lists the stamps and warns the trace does not cover them", () => {
+    const cls = withStamp([{ path: "MSH-4", value: "WEST_LAB", why: "receiver routes on facility" }]);
+    expect(cls).toContain(`///   MSH-4 = "WEST_LAB" -- receiver routes on facility`);
+    expect(cls).toContain("NOT in the DTL");
+  });
+
+  test("a quote in a stamp value doubles instead of closing the string", () => {
+    const cls = withStamp([{ path: "MSH-4", value: `A"B`, why: "quoting" }]);
+    expect(cls).toContain(`do tTarget.SetValueAt("A""B", "MSH:4")`);
+  });
+
+  test("a newline in a why stays on one comment line", () => {
+    const cls = withStamp([{ path: "MSH-4", value: "A", why: "one\ntwo" }]);
+    expect(cls).toContain("    // one two");
+    expect(cls.split("\n").some((l) => l.trim() === "two")).toBe(false);
+  });
+
+  test("no braced path sneaks in through a stamp", () => {
+    const cls = withStamp([{ path: "MSH-4", value: "A", why: "one" }]);
+    expect(cls).not.toMatch(/\{[A-Z0-9]{3}[:(]/);
+  });
+});

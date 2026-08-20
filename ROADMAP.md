@@ -202,7 +202,20 @@ The gate is now emitted twice, as the routing rule condition and as a filter at
 the top of `OnRequest`. Both headers say so. A gate in neither place is the
 failure that matters and it is silent, so two is the safe side of that trade.
 
-Still open: the GUI tab.
+`iris.process.stamp` writes fixed values onto the target between the transform
+and the dispatch. It exists for the value that depends on the destination rather
+than on the message -- one DTL, two receivers, two sending facility codes --
+and everything else still belongs in a block as `literal()`. Each stamp carries
+a required `why`, which lands in the class as a comment and in the header as a
+list, because the delivered trace does not account for stamped fields.
+
+The generated block always sets `IsMutable` first. That is the reason this is a
+generator feature and not two lines you type: a transformed or saved message
+refuses `SetValueAt` at run time, per message, and the class compiles without
+it. `validate()` refuses an empty `why`, two stamps on one path, and a stamp on
+a path a block row already assigns.
+
+Still open: the GUI tab, which does not yet edit stamps.
 
 ### Empty-read report
 

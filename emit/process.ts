@@ -49,8 +49,12 @@ import type { Spec } from "../spec";
  * file is plain ObjectScript in a Method body, where a brace is a syntax error
  * rather than a path.
  */
+function hl7Ref(path: string): string {
+  return path.replace("-", ":");
+}
+
 function ref(obj: string, path: string): string {
-  return `${obj}.GetValueAt(${os(path.replace("-", ":"))})`;
+  return `${obj}.GetValueAt(${os(hl7Ref(path))})`;
 }
 
 /** Comment text that cannot end a `///` line early or open a block comment. */
@@ -111,6 +115,14 @@ export function emitProcess(spec: Spec): string {
   );
 
   if (dtl) out.push(`///`, `/// Calls: ${comment(dtl)}`);
+  if ((proc.stamp ?? []).length > 0) {
+    out.push(
+      `///`,
+      `/// Stamps (written here, NOT in the DTL, so the delivered trace does not`,
+      `/// account for them -- say so when you hand the trace over):`,
+      ...(proc.stamp ?? []).map((st) => `///   ${st.path} = "${comment(st.value)}" -- ${comment(st.why)}`),
+    );
+  }
   out.push(
     `///`,
     `/// Handles: ${triggers.join(", ")} from ${spec.gate.path}`,
@@ -192,11 +204,38 @@ export function emitProcess(spec: Spec): string {
     out.push(
       `    // iris.className is not set in the spec, so the transform class cannot be`,
       `    // named here. Set it and regenerate rather than typing a name in: a name`,
-      `    // typed here is a name the spec does not know about.`,
+      `    // typed here is a name the spec does not know about. Until it is set,`,
+      `    // tTarget is never assigned and everything below it addresses nothing.`,
       `    // set tSC = ##class(Your.Transform.Class).Transform(tSource, .tTarget)`,
       `    // if $$$ISERR(tSC) quit tSC`,
       ``,
     );
+  }
+
+  // ---- stamps ---------------------------------------------------------------
+  const stamps = proc.stamp ?? [];
+  if (stamps.length > 0) {
+    out.push(
+      `    // Fixed values written after the transform, each for the reason on its`,
+      `    // own line. A value that is fixed for this interface belongs in the DTL`,
+      `    // as a literal() row instead, where the delivered trace shows it and the`,
+      `    // fingerprint covers it. These are here because they depend on WHERE the`,
+      `    // message is going, which the transform cannot see.`,
+      `    //`,
+      `    // IsMutable is load bearing. A message that has been through a DTL or has`,
+      `    // been saved refuses SetValueAt, and it refuses at RUN time, per message,`,
+      `    // with <Ens>ErrGeneral: Cannot modify immutable message. The class`,
+      `    // compiles without this line, which is what makes leaving it out cost a`,
+      `    // morning rather than a compile.`,
+      `    set tTarget.IsMutable = 1`,
+    );
+    for (const st of stamps) {
+      out.push(
+        `    // ${comment(st.why)}`,
+        `    do tTarget.SetValueAt(${os(st.value)}, ${os(hl7Ref(st.path))})`,
+      );
+    }
+    out.push(``);
   }
 
   // ---- dispatch -------------------------------------------------------------

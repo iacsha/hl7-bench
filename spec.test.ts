@@ -4,7 +4,7 @@ import {
   SOURCE_KINDS, STEP_KINDS, validate, emptyTables, describeSource,
   copy, literal, firstOf, lookup, counter, event, pickRepeat, fromFirst, todo,
   blank, passthrough, constant,
-  date8, truncate, upper, stripDelims, stripChars, defaultTo,
+  date8, truncate, upper, stripDelims, stripChars, defaultTo, stamp,
   type Spec, type Source, type Step,
 } from "./spec";
 import { runSpec } from "./run";
@@ -1115,5 +1115,58 @@ describe("the source inventory credits the gate", () => {
     const inv = inventory(spec, msg());
     expect(inv).not.toContain("not mapped");
     expect(inv).toContain("(gate)");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Stamps
+// ---------------------------------------------------------------------------
+
+describe("validate: iris.process.stamp", () => {
+  const proc = { className: "Site.Interface.Process.Adt", sendTo: "ToTarget.ADT.TCP" };
+  const withStamp = (st: ReturnType<typeof stamp>[]) =>
+    validate({ ...base(), iris: { ...base().iris, process: { ...proc, stamp: st } } });
+
+  test("a well formed stamp is silent", () => {
+    expect(withStamp([stamp("MSH-4", "WEST_LAB", "receiver routes on facility")])).toEqual([]);
+  });
+
+  test("no stamp key at all is silent", () => {
+    expect(validate({ ...base(), iris: { ...base().iris, process: proc } })).toEqual([]);
+  });
+
+  test("a malformed path is named, and does not stop the rest of validation", () => {
+    const out = withStamp([stamp("MSH4", "X", "why")]).join(" ");
+    expect(out).toContain("iris.process.stamp");
+    expect(out).toContain("MSH4");
+  });
+
+  // A stamp is a field the delivered trace will not explain. If nobody can say
+  // why it is there, the next person keeps or deletes it by coin flip.
+  test("an empty why is refused", () => {
+    expect(withStamp([stamp("MSH-4", "X", "   ")]).join(" ")).toContain("empty why");
+  });
+
+  test("two stamps on one path is the second one winning silently", () => {
+    const out = withStamp([stamp("MSH-4", "A", "one"), stamp("MSH-4", "B", "two")]).join(" ");
+    expect(out).toContain("more than once");
+  });
+
+  test("three on one path still reports once, not twice", () => {
+    const out = withStamp([stamp("MSH-4", "A", "a"), stamp("MSH-4", "B", "b"), stamp("MSH-4", "C", "c")]);
+    expect(out.filter((x) => x.includes("more than once"))).toHaveLength(1);
+  });
+
+  // The expensive one. base() maps MSH-3 in a block, so stamping MSH-3 means
+  // the trace document says BENCH and the receiver gets something else.
+  test("stamping a path a block row already assigns is refused", () => {
+    const out = withStamp([stamp("MSH-3", "OTHER", "why")]).join(" ");
+    expect(out).toContain("MSH-3");
+    expect(out).toContain("a block row also assigns");
+    expect(out).toContain("delivered trace");
+  });
+
+  test("stamping a path no block touches is fine", () => {
+    expect(withStamp([stamp("MSH-4", "X", "why")])).toEqual([]);
   });
 });

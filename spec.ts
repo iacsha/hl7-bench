@@ -185,6 +185,36 @@ export interface InventoryItem {
   note?: string;
 }
 
+/**
+ * A fixed value written onto the target by the BUSINESS PROCESS, after the
+ * transform has run and before the message is dispatched.
+ *
+ * WHY THIS IS NOT JUST A literal() ROW
+ *
+ * Most of the time it should be. A field that carries one value for every
+ * message this interface sends belongs in a block as `{ target: "MSH-4", from:
+ * literal("X") }`, where the delivered trace shows it, the fingerprint covers
+ * it, and there is one place to look.
+ *
+ * A stamp is for the case the DTL cannot express: the value depends on WHERE
+ * the message is going, not on what it contains. One process fanning out to two
+ * receivers that each want their own sending facility gets two processes, two
+ * sendTo values and two stamps, over one shared DTL. Putting that in the
+ * transform means forking the transform.
+ *
+ * `why` is required for the same reason `lookup`'s unmapped branch is. A stamp
+ * with no stated reason is indistinguishable from a leftover somebody was
+ * afraid to delete, and the next person deletes it or keeps it by coin flip.
+ */
+export interface Stamp {
+  /** Target path on the OUTBOUND message, e.g. "MSH-4". */
+  path: string;
+  /** The value, written verbatim. Quotes are escaped for you. */
+  value: string;
+  /** Why this is here and not a literal() row. Goes in the class as a comment. */
+  why: string;
+}
+
 export interface Spec {
   name: string;
   description?: string;
@@ -231,11 +261,16 @@ export interface Spec {
      *               production. This is the one fact the bench cannot derive
      *               from anything it already holds.
      *   comment     the one-line description that goes in the class header.
+     *   stamp       fixed values written onto the target after the transform.
+     *               See `Stamp`. Absent or empty means the process touches no
+     *               fields, which is the right answer unless the value depends
+     *               on the destination.
      */
     process?: {
       className: string;
       sendTo: string;
       comment?: string;
+      stamp?: Stamp[];
     };
     /**
      * What the GENERATED CLASS logs at run time, inside IRIS. Nothing to do
@@ -307,6 +342,9 @@ export const fromFirst = (segment: string, nonEmpty: string, path: string): Sour
 export const blank = (): Unmapped => ({ kind: "blank" });
 export const passthrough = (): Unmapped => ({ kind: "passthrough" });
 export const constant = (value: string): Unmapped => ({ kind: "constant", value });
+
+export const stamp = (path: string, value: string, why: string): Stamp =>
+  ({ path, value, why });
 
 export const date8 = (): Step => ({ kind: "date8" });
 export const truncate = (n: number): Step => ({ kind: "truncate", n });
@@ -454,6 +492,47 @@ export function validate(spec: Spec): string[] {
         `iris.process.sendTo is empty. The process would call SendRequestAsync with no target, ` +
           `which fails at run time rather than at compile time.`,
       );
+    }
+
+    // Stamps. Every one of these is a field the trace document will not
+    // explain, so the bar for keeping one is higher than for a mapped row.
+    const stamped = new Map<string, number>();
+    for (const st of proc.stamp ?? []) {
+      try {
+        segmentOf(st.path);
+      } catch (e) {
+        problems.push(`iris.process.stamp: ${(e as Error).message}`);
+        continue;
+      }
+
+      if (st.why.trim() === "") {
+        problems.push(
+          `iris.process.stamp ${st.path} has an empty why. A stamp with no stated reason ` +
+            `reads as a leftover, and the next person keeps or deletes it by coin flip.`,
+        );
+      }
+
+      // Two stamps on one path is the second one winning silently.
+      stamped.set(st.path, (stamped.get(st.path) ?? 0) + 1);
+      if (stamped.get(st.path) === 2) {
+        problems.push(
+          `iris.process.stamp writes ${st.path} more than once. The last one wins and the ` +
+            `others are dead lines that look live.`,
+        );
+      }
+
+      // The expensive one. A path the DTL already assigns, stamped again after
+      // the transform, is two sources of truth for one field: the trace
+      // document shows the mapped value and the receiver gets the stamped one.
+      const alsoMapped = spec.blocks.some((b) => b.rows.some((r) => r.target === st.path));
+      if (alsoMapped) {
+        problems.push(
+          `iris.process.stamp writes ${st.path}, which a block row also assigns. The stamp runs ` +
+            `after the transform and wins, so the delivered trace documents a value the receiver ` +
+            `never sees. Keep one: the block row if the value is fixed for this interface, the ` +
+            `stamp if it depends on the destination.`,
+        );
+      }
     }
   }
 

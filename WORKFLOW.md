@@ -599,6 +599,41 @@ Note that the gate now exists in two places: the routing rule condition below,
 and a filter at the top of `OnRequest`. Pick which one holds it. Both is
 harmless. Neither is the failure that matters, and it is silent.
 
+### When the fixed value depends on the destination
+
+A fixed value that is the same for every message goes in a block as
+`literal("X")`, where the trace and the fingerprint cover it. Reach for a stamp
+only when the value depends on **where** the message is going, which the
+transform cannot see -- one DTL, two receivers, two sending facility codes:
+
+```ts
+process: {
+  className: "Site.Interface.Process.AdtToRegistration",
+  sendTo: "ToRegistration.ADT.TCP",
+  stamp: [
+    { path: "MSH-4", value: "WEST_LAB", why: "this receiver keys routing on sending facility" },
+  ],
+},
+```
+
+That writes, after the transform and before `SendRequestAsync`:
+
+```objectscript
+    set tTarget.IsMutable = 1
+    // this receiver keys routing on sending facility
+    do tTarget.SetValueAt("WEST_LAB", "MSH:4")
+```
+
+The `IsMutable` line is the whole reason this is generated rather than typed. A
+transformed or saved message refuses `SetValueAt` at **run time**, per message,
+with `<Ens>ErrGeneral: Cannot modify immutable message`, and the class compiles
+without it.
+
+`why` is required. `bun check.ts` refuses an empty one, refuses two stamps on
+one path, and refuses a stamp on a path a block row already assigns -- that last
+one silently makes the delivered trace describe a value the receiver never
+gets.
+
 ### The lookup tables, as a file you can import
 
 ```powershell
