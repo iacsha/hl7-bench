@@ -53,6 +53,7 @@ import { rewriteTransform } from "./serialize";
 import { trace, inventory } from "./trace";
 import { emitIris, routingCondition } from "./emit/iris";
 import { logAuthoring } from "./log";
+import { discardDraft, draftPath, readDraft, writeDraft } from "./draft";
 
 const DIR = import.meta.dir;
 const PORT = Number(process.env.BENCH_PORT ?? 7317);
@@ -220,6 +221,14 @@ const server = Bun.serve({
       } catch (e) {
         specError = e instanceof Error ? (e.stack ?? e.message) : String(e);
       }
+
+      // The autosave draft, offered to the page and never applied by the
+      // server. Recovering is the author's decision, made once, on load. A
+      // stale draft is deleted here rather than merely hidden: leaving it would
+      // mean the next transform.ts edit could make it look current again.
+      const { draft, stale } = readDraft(TRANSFORM);
+      if (draft && stale) discardDraft(TRANSFORM);
+
       return json({
         message: read(MESSAGE, "MSH|^~\\&|SEND|FAC|RECV|FAC|20260101120000||ADT^A01^ADT_A01|1|P|2.5\r\n"),
         spec,
@@ -227,6 +236,7 @@ const server = Bun.serve({
         messageFile: relative(DIR, MESSAGE) || basename(MESSAGE),
         transformFile: basename(TRANSFORM),
         defaultOut: "messages/output.hl7",
+        draft: draft && !stale ? draft : null,
         // Served rather than hardcoded in the page so a kind added to spec.ts
         // shows up in the dropdown the moment it exists. The page says plainly
         // when it has no form for one, which is the loud version of the gap.
@@ -332,7 +342,47 @@ const server = Bun.serve({
         result: bench.exitCode === 0 ? "ok" : "bench-failed",
       });
 
+      // transform.ts now holds what the page holds, so the draft describes a
+      // past nobody needs. The mtime rule in draft.ts would call it stale
+      // anyway; removing it keeps logs/autosave from filling with dead copies.
+      discardDraft(TRANSFORM);
+
       return json({ problems: [], saved: true, source, ...derived, ...bench });
+    }
+
+    /**
+     * Take a draft. The autosave timer's only endpoint.
+     *
+     * Three things it deliberately does NOT do. It does not validate: a
+     * half-finished spec is exactly what a draft is for, and draft.ts has the
+     * long version of that argument. It does not touch transform.ts, so
+     * Ctrl+Enter remains the only thing that changes the file the CLI and
+     * PipeHat read. And it does not take the message pane, because a timer
+     * copying a real message to disk every few minutes is a PHI leak nobody
+     * asked for.
+     */
+    if (url.pathname === "/draft" && req.method === "POST") {
+      const b = await body<{ spec?: Spec }>(req);
+      if (!b?.spec) return json({ error: "No spec in the request." }, 400);
+
+      const draft = writeDraft(TRANSFORM, b.spec);
+      if (!draft) return json({ error: "Could not write the draft." }, 500);
+
+      logAuthoring({
+        spec: draft.specName,
+        action: "draft",
+        blocks: b.spec.blocks?.length ?? 0,
+        rows: b.spec.blocks?.reduce((n, x) => n + x.rows.length, 0) ?? 0,
+        saved: "draft-only",
+        result: "ok",
+      });
+
+      return json({ ok: true, savedAt: draft.savedAt, file: relative(DIR, draftPath(TRANSFORM)) });
+    }
+
+    /** Throw the draft away -- either recovery was declined, or it was taken. */
+    if (url.pathname === "/draft/discard" && req.method === "POST") {
+      return json({ ok: discardDraft(TRANSFORM) });
     }
 
     if (url.pathname === "/save-message" && req.method === "POST") {
@@ -408,6 +458,12 @@ if (!arg) {
   console.log(`  PHI into it. Pass a file instead:  bun gui.ts messages\\yours.hl7`);
 }
 console.log(`\nCtrl+C to stop.`);
+
+console.log("");
+console.log("  Autosave takes a DRAFT only, under logs/autosave/. It never writes");
+console.log("  transform.ts and never copies the message pane. Pick the interval in");
+console.log("  the page header; the page offers the draft back on load if it");
+console.log("  outlived transform.ts.");
 
 if (!process.argv.includes("--no-open")) {
   // `start` is a cmd builtin, hence the cmd /c. The empty "" is the window

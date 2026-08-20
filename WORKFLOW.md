@@ -255,6 +255,33 @@ Three things to know about that write:
 - **The first write of a session leaves a `transform.ts.bak`** beside the file.
   It is gitignored.
 
+#### The draft is not a save
+
+`draft every` in the header picks an interval: off, 1, 5 or 15 minutes. On each
+tick, if anything changed, the browser posts the spec to
+`logs/autosave/transform.draft.json`. That is the whole of it. `transform.ts` is
+untouched, the one-per-session `.bak` is not spent, nothing runs, and the status
+line says `draft ... not written` rather than anything green, because a green
+`saved` there would be a lie that costs somebody an afternoon.
+
+What it buys you is the crash. Close the laptop lid on an hour of unwritten
+mapping and the next load offers it back: `Recover unsaved work from HH:MM?`.
+Take it and the spec comes up exactly as you left it, still unwritten, and one
+`Ctrl+Enter` away from being real.
+
+Four things worth knowing:
+
+- **A save clears the draft**, and so does anything that moves `transform.ts`.
+  Staleness is decided by file mtime, not by a flag the GUI sets, so a hand edit
+  in an editor retires the draft the same way `Ctrl+Enter` does. The recovery
+  prompt cannot offer you work that is older than the file.
+- **An invalid spec is drafted anyway.** This is the exact inversion of the
+  `Ctrl+Enter` rule and it is on purpose: half-finished is what work in progress
+  looks like, and it is the state most worth getting back.
+- **The message pane is never in the file.** Only the spec is. A timer copying a
+  live message to disk every five minutes is an exposure nobody asked for.
+- **`logs/` is gitignored**, so the draft cannot follow you into a commit.
+
 ### In an editor
 
 Open `transform.ts` and type the object. Nothing about the GUI is required, and
@@ -594,6 +621,7 @@ records shapes and outcomes rather than content. Full detail in `README.md`.
 | `bun test` fails naming a backend and a kind | A source or step kind taught to one backend and not the other. That test exists for exactly this |
 | The Event Log fills with the same unmapped-code warning | Working as designed, and it is telling you the table is short a row. Fix the table, or set `iris.log` to `"off"` if that sender is known bad and out of scope |
 | `HL7_BENCH_LOG` is set and no file appears | The value has to be `summary` or `full`. Anything else is treated as off and says so once on stderr |
+| Studio says `invalid name $LENGTH(target.{MSH.10})` on the emitted class | A `{PID:5.1}` reference inside a `<code>` body. The curly form is a DTL compiler feature and only works in a DTL attribute; a code body goes straight to the ObjectScript compiler. The in-code form is `GetValueAt("PID:5.1")`. Fixed in the emitter and held there by `emit/iris.test.ts`, so re-emit rather than hand-patching |
 
 ## Where the rest lives
 

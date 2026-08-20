@@ -69,6 +69,15 @@ it. A spec that does not validate is not written. Everything above and below
 the literal survives byte for byte, comments inside it do not, and the first
 write of a session leaves a `transform.ts.bak`.
 
+`draft every` in the header is autosave, and it is deliberately not a save. On
+the interval you pick, off / 1 / 5 / 15 minutes, the browser posts the spec to
+`logs/autosave/transform.draft.json` and nothing else happens: `transform.ts` is
+not touched, the `.bak` is not spent, and no `bench.ts` run is triggered. If the
+laptop dies with unsaved work, the next load offers it back. A real save clears
+it. The message pane is never in that file, because a timer copying a live
+message to disk every few minutes is an exposure nobody asked for. Your choice
+of interval is remembered per browser.
+
 Bound to loopback deliberately. Binding a public interface is what triggers the
 Windows Firewall prompt you cannot approve without admin, and this endpoint
 writes a file and executes it. It has no business listening anywhere else.
@@ -421,6 +430,9 @@ default**, because `Ctrl+Enter` already rewrites `transform.ts` and leaves a
 validated, blocks and rows before and after, saved or not, and the bench exit
 code. The spec content itself is what git is for. `HL7_BENCH_LOG=off` silences
 it along with everything else.
+
+An autosave tick lands there too, as `action=draft saved=draft-only`, which is
+how you tell a draft from a save when reading the file back.
 
 ### What the generated class writes
 

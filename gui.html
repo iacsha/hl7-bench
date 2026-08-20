@@ -49,7 +49,12 @@ kbd {
   font: 11px var(--mono); border: 1px solid var(--border); border-bottom-width: 2px;
   border-radius: 4px; padding: 1px 5px; color: var(--muted);
 }
+#autosave {
+  font: 11.5px var(--mono); color: var(--fg); background: var(--bg);
+  border: 1px solid var(--border); border-radius: 6px; padding: 4px 6px;
+}
 #status { margin-left: auto; font: 12px var(--mono); color: var(--muted); }
+#status.draft { color: var(--muted); }
 #status.ok { color: var(--ok); }
 #status.bad { color: var(--bad); }
 #status.edited { color: var(--warn); }
@@ -159,6 +164,13 @@ input.md { width: 116px; }
   <button id="savemsg">Save message</button>
   <button id="saveout">Save output</button>
   <button id="savecls">Save class</button>
+  <label class="hint" for="autosave" title="Autosave takes a recovery draft under logs/autosave/. It never writes transform.ts and never copies the message pane.">draft every</label>
+  <select id="autosave" title="Autosave takes a recovery draft under logs/autosave/. It never writes transform.ts and never copies the message pane.">
+    <option value="0">off</option>
+    <option value="1">1 min</option>
+    <option value="5" selected>5 min</option>
+    <option value="15">15 min</option>
+  </select>
   <div id="status">loading</div>
 </header>
 
@@ -277,6 +289,25 @@ let defaultOut = "messages/output.hl7";
 let lastOutput = "";
 let lastIris = "";
 let dirty = false;
+
+// ---------------------------------------------------------------------------
+// Autosave
+//
+// The timer takes a DRAFT. It does not save. That distinction is the whole
+// design: Ctrl+Enter stays the only thing that writes transform.ts, so it stays
+// the only thing that spends the one transform.ts.bak of the session and the
+// only thing that changes what PipeHat picks up. A draft is a copy parked under
+// logs/autosave/ that the page offers back on the next load if it outlived
+// transform.ts. See draft.ts for the full argument.
+//
+// The interval lives in localStorage rather than on the server, because it is a
+// property of how you work and not of the interface you are describing. Two
+// people on two machines editing the same transform.ts should not be arguing
+// over each other's timer.
+// ---------------------------------------------------------------------------
+
+const AUTOSAVE_KEY = "hl7-bench.autosave.minutes";
+let autosaveTimer = null;
 
 function setStatus(text, kind) {
   $("status").textContent = text;
@@ -879,6 +910,11 @@ async function run() {
 
     dirty = false;
 
+    // transform.ts now holds what is on screen, so the draft has nothing left
+    // to recover. The server clears it too; this is the page not waiting for
+    // the next load to find out.
+    dropDraft();
+
     if (res.exitCode !== 0) {
       lastOutput = "";
       $("output").replaceChildren();
@@ -903,6 +939,72 @@ async function run() {
   }
 }
 
+/** Minutes from the picker, or 0 for off. Anything unrecognised falls back to 5. */
+function autosaveMinutes() {
+  const n = Number($("autosave").value);
+  return Number.isFinite(n) && n >= 0 ? n : 5;
+}
+
+/**
+ * Take one draft now, if there is anything worth taking.
+ *
+ * Skipped when nothing has been edited. Re-writing an identical draft on a
+ * timer would churn the disk for no reason, and worse, it would keep pushing
+ * the draft's timestamp forward past a real save, which is the one thing the
+ * staleness rule in draft.ts relies on to know it can stop offering it.
+ */
+async function takeDraft(reason) {
+  if (!spec || !dirty) return false;
+  try {
+    const res = await (await fetch("/draft", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ spec }),
+    })).json();
+    if (res.error) { setStatus(res.error, "bad"); return false; }
+
+    // Deliberately not the "ok" green, and it still says what is NOT done. A
+    // green "saved 14:35" here would be a lie that costs somebody an afternoon,
+    // because the file the CLI reads has not moved.
+    const at = new Date(res.savedAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+    setStatus(`draft ${at} (${reason}), not written. Ctrl+Enter writes transform.ts`, "edited");
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** Restart the timer on the current setting. Called on load and on every change. */
+function armAutosave() {
+  if (autosaveTimer) clearInterval(autosaveTimer);
+  autosaveTimer = null;
+  const mins = autosaveMinutes();
+  if (mins > 0) autosaveTimer = setInterval(() => takeDraft("autosave"), mins * 60000);
+}
+
+function dropDraft() {
+  return fetch("/draft/discard", { method: "POST" }).catch(() => {});
+}
+
+/**
+ * Offer a recovered draft, once, on load. Returns the spec to use, or null.
+ *
+ * The server has already thrown away any draft older than transform.ts, so
+ * anything that arrives here genuinely outlived the file. Declining discards it
+ * rather than leaving it to ask again on every reload.
+ */
+async function offerDraft(draft) {
+  if (!draft || !draft.spec) return null;
+  const at = new Date(draft.savedAt).toLocaleString();
+  const ok = confirm(
+    `An unsaved draft of "${draft.specName}" from ${at} is newer than transform.ts.\n\n` +
+    "Recover it into the editor? Nothing is written until you press Ctrl+Enter.\n\n" +
+    "Cancel throws the draft away and loads transform.ts as it stands.",
+  );
+  if (!ok) { await dropDraft(); return null; }
+  return draft.spec;
+}
+
 async function load() {
   const res = await (await fetch("/state")).json();
   $("message").value = res.message;
@@ -917,21 +1019,34 @@ async function load() {
   $("diag").textContent = "Write and run to see output.";
   $("diag").className = "diag quiet";
 
-  if (res.specError) {
+  // Offered BEFORE the specError branch on purpose. A transform.ts that will
+  // not import is the case where a draft is not a convenience but the only
+  // surviving copy, and returning early would have hidden it.
+  const recovered = await offerDraft(res.draft);
+
+  if (res.specError && !recovered) {
     spec = null;
     $("spec").replaceChildren(el("div", { class: "warn" }, [
       el("div", { text: "transform.ts did not load, so there is no spec to edit. Fix it in an editor and press Reload from disk." }),
       el("pre", { class: "diag bad", style: "padding:8px 0 0", text: res.specError }),
     ]));
     setStatus("transform.ts did not load", "bad");
+    armAutosave();
     return;
   }
 
-  spec = res.spec;
-  dirty = false;
+  spec = recovered ?? res.spec;
+
+  // A recovered draft is unsaved work by definition, so the page opens dirty.
+  // Marking it clean would let "Reload from disk" discard it without the
+  // confirm, one click after you chose to keep it.
+  dirty = !!recovered;
+
   renderSpec();
-  setStatus(`loaded ${messageFile}`);
+  if (recovered) setStatus("recovered draft, not written. Ctrl+Enter writes transform.ts", "edited");
+  else setStatus(`loaded ${messageFile}`);
   await preview();
+  armAutosave();
 }
 
 // ---------------------------------------------------------------------------
@@ -1112,6 +1227,24 @@ function togglePicker(on) {
 // ---------------------------------------------------------------------------
 
 $("grab").addEventListener("click", () => togglePicker());
+
+$("autosave").value = localStorage.getItem(AUTOSAVE_KEY) || "5";
+if (!$("autosave").value) $("autosave").value = "5";
+$("autosave").addEventListener("change", () => {
+  localStorage.setItem(AUTOSAVE_KEY, $("autosave").value);
+  armAutosave();
+  const mins = autosaveMinutes();
+  setStatus(mins === 0 ? "autosave off" : `draft every ${mins} min`, "draft");
+});
+
+// Closing the tab is the most ordinary way this work gets lost, and it is the
+// one moment a normal fetch will not survive. sendBeacon is fire-and-forget and
+// is not cancelled by the unload, so the last edits still reach a draft. No
+// confirm dialog: this is a recovery net, not a nag.
+addEventListener("beforeunload", () => {
+  if (!dirty || !spec || autosaveMinutes() === 0) return;
+  navigator.sendBeacon("/draft", new Blob([JSON.stringify({ spec })], { type: "application/json" }));
+});
 $("run").addEventListener("click", run);
 $("reload").addEventListener("click", () => {
   if (dirty && !confirm("Reload from disk and lose the edits you have not written yet?")) return;
