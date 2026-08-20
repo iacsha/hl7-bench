@@ -622,6 +622,8 @@ records shapes and outcomes rather than content. Full detail in `README.md`.
 | The Event Log fills with the same unmapped-code warning | Working as designed, and it is telling you the table is short a row. Fix the table, or set `iris.log` to `"off"` if that sender is known bad and out of scope |
 | `HL7_BENCH_LOG` is set and no file appears | The value has to be `summary` or `full`. Anything else is treated as off and says so once on stderr |
 | Studio says `invalid name $LENGTH(target.{MSH.10})` on the emitted class | A `{PID:5.1}` reference inside a `<code>` body. The curly form is a DTL compiler feature and only works in a DTL attribute; a code body goes straight to the ObjectScript compiler. The in-code form is `GetValueAt("PID:5.1")`. Fixed in the emitter and held there by `emit/iris.test.ts`, so re-emit rather than hand-patching |
+| A segment writes nothing and nothing is logged | The target segment sits inside a schema group. IRIS names the group after its first segment, so IN1 lives in `IN1group` and a bare `{IN1:2}` resolves to nothing. `Parameter IGNOREMISSINGSOURCE = 1` keeps it quiet by design. Set `group` on the block. Confirm the exact group name in **Interoperability > Interoperate > HL7 v2.x > HL7 v2.x Schema Structures**, or by expanding the target tree in the DTL editor, which prints the path IRIS wants |
+| A required field warns on every single message | The guard is doing its job: the source field really is empty. Decide between dropping `required`, stamping a `literal()`, or reading the value from wherever the sender actually puts it. Do not silence it without picking one |
 
 ## Where the rest lives
 

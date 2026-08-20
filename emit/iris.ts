@@ -483,14 +483,28 @@ export function routingCondition(spec: Spec): string {
 }
 
 /** The whole class, ready to paste into Studio or save as a .cls. */
+/** Every table name a `lookup()` row actually reads, in first-seen order. */
+function referencedTables(spec: Spec): string[] {
+  const seen: string[] = [];
+  for (const block of spec.blocks) {
+    for (const row of block.rows) {
+      if (row.from.kind === "lookup" && !seen.includes(row.from.table)) seen.push(row.from.table);
+    }
+  }
+  return seen;
+}
+
 export function emitIris(spec: Spec): string {
   assertRunnable(spec);
 
   const st: State = { spec, temp: 1 };
   const className = classNameFor(spec);
   const create = spec.iris.create ?? "new";
-  const tables = Object.keys(spec.tables ?? {});
-  const empties = emptyTables(spec);
+  // Tables the class CALLS, not tables the spec declares. A leftover entry in
+  // spec.tables used to print here as an empty-table go-live gate, which is a
+  // false alarm on the one line of the header that has to be believed.
+  const tables = referencedTables(spec);
+  const empties = emptyTables(spec).filter((t) => tables.includes(t));
 
   const out: string[] = [
     `/// ${spec.description ?? spec.name}`,
@@ -559,7 +573,15 @@ export function emitIris(spec: Spec): string {
     }
     out.push("");
     if (block.note) out.push(`  <!-- ${text(block.note)} -->`);
-    for (const row of block.rows) emitRow(st, row, TOP, "  ", out);
+
+    // A group on a block that does NOT repeat still has to be addressed. The
+    // segment lives inside the group's first occurrence, so a bare {IN1:2} on
+    // a schema whose IN1 sits in IN1group writes nowhere -- and writes nowhere
+    // quietly, which is the whole reason the header tells you to check.
+    const scope: Scope = block.group
+      ? { sourcePrefix: `${block.group}(1)`, targetPrefix: `${block.group}(1)` }
+      : TOP;
+    for (const row of block.rows) emitRow(st, row, scope, "  ", out);
   }
 
   out.push(``, `</transform>`, `}`, ``, `}`, ``);

@@ -599,6 +599,47 @@ describe("emitIris", () => {
     });
   });
 
+  describe("iris.className is refused when it would clobber InterSystems", () => {
+    // A class definition occupies its name, it does not extend it. Naming a
+    // DTL Ens.BusinessProcess and compiling it replaces the system class and
+    // takes every business process in the namespace with it. The mistake is
+    // reasonable: the portal sorts config items into Services / Processes /
+    // Operations and the name looks like the lever. It is not. The column
+    // comes from the class a config item EXTENDS, and a DTL extends
+    // Ens.DataTransformDTL, which is no business host and gets no column.
+    const withClass = (className: string) =>
+      validate({ ...base(), iris: { ...base().iris, className } });
+
+    for (const bad of [
+      "Ens.BusinessProcess",
+      "EnsLib.HL7.Message",
+      "EnsPortal.Anything",
+      "HS.Local.Thing",
+      "%Library.String",
+    ]) {
+      test(`"${bad}" is rejected`, () => {
+        expect(withClass(bad).join(" ")).toContain("InterSystems package");
+      });
+    }
+
+    test("an ordinary site package passes", () => {
+      expect(withClass("Site.Interface.Transform.AdtToRegistration")).toEqual([]);
+    });
+
+    test("a name with no package is called out, since it is easy to overwrite", () => {
+      expect(withClass("AdtToRegistration").join(" ")).toContain("no package");
+    });
+
+    test("an illegal name is called out rather than emitted", () => {
+      expect(withClass("9Bad.Name").join(" ")).toContain("not a legal class name");
+      expect(withClass("Trailing.").join(" ")).toContain("not a legal class name");
+    });
+
+    test("unset is fine, because the emitter builds one from spec.name", () => {
+      expect(validate(base())).toEqual([]);
+    });
+  });
+
   describe("the class shell", () => {
     test("create defaults to new, because the spec builds a fresh target", () => {
       expect(of({})).toContain("create='new'");
@@ -617,8 +658,21 @@ describe("emitIris", () => {
       expect(routingCondition(base())).toBe(`HL7.{MSH:9.2}="A01" || HL7.{MSH:9.2}="A08"`);
     });
 
-    test("an empty lookup table is flagged in the header as a go-live gate", () => {
-      expect(of({ tables: { Dept: {} } })).toContain("*** EMPTY IN THE SPEC");
+    test("an empty lookup table the class calls is flagged as a go-live gate", () => {
+      const out = of({
+        tables: { Dept: {} },
+        blocks: [{ id: "PV1", rows: [{ target: "PV1-3", from: lookup("Dept", "PV1-3", blank()) }] }],
+      });
+      expect(out).toContain("*** EMPTY IN THE SPEC");
+    });
+
+    test("a table nothing calls is not listed, empty or otherwise", () => {
+      // The header used to print spec.tables, so a leftover entry raised a
+      // go-live gate on a table the class never touches. A false alarm on the
+      // one header line that has to be believed is worse than no line.
+      const out = of({ tables: { Dept: {}, Sex: { M: "1" } } });
+      expect(out).not.toContain("*** EMPTY IN THE SPEC");
+      expect(out).not.toContain("Lookup tables this class calls");
     });
 
     test("out of scope decisions travel into the class documentation", () => {

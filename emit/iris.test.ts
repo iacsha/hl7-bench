@@ -212,6 +212,87 @@ describe("the macros survive", () => {
   });
 });
 
+describe("a group on a block that does not repeat", () => {
+  // The group prefix used to be applied only inside emitRepeat, so a segment
+  // that sits in a group but appears once -- IN1 in IRIS's 2.3 ADT_A01, which
+  // names the group IN1group -- emitted a bare {IN1:2}. That write lands
+  // nowhere and IRIS does not say so, which is the exact failure the class
+  // header tells you to go check the schema browser for.
+
+  test("the group prefixes the target and the source", () => {
+    const cls = emitIris(
+      base({
+        blocks: [{ id: "IN1", group: "IN1group", rows: [{ target: "IN1-2", from: copy("IN1-2") }] }],
+      }),
+    );
+    expect(cls).toContain(
+      `<assign value='source.{IN1group(1).IN1:2}' property='target.{IN1group(1).IN1:2}' action='set' />`,
+    );
+    expect(cls).not.toContain(`property='target.{IN1:2}'`);
+  });
+
+  test("two blocks in the same group land in the same occurrence", () => {
+    // IN1 and IN2 are one bundle. Splitting them across group occurrences
+    // would give the receiver an IN2 belonging to no coverage.
+    const cls = emitIris(
+      base({
+        blocks: [
+          { id: "IN1", group: "IN1group", rows: [{ target: "IN1-2", from: copy("IN1-2") }] },
+          { id: "IN2", group: "IN1group", rows: [{ target: "IN2-1", from: copy("IN2-1") }] },
+        ],
+      }),
+    );
+    expect(cls).toContain(`property='target.{IN1group(1).IN1:2}'`);
+    expect(cls).toContain(`property='target.{IN1group(1).IN2:1}'`);
+  });
+
+  test("the guard in a code body gets the prefix too", () => {
+    const cls = emitIris(
+      base({
+        blocks: [
+          { id: "IN1", group: "IN1group", rows: [{ target: "IN1-2", from: copy("IN1-2"), required: true }] },
+        ],
+      }),
+    );
+    const guard = cdata(cls).find((c) => c.includes("LOGWARNING"))!;
+    expect(guard).toContain(`target.GetValueAt("IN1group(1).IN1:2")`);
+    expect(guard).not.toMatch(BRACED);
+  });
+
+  test("no group means no prefix, which is every other block", () => {
+    const cls = emitIris(base({ blocks: [{ id: "PID", rows: [{ target: "PID-3", from: copy("PID-3") }] }] }));
+    expect(cls).toContain(`property='target.{PID:3}'`);
+  });
+});
+
+describe("the lookup table header lists what the class calls", () => {
+  test("a declared but uncalled table is not listed", () => {
+    const cls = emitIris(
+      base({
+        tables: { Unused: {} },
+        blocks: [{ id: "PID", rows: [{ target: "PID-3", from: copy("PID-3") }] }],
+      }),
+    );
+    expect(cls).not.toContain("Unused");
+    expect(cls).not.toContain("EMPTY IN THE SPEC");
+  });
+
+  test("a called table is listed, and flagged when it has no rows", () => {
+    const cls = emitIris(
+      base({
+        tables: { Sex: { M: "1" }, Dept: {} },
+        blocks: [
+          { id: "PID", rows: [{ target: "PID-8", from: lookup("Sex", "PID-8", blank()) }] },
+          { id: "PV1", rows: [{ target: "PV1-3", from: lookup("Dept", "PV1-3", blank()) }] },
+        ],
+      }),
+    );
+    expect(cls).toContain("Lookup tables this class calls");
+    expect(cls).toContain("///   Sex");
+    expect(cls).toContain("///   Dept   *** EMPTY IN THE SPEC");
+  });
+});
+
 describe("attributes still use the curly form", () => {
   test("an assign reads {PID:3}, not GetValueAt", () => {
     // The conversion is scoped to code bodies. An attribute that lost its

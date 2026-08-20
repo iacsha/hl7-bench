@@ -359,12 +359,60 @@ export function sourcePathsOf(from: Source): string[] {
  * every backend before it does anything, so the same spec is rejected the same
  * way whichever direction you are heading.
  */
+/**
+ * InterSystems packages a generated class must never be named into.
+ *
+ * A class definition does not extend the package it is named in, it OCCUPIES
+ * it. `Class Ens.BusinessProcess Extends Ens.DataTransformDTL` compiles by
+ * replacing the InterSystems system class of that name, taking every business
+ * process in the namespace with it.
+ *
+ * The mistake is easy to make and reasonable to make, because the portal sorts
+ * config items into Services / Processes / Operations columns and a name is
+ * the obvious lever to reach for. It is not the lever. The column is decided
+ * by the class a config item EXTENDS, and a DTL extends Ens.DataTransformDTL,
+ * which is not a business host and belongs in no column at all. A DTL is named
+ * in a routing rule's transform field and is never a config item.
+ */
+const RESERVED_PACKAGES = ["Ens.", "EnsLib.", "EnsPortal.", "HS.", "%"];
+
+/** Problems with `iris.className`, worst first. Empty when it is unset. */
+function classNameProblems(name: string | undefined): string[] {
+  if (name === undefined) return [];
+  const problems: string[] = [];
+
+  const reserved = RESERVED_PACKAGES.find((p) => name.startsWith(p));
+  if (reserved) {
+    problems.push(
+      `iris.className "${name}" is in the InterSystems package "${reserved}". ` +
+        `Compiling that REPLACES a system class rather than extending it. ` +
+        `Use your own package. A DTL is not a config item and its name does not ` +
+        `decide which portal column anything lands in.`,
+    );
+  }
+  if (!/^[%A-Za-z][A-Za-z0-9]*(\.[A-Za-z][A-Za-z0-9]*)*$/.test(name)) {
+    problems.push(
+      `iris.className "${name}" is not a legal class name. ` +
+        `Letters and digits per segment, dot separated, no leading digit.`,
+    );
+  } else if (!name.includes(".")) {
+    problems.push(
+      `iris.className "${name}" has no package. A class in the root package is ` +
+        `hard to find and easy to overwrite. Use e.g. "Site.Interface.Transform.${name}".`,
+    );
+  }
+
+  return problems;
+}
+
 export function validate(spec: Spec): string[] {
   const problems: string[] = [];
 
   if (Object.keys(spec.gate.permit).length === 0) {
     problems.push("gate.permit is empty, so this interface would refuse every message");
   }
+
+  problems.push(...classNameProblems(spec.iris.className));
 
   const tables = spec.tables ?? {};
   const seen = new Set<string>();
