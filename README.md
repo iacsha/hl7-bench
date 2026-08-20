@@ -131,7 +131,7 @@ Get-Content message.hl7 -Raw | bun bench.ts
 1. Download `bun-windows-x64.zip` from [bun releases](https://github.com/oven-sh/bun/releases).
 2. Extract `bun.exe` anywhere writable. `C:\Users\<you>\tools\` is fine.
 3. Clone or unzip this repo next to it.
-4. `bun test`, 244 tests, no network, no dependencies.
+4. `bun test`, 422 tests, no network, no dependencies.
 
 Nothing is installed. Nothing touches the registry. Notepad++ has an official
 portable build too, so editor, plugin, and bench all fit on a stick.
@@ -222,16 +222,19 @@ export const spec: Spec = {
 };
 ```
 
-That one object drives four things:
+That one object drives everything else:
 
 | | |
 |---|---|
 | `bun bench.ts` | runs it, and the message comes out |
 | `bun check.ts` | proves it against golden files |
 | `bun trace.ts` | the field table you hand the receiving team |
+| `bun reads.ts` | every source path that came back with nothing |
 | `bun emit.ts` | the IRIS DTL class, ObjectScript and all |
+| `bun emit.ts process` | a business process template that calls it |
+| `bun emit.ts tables` | the lookup table rows as an IRIS import file |
 
-Change a row and all four change together, or none of them do. There is no
+Change a row and all of them change together, or none of them do. There is no
 second copy to keep in step.
 
 ### Why data and not closures
@@ -289,6 +292,8 @@ somebody a go-live:
 ```powershell
 bun emit.ts > MyTransform.cls        # diagnostics go to stderr, so the file stays clean
 bun emit.ts iris                     # same thing, named explicitly
+bun emit.ts process > MyProcess.cls  # a business process that calls the DTL
+bun emit.ts tables > Tables.xml      # the lookup rows, as an IRIS import file
 ```
 
 The emitter cannot check four things for you, and says so in the class header:
@@ -299,6 +304,118 @@ A wrong DocType **fails closed**: paths stop resolving, the output comes out
 empty, and nothing useful reaches the log. Same for a grouped segment addressed
 without its group. `target.{IN1(1):2}` resolves to nothing where
 `target.{INSURANCEgrp(1).IN1:2}` works, with the same silence.
+
+### The fingerprint in the header
+
+Both emitted classes carry the same twelve-character hash of the spec:
+
+```
+/// Spec fingerprint: 9a62d97231a1
+```
+
+`bun emit.ts` prints it to stderr as well. If the string in the class you are
+reading in the portal does not match the one the bench prints, the namespace is
+running an older compile than the mapping you are looking at, and every minute
+spent debugging the mapping is wasted. That is the whole point of it. It covers
+the spec, including labels and notes, so a cosmetic edit moves it too. It does
+**not** cover the class file: hand-edit the generated `.cls` and the fingerprint
+becomes a lie.
+
+### The business process is a TEMPLATE, and says so
+
+The DTL header says *proven on the bench* and has earned it: real messages went
+through that mapping and you read the output. `bun emit.ts process` has executed
+nothing, because there is no production on a laptop, so it says TEMPLATE in its
+first line instead.
+
+It emits one shop's shape: a custom `Ens.BusinessProcess` that clones the
+request, calls the DTL, and dispatches by config item name with
+`SendRequestAsync`. Plenty of sites use a routing engine with a rule whose
+transform field names the DTL and never write a process class at all. If that is
+you, read it and take the parts you need.
+
+`iris.process.sendTo` is the config item name as the production spells it, and
+it is the one fact in the whole spec that cannot be derived from the mapping. A
+name that does not resolve fails at run time, per message, not at compile time.
+
+Note the gate then exists in two places: the routing rule condition the DTL
+header prints, and the filter in the process. That is deliberate. A gate that
+exists in neither is the failure that matters, and it is silent.
+
+### Lookup tables as a loadable file
+
+Lookup tables are namespace **data**, not code. They do not travel with a class
+export and they do not travel with a production deployment, which is how a
+transform arrives in production correct and translates nothing.
+
+```powershell
+bun emit.ts tables > Tables.xml           # every table in the spec
+bun emit.ts tables --table Facilities     # just the one
+```
+
+Import it in the portal at **Interoperability > Configure > Data Lookup
+Tables**, or with `##class(Ens.Util.LookupTable).%Import("Tables.xml")`. Verify
+the document shape once against your own version by exporting an existing table
+and diffing.
+
+An empty key is refused. A control character anywhere is refused, because the
+import error names a line number in the file rather than the row that caused it.
+An empty **value** is warned about and still written: `Lookup` returns your
+default for a blank value exactly as it does for a missing key, so the row
+behaves as if it is not there, which in an allowlist is a permitted code being
+silently refused.
+
+### Building a big table from a spreadsheet
+
+Facility tables, department tables, provider crosswalks. The ones that arrive as
+four hundred rows in Excel and are otherwise retyped by hand.
+
+```powershell
+Get-Content facilities.csv -Raw | bun tables.ts Facilities
+bun tables.ts Facilities --module < facilities.csv > tables.facilities.ts
+bun tables.ts Sex --key 2 --value 3 --delim tab < codes.txt
+```
+
+It writes TypeScript, not XML, on purpose. Straight to XML is one step shorter
+and puts the rows somewhere the bench cannot read, so `lookup()` on the bench
+would translate nothing while the same interface in IRIS translated fine.
+`spec.tables` stays the single source and `bun emit.ts tables` makes the import
+file from it.
+
+Keys and values are trimmed and **the count is reported**. A trailing space in a
+key is invisible in every editor and in the portal, survives a copy-paste, and
+makes `Lookup` miss. It is the commonest defect in a hand-built table. `--no-trim`
+if your keys really do carry spaces.
+
+The same key twice with the same value is a warning. The same key twice with
+**different** values is a refusal: that is two people who disagree about what a
+code means, and picking one silently is how the wrong one reaches production.
+
+### The empty-read report
+
+```powershell
+Get-Content real.hl7 -Raw | bun reads.ts
+bun reads.ts --strict < real.hl7     # exit 1 if a block is at risk
+```
+
+The emitted class sets `IGNOREMISSINGSOURCE = 1`, which turns a source path IRIS
+cannot resolve into a skipped `<assign>` rather than an error. Skip **every**
+assign in a block and the target segment is never created, so a whole section of
+the mapping disappears with no error, no warning, and nothing in the Visual
+Trace to look at. The delivered message is shorter, parses cleanly, and looks
+fine. Two days on a live build, four seconds here.
+
+Two headlines, and they are not the same problem:
+
+| | |
+|---|---|
+| **AT RISK** | every path the block reads belongs to a segment that is not in this message. This is the shape that creates no segment at all |
+| **DELIVERS EMPTY** | the paths resolved and every row came back blank. IRIS still creates the segment, and the receiver gets an empty one |
+
+It cannot see groups. The bench message model is flat, so a block with the wrong
+`group` name reads perfectly here and writes nowhere in IRIS. That is the exact
+failure this report is named after and the one case it will tell you is fine.
+Read the group name off your schema browser.
 
 ### A second engine later
 
@@ -486,8 +603,13 @@ fixed. That is usually what you want, right up until it is not.
 | `spec.ts` | the vocabulary: source kinds, step kinds, `validate` |
 | `run.ts` | the runner. Walks the spec and produces the message |
 | `trace.ts` | the same walk, rendered as the mapping document |
-| `emit.ts` | picks a backend and writes its transformation language |
+| `emit.ts` | picks a backend and an artifact, and writes it |
 | `emit/iris.ts` | the IRIS DTL backend |
+| `emit/process.ts` | the business process template backend |
+| `emit/lookup.ts` | `spec.tables` as an IRIS lookup table import file |
+| `tables.ts` | a spreadsheet becomes a `spec.tables` entry |
+| `reads.ts` | every source path that resolved to nothing |
+| `fingerprint.ts` | the spec hash both emitted classes carry |
 | `hl7.ts` | parse, serialize, path lookup |
 | `bench.ts` | the stdin/stdout wrapper |
 | `check.ts` | the golden gate |
@@ -495,7 +617,7 @@ fixed. That is usually what you want, right up until it is not.
 | `gui.ts` + `gui.html` | the local browser spec editor |
 | `toolbox.ts` | flat-record extraction and its field trace |
 | `log.ts` | the log switch. Off unless `HL7_BENCH_LOG` says otherwise |
-| `hl7.test.ts` + `toolbox.test.ts` + `spec.test.ts` + `serialize.test.ts` + `log.test.ts` | 244 tests |
+| `*.test.ts` + `emit/*.test.ts` | 422 tests across 13 files |
 | `sample.hl7` | synthetic ADT^A01 |
 | `classify.ts` | diff what you have against what you want |
 | `patterns.ts` | twelve moves, each with its IRIS DTL |

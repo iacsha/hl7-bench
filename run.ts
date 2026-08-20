@@ -71,16 +71,28 @@ export interface RunResult {
  * `IN1-4` inside an IN1 loop mean "this coverage" while `MSH-7` in the same
  * loop still means the header. Without the scoping, coverage two and three
  * would silently be copies of coverage one.
+ *
+ * Exported for `reads.ts`, which has to read what the RUNNER reads. A report
+ * that resolved paths its own way would eventually disagree with the bench, and
+ * a disagreeing report is worse than no report: it sends you looking in the
+ * wrong file.
  */
-function readPath(ctx: Ctx, path: string): string {
+export function readPath(ctx: Ctx, path: string): string {
   if (ctx.current && ctx.repeatOver && segmentOf(path) === ctx.repeatOver) {
     return ctx.current.get(path);
   }
   return ctx.msg.get(path);
 }
 
-/** The segment a path should be read from, honouring repeat scope. */
-function segFor(ctx: Ctx, path: string): Segment | undefined {
+/**
+ * The segment a path should be read from, honouring repeat scope.
+ *
+ * Exported alongside `readPath` so the empty-read report can tell "the field is
+ * blank" from "the segment is not in this message at all". They look the same
+ * in the output and they are completely different problems: the first is a
+ * sender question, the second is usually a wrong path or a wrong DocType.
+ */
+export function segFor(ctx: Ctx, path: string): Segment | undefined {
   if (ctx.current && ctx.repeatOver && segmentOf(path) === ctx.repeatOver) return ctx.current;
   return ctx.msg.seg(segmentOf(path));
 }

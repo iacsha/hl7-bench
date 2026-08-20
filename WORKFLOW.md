@@ -1,7 +1,7 @@
 # From a new interface to IRIS, start to finish
 
-The order of operations for building a transform yourself. Eight steps.
-Nothing here needs a second person or a chat window.
+The order of operations for building a transform yourself. Eight steps, two of
+them with a b and a c. Nothing here needs a second person or a chat window.
 
 `METHOD.md` is the doctrine, the five questions and the traps. This file is the
 button-pressing. Read METHOD.md once, keep this one open while you work.
@@ -29,12 +29,15 @@ hl7.ts               the parser. Never edit.
 spec.ts              the vocabulary. Grows; rarely edited by hand.
 run.ts               the runner. Never edit.
 trace.ts             the mapping document. Never edit.
-emit.ts + emit\      the ObjectScript backends. Never edit.
+emit.ts + emit\      the ObjectScript and lookup backends. Never edit.
+fingerprint.ts       the spec hash both emitted classes carry. Never edit.
 serialize.ts         prints a spec back into transform.ts. Never edit.
 transform.ts         YOUR WORK. One interface at a time. Holds the spec.
 bench.ts             stdin to stdout runner
 gui.ts + gui.html    the browser spec editor, 127.0.0.1:7317
 check.ts             the golden gate
+reads.ts             every source path that resolved to nothing
+tables.ts            a spreadsheet becomes a spec.tables entry
 classify.ts          the in-versus-want diff
 patterns.ts          twelve moves, each with its IRIS DTL
 toolbox.ts           flat-record extraction, for non-HL7 targets
@@ -436,6 +439,50 @@ every row note you wrote. Read it before you call the mapping settled.
 
 ---
 
+## Step 5c. Find the reads that came back with nothing
+
+```powershell
+bun reads.ts < messages\<name>.in.hl7
+```
+
+The trace tells you what the receiver gets. This tells you what the mapping
+asked for and did not get, which is a different list and the one that bites in
+IRIS rather than on the bench.
+
+The emitted class sets `IGNOREMISSINGSOURCE = 1`. A source path IRIS cannot
+resolve becomes a skipped `<assign>` rather than an error. Skip **every** assign
+in a block and the target segment is never created at all: no error, no warning,
+nothing in the Visual Trace. The delivered message is simply shorter, and it
+parses cleanly.
+
+Two headlines, and they are not the same problem:
+
+**AT RISK** means every path that block reads belongs to a segment that is not
+in this message. That is the shape that produces no segment. It is usually a
+path that is wrong rather than a sender that is quiet, and it is worth ten
+seconds in the schema browser before you compile anything.
+
+**DELIVERS EMPTY** means the paths resolved and every row came back blank. IRIS
+still creates the segment and the receiver gets an empty one. A different
+defect, and often a legitimate one on this particular message.
+
+Run it against every `.in.hl7` you have, not just the happy one. A self-pay
+patient with no IN1 is exactly the message that finds this.
+
+```powershell
+bun reads.ts --strict < messages\<name>.in.hl7   # exit 1 if a block is at risk
+```
+
+`--strict` is opt-in because a legitimately absent optional segment must not
+fail a shell by default. Use it in a script once you know which message is which.
+
+One thing it cannot see: **groups**. The bench message model is flat, so a block
+with the wrong `group` name reads perfectly here and writes nowhere in IRIS.
+That is the same silent failure this report is named after, and the one case it
+will tell you is fine. Read the group name off your schema browser.
+
+---
+
 ## Step 6. Emit the ObjectScript
 
 Now, and not before. The mapping is settled, the goldens are green, and the
@@ -504,6 +551,101 @@ it. But an empty table returns the default for every message, and that looks
 exactly like a working lookup. `emit.ts` names every empty table on stderr as a
 go-live gate. Populate them and check the row count.
 
+### The fingerprint
+
+The class header carries a twelve-character hash of the spec, and `emit.ts`
+prints the same string on stderr:
+
+```
+/// Spec fingerprint: 9a62d97231a1
+```
+
+When something in the namespace does not match what you are reading, check that
+first. A stale compile looks exactly like a mapping bug and costs days. It
+covers the spec, not the file: hand-edit the generated `.cls` and the
+fingerprint stops being true.
+
+### The business process, if you need one
+
+```powershell
+bun emit.ts process > MyProcess.cls
+```
+
+This one says **TEMPLATE** in its first line and means it. Nothing in it has run
+here, because `OnRequest` needs a production and there is no production on a
+laptop. The DTL earned its "proven on the bench"; this did not.
+
+It needs one fact the mapping cannot supply, so add it to the spec:
+
+```ts
+iris: {
+  process: {
+    className: "Site.Interface.Process.AdtToRegistration",
+    sendTo: "ToRegistration.ADT.TCP",
+  },
+},
+```
+
+`sendTo` is the config item name exactly as the production spells it. A name
+that does not resolve fails at **run time**, per message, not at compile time.
+
+What comes out clones the request, calls the DTL, and dispatches with
+`SendRequestAsync(..., 0)`. That is one shop's shape. If your production already
+has an `EnsLib.HL7.MsgRouter.RoutingEngine` in front of this transform with a
+rule whose transform field names the DTL, you probably do not want this file at
+all. Read it and take the parts you need.
+
+Note that the gate now exists in two places: the routing rule condition below,
+and a filter at the top of `OnRequest`. Pick which one holds it. Both is
+harmless. Neither is the failure that matters, and it is silent.
+
+### The lookup tables, as a file you can import
+
+```powershell
+bun emit.ts tables > Tables.xml           # every table in the spec
+bun emit.ts tables --table Facilities     # just the one
+```
+
+Lookup tables are namespace **data**. They do not travel with a class export and
+they do not travel with a production deployment. That is how a transform arrives
+in Test correct and translates nothing.
+
+Import at **Interoperability > Configure > Data Lookup Tables**, or:
+
+```
+Do ##class(Ens.Util.LookupTable).%Import("C:\path\Tables.xml")
+```
+
+Verify the document shape against your own version once, by exporting an
+existing table from the portal and diffing. Then trust it.
+
+Empty keys and control characters are refused outright, because a document that
+imports cleanly with the wrong rows in it is the exact failure this artifact
+exists to prevent. An empty **value** is warned about and still written, since
+`Lookup` returns your default for a blank value exactly as it does for a missing
+key, which in an allowlist is a permitted code being quietly refused.
+
+### Building a big table without retyping it
+
+Four hundred facilities in a spreadsheet:
+
+```powershell
+bun tables.ts Facilities < facilities.csv                       # a paste block
+bun tables.ts Facilities --module < facilities.csv > tables.facilities.ts
+bun tables.ts Sex --key 2 --value 3 --delim tab < codes.txt
+```
+
+It writes TypeScript into `spec.tables`, not XML, so the bench and IRIS read the
+same rows. `bun emit.ts tables` then makes the import file. One place to be
+wrong instead of two.
+
+It trims keys and values and **reports the count**. A trailing space in a key is
+invisible in every editor and in the portal, survives a copy-paste, and makes
+`Lookup` miss. `--no-trim` if your keys genuinely carry spaces. The same key
+twice with different values is refused rather than resolved, because that is two
+people disagreeing about a code and picking one silently is how the wrong one
+ships.
+
 ### The routing rule
 
 `emit.ts` also prints the condition your routing rule needs, built from
@@ -554,9 +696,14 @@ transform at all.
 2. Work down the TODO comments the emitter left. Nothing else in the file needs
    touching.
 3. Build the routing rule, pasting the condition `emit.ts` printed on stderr.
-4. Create the lookup tables and load their rows. Verify the row count. The
-   emitter listed every one it calls, and starred the empty ones.
-5. Use the DTL editor's Test button with your `.in.hl7` pasted in. This is the
+4. Import `Tables.xml` and verify the row count against what `emit.ts tables`
+   reported. The tables are data and do not arrive with the class; promote them
+   with it, every time, including to Production.
+5. If you emitted a business process, add it to the production as a Business
+   Process and confirm `sendTo` matches a real config item name.
+6. Check the fingerprint in the compiled class against what `emit.ts` printed.
+   Same string, same mapping. Different, and you are looking at an old compile.
+7. Use the DTL editor's Test button with your `.in.hl7` pasted in. This is the
    fastest loop in IRIS and it does not need the interface running.
 
 ---
@@ -609,8 +756,10 @@ records shapes and outcomes rather than content. Full detail in `README.md`.
 | A GUI save deleted an import your transform needed | `serialize.ts` regenerates only the `"./spec"` import. Restore from `transform.ts.bak` and open an issue, because that is a serializer bug |
 | `bun gui.ts` exits with `EADDRINUSE` | An older GUI still holds 7317. Close that terminal |
 | Golden diff fails on byte one, output looks identical | UTF-8 BOM from a PowerShell `>` redirect. Use `bench.ts -o` |
-| A segment you assigned is missing from IRIS output, no error | Wrong DocType, or a grouped path. Fails closed. Schema browser |
-| A lookup returns empty for every message | Table exists with zero rows |
+| A segment you assigned is missing from IRIS output, no error | Wrong DocType, a grouped path, or every assign in the block skipped by `IGNOREMISSINGSOURCE`. Run `bun reads.ts` first, then the schema browser |
+| You fixed the mapping, recompiled, and the behaviour did not change | Compare the fingerprint in the class with what `emit.ts` prints. An old compile is indistinguishable from a mapping bug except by that string |
+| A lookup returns empty for every message | Table exists with zero rows, or the tables were never promoted with the class. They are data, not code |
+| One facility code out of four hundred never matches | A trailing space in the key. Invisible everywhere. Rebuild the table with `bun tables.ts`, which trims and reports the count |
 | Fields appear in the output that you never assigned | Missing `create='new'`, source riding along |
 | `check.ts` says SKIP | You have an `.in.hl7` with no matching `.want.hl7` |
 | A code you never saw before arrives blank at the receiver | A lookup with no stated unmapped branch |
@@ -630,8 +779,12 @@ records shapes and outcomes rather than content. Full detail in `README.md`.
 - `METHOD.md`: the five questions, path syntax card, the traps collected
 - `patterns.ts`: the twelve moves, each with its IRIS DTL
 - `spec.ts`: the vocabulary, with the reasoning for each kind in its doc comment
-- `emit/iris.ts`: the DTL backend. The only one shipped, and not the only shape
-  the seam allows
+- `emit/iris.ts`: the DTL backend. The only engine shipped, and not the only
+  shape the seam allows
+- `emit/process.ts`: the business process template, and why it says TEMPLATE
+- `emit/lookup.ts`: `spec.tables` as an import file, and what it refuses
+- `tables.ts`: CSV to `spec.tables`, and why it does not go straight to XML
+- `reads.ts`: what `IGNOREMISSINGSOURCE = 1` costs and how to see it early
 - `serialize.ts`: how a GUI save becomes `transform.ts` again, and exactly what
   it does and does not preserve
 - `log.ts`: the log switch, what each level writes and why the split exists

@@ -55,6 +55,18 @@ export const spec: Spec = {
     sourceDocType: "2.5:ADT_A01",
     targetDocType: "2.5:ADT_A01",
     create: "new",
+
+    /**
+     * Optional. Present here so `bun emit.ts process` has something to show;
+     * delete it and nothing else changes. `sendTo` is the config item name as
+     * the production spells it, and it is the one fact in this whole file that
+     * cannot be derived from the mapping.
+     */
+    process: {
+      className: "Demo.Process.ToDownstream",
+      sendTo: "ToDownstream.ADT.TCP",
+      comment: "Route permitted ADT to the downstream registry",
+    },
   },
 
   /**

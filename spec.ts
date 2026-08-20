@@ -217,6 +217,27 @@ export interface Spec {
     /** "new" builds a fresh target, which is what block order below describes. */
     create?: "new" | "copy";
     /**
+     * The business process that calls the DTL, if you want one emitted.
+     *
+     * Optional, and absent means nothing changes: no extra artifact, no extra
+     * validation, the bench behaves exactly as it did. Present, `emit/process.ts`
+     * writes an Ens.BusinessProcess TEMPLATE that filters on the gate, clones,
+     * transforms and dispatches.
+     *
+     *   className   the process class. NOT the DTL class name: they are two
+     *               classes and naming them the same replaces one with the other
+     *               at compile time.
+     *   sendTo      the config item name to dispatch to, as it is spelled in the
+     *               production. This is the one fact the bench cannot derive
+     *               from anything it already holds.
+     *   comment     the one-line description that goes in the class header.
+     */
+    process?: {
+      className: string;
+      sendTo: string;
+      comment?: string;
+    };
+    /**
      * What the GENERATED CLASS logs at run time, inside IRIS. Nothing to do
      * with HL7_BENCH_LOG, which is the bench writing files on your machine.
      *
@@ -413,6 +434,28 @@ export function validate(spec: Spec): string[] {
   }
 
   problems.push(...classNameProblems(spec.iris.className));
+
+  const proc = spec.iris.process;
+  if (proc) {
+    problems.push(...classNameProblems(proc.className).map((p) => p.replace("iris.className", "iris.process.className")));
+
+    // Two classes, so two names. Compiling a business process over the name of
+    // the DTL it calls does not fail: the second definition replaces the first,
+    // the transform the rule names disappears, and the rule then fails at run
+    // time complaining about a transform that is right there in the portal.
+    if (spec.iris.className !== undefined && proc.className === spec.iris.className) {
+      problems.push(
+        `iris.process.className is the same as iris.className ("${proc.className}"). ` +
+          `They are two classes. Compiling both under one name replaces the DTL with the process.`,
+      );
+    }
+    if (proc.sendTo.trim() === "") {
+      problems.push(
+        `iris.process.sendTo is empty. The process would call SendRequestAsync with no target, ` +
+          `which fails at run time rather than at compile time.`,
+      );
+    }
+  }
 
   const tables = spec.tables ?? {};
   const seen = new Set<string>();

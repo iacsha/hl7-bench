@@ -31,77 +31,25 @@ the bench tooltip would be the first step toward two dictionaries that disagree.
 
 **A corpus profiler.** Per-field population rates and distinct values across a
 thousand messages is the single most useful thing missing from this toolchain,
-and it belongs in **hl7-toolkit**, whose stated purpose is small review tools.
-Putting it here turns the bench into a message browser.
+and **PipeHat already has it scoped**: "Field population profiler", P1, listed
+as unblocked now that MessageIndex supplies per-message iteration. PipeHat also
+already owns the parts that make it work, per-message delimiter scope and batch
+envelope handling, and the batch file is open in the editor there anyway.
+Putting it here turns the bench into a message browser and gives the toolchain
+two profilers that will disagree about what counts as populated.
 
 ---
 
 ## Open
 
-### Emit the business process class, as a template
+### The process class needs a GUI tab
 
-The bench already holds every input except one. `gate.permit` holds the trigger
-events, `gate.path` holds the field they are read from, and `iris.className`
-holds the DTL to call. The only new fact is the name of the outbound config
-item to dispatch to.
+`bun emit.ts process` writes the class; the GUI cannot show it. A tab beside
+ObjectScript, with the same copy button, which already copies whatever tab is
+visible.
 
-Proposed shape, optional, absent meaning the bench behaves exactly as it does
-now:
-
-```ts
-iris: {
-  className: "Site.Interface.DTL.AdtToRegistration",
-  process: {
-    className: "Site.Interface.Process.ToRegistration",
-    sendTo: "ToRegistration.ADT.TCP",
-    comment: "Custom Business Process to translate ADT bound for the registry",
-  },
-}
-```
-
-New GUI tab beside ObjectScript. The copy button already copies whatever tab is
-visible, so that part is free.
-
-The emitted `OnRequest` has three parts in a fixed order: the trigger-event
-filter, then the gate requirements, then clone and transform and dispatch. A
-refused message returns success with a trace, never an error, because an
-excluded facility or an unhandled event is a correct outcome, and an error queue
-full of correct outcomes trains people to ignore the error queue.
-
-**The header must not claim what the DTL header claims.** The DTL says *proven
-on the bench* and means it: real messages went through that mapping and the
-output was shown. There is no `OnRequest` to run and no message to feed it, so
-a process class is a template and the file has to say so. If both artifacts
-carry the same confident banner, the DTL banner stops meaning anything, and it
-is the one line in that file that has to be believed.
-
-Second caution for the same header: the shape being emitted is one shop's
-pattern, a custom `Ens.BusinessProcess` that clones the request, calls a DTL,
-and dispatches with `SendRequestAsync` by config item name. Plenty of sites
-wire a routing engine to a rule with a transform field instead. Say which
-pattern the file is modelled on rather than implying it is the pattern.
-
-No longer blocked. The DocType question below is settled, and a `stampDocType`
-option is not needed.
-
-### Empty-read report
-
-Dry run a spec against a message and list every source path that resolved to
-nothing, before anything is compiled.
-
-`IGNOREMISSINGSOURCE = 1` turns an unresolvable source path into a skipped
-assign. Skip every assign for a segment and the segment is never created, so a
-whole block of the mapping disappears with no error, no warning, and nothing in
-the trace. That cost two days on a live build. The bench can answer it in the
-time it takes to paste a message.
-
-### Spec fingerprint in the class header
-
-Stamp a hash of the spec into the emitted class comment.
-
-The hunt above was not a mapping bug. The mapping was correct and the namespace
-was running an older compile. Nothing in the portal answers *am I running what I
-think I am running*, and a fingerprint in the header turns that into a glance.
+Small, and worth doing before anyone builds a process from the command line
+twice.
 
 ### Golden-file regression
 
@@ -112,17 +60,6 @@ The trigger: a working interface got a package rename, a class rename, and a
 config item rebuild in one sitting, and the only thing that confirmed it still
 worked was a person reading ten segments and comparing them to ten segments from
 memory.
-
-### Say what `IGNOREMISSINGSOURCE` costs, in the header
-
-The emitted class sets it to 1, which is right for production and wrong for
-diagnosis. Set to 0 it names the path that will not resolve, which is the
-fastest way to find a broken mapping and an outage if it ships that way: a
-patient with no insurance stops being a skipped segment and becomes a failed
-message.
-
-Both halves belong in the header, beside the parameter, because whoever needs
-the diagnostic is already looking at the class and not at this file.
 
 ### `HL7_BENCH_TRANSFORM`
 
@@ -179,18 +116,14 @@ did it: the trigger event, a required equality, or a table miss.
 The commonest allowlist failure is a facility code typed slightly wrong in the
 table. That is a laptop-sized problem being diagnosed in a dev namespace today.
 
-### Export the lookup tables as loadable XML
+### Verify the lookup document shape against a real export
 
-`spec.tables` already holds the rows. Emit them in the format the Data Lookup
-Tables page imports.
+`emit/lookup.ts` writes `<lookupTable><entry table= key=>value</entry></lookupTable>`,
+which is the documented shape and has never been imported into an actual
+namespace from this tool. Export an existing table out of the portal, diff the
+two, and either confirm it or fix it once.
 
-Lookup tables are namespace **data**, not code. They do not travel with a class
-export and they do not travel with a production deployment. A table that did not
-make it into the next namespace makes `Lookup` return the default for every
-message, so an allowlist drops everything, with a trace rather than an error.
-Nothing in the error log, interface looks alive, delivers nothing.
-
-Turning that from a thing you remember into a file you deploy is the whole item.
+Until that happens the emitter is right on paper. That is not the same thing.
 
 ### Promotion diff
 
@@ -253,6 +186,75 @@ workflow.
 ---
 
 ## Settled
+
+### The business process class, as a template
+
+`emit/process.ts`, reached as `bun emit.ts process`. `iris.process` is optional
+and carries the one fact the mapping cannot supply: `sendTo`, the config item
+name as the production spells it. `validate()` refuses a reserved package, an
+illegal name, the same name as the DTL, and an empty `sendTo`.
+
+The header says TEMPLATE and says why: nothing in it has been executed, because
+`OnRequest` needs a production. It also names which shop's pattern it models
+rather than implying it is the pattern.
+
+The gate is now emitted twice, as the routing rule condition and as a filter at
+the top of `OnRequest`. Both headers say so. A gate in neither place is the
+failure that matters and it is silent, so two is the safe side of that trade.
+
+Still open: the GUI tab.
+
+### Empty-read report
+
+`reads.ts`. Runs the spec through the same `walk` and `resolve` the runner uses,
+so it cannot describe a read the bench does not perform.
+
+Two headlines, deliberately separate. **AT RISK** is the shape that produces no
+segment: every path the block reads belongs to a segment that is not in the
+message. **DELIVERS EMPTY** is a segment that gets created with nothing in it,
+which is a different defect. One resolvable assign is the whole difference.
+
+`--strict` exits 1 on at-risk, opt-in, because a legitimately absent optional
+segment must not fail a shell by default.
+
+Its own blind spot is printed on every run including the clean ones: groups are
+not checked, the bench model being flat, and a wrong `block.group` reads
+perfectly here and writes nowhere in IRIS.
+
+### Spec fingerprint in the class header
+
+`fingerprint.ts`. Twelve hex characters of a SHA-256 over a stable stringify of
+the whole spec, in both emitted class headers and on `emit.ts` stderr.
+
+Covers everything including labels and notes, so a cosmetic edit moves it. That
+is the deliberate side of the trade: a fingerprint that holds still through a
+real change is worse than none, and one that drifts on a rewritten label costs a
+second look. It describes the spec, not the file, and the header says a
+hand-edit makes it a lie.
+
+### `IGNOREMISSINGSOURCE`, stated in the header
+
+A `///` block above the parameter: 1 skips, 0 throws and names the path, 0 is
+the fastest diagnosis in the file, and shipping at 0 is an outage because a
+self-pay patient with no IN1 becomes a failed message. What 1 costs is a segment
+that is never created, and the header points at `bun reads.ts` for that.
+
+### Lookup tables as loadable XML
+
+`emit/lookup.ts`, reached as `bun emit.ts tables [--table NAME]`. Empty keys and
+control characters are refused outright, since a document that imports cleanly
+with the wrong rows in it is the failure the artifact exists to prevent. An
+empty value warns and is written, because that is sometimes meant and always
+worth saying.
+
+`tables.ts` is the other half: a spreadsheet becomes a `spec.tables` entry, with
+quoted fields, embedded delimiters, CRLF and a BOM handled, trims counted and
+reported, and a duplicate key with two different values refused rather than
+resolved. It writes TypeScript, not XML, on purpose: straight to XML would put
+the rows where the bench cannot read them, and the bench and IRIS would disagree
+exactly where you were relying on them to agree.
+
+Not yet verified against a real portal export. See Open.
 
 ### Source-side group paths and DocType
 

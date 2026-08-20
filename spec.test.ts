@@ -640,6 +640,57 @@ describe("emitIris", () => {
     });
   });
 
+  describe("iris.process, which is a second class out of the same spec", () => {
+    const withProcess = (process: NonNullable<Spec["iris"]["process"]>, over: Partial<Spec["iris"]> = {}) =>
+      validate({ ...base(), iris: { ...base().iris, process, ...over } });
+
+    const ok = { className: "Site.Interface.Process.Adt", sendTo: "ToTarget.ADT.TCP" };
+
+    test("a well formed process is silent", () => {
+      expect(withProcess(ok)).toEqual([]);
+    });
+
+    test("absent is fine; it is optional and nothing else depends on it", () => {
+      expect(validate(base())).toEqual([]);
+    });
+
+    // The same rule as the DTL name and for the same reason: a class definition
+    // occupies its name rather than extending it.
+    test("a reserved package is refused, and the message names this field", () => {
+      const out = withProcess({ ...ok, className: "Ens.BusinessProcess" }).join(" ");
+      expect(out).toContain("InterSystems package");
+      expect(out).toContain("iris.process.className");
+      expect(out).not.toContain("iris.className is");
+    });
+
+    test("an illegal name is refused here too", () => {
+      expect(withProcess({ ...ok, className: "9Bad.Name" }).join(" ")).toContain("not a legal class name");
+    });
+
+    // Two classes, one name. Compiling both replaces the DTL with the process,
+    // and the transform the process calls is then the process, which recurses.
+    test("the same name as the DTL is refused", () => {
+      const out = withProcess({ ...ok, className: "Site.Interface.Dtl.Adt" }, {
+        className: "Site.Interface.Dtl.Adt",
+      }).join(" ");
+      expect(out).toContain("They are two classes");
+    });
+
+    test("a different name from the DTL is fine", () => {
+      expect(withProcess(ok, { className: "Site.Interface.Dtl.Adt" })).toEqual([]);
+    });
+
+    // SendRequestAsync with an unresolvable target fails per message at run
+    // time, not at compile time, so an empty one compiles and then bleeds.
+    test("an empty sendTo is refused, since the failure is at run time", () => {
+      expect(withProcess({ ...ok, sendTo: "" }).join(" ")).toContain("sendTo is empty");
+    });
+
+    test("whitespace-only sendTo counts as empty", () => {
+      expect(withProcess({ ...ok, sendTo: "   " }).join(" ")).toContain("sendTo is empty");
+    });
+  });
+
   describe("the class shell", () => {
     test("create defaults to new, because the spec builds a fresh target", () => {
       expect(of({})).toContain("create='new'");
