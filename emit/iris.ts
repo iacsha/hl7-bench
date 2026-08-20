@@ -389,7 +389,12 @@ function emitRow(st: State, row: Row, scope: Scope, indent: string, out: string[
   // on the TARGET after the assign rather than on the source before it, so it
   // catches a source that was populated and a step that emptied it.
   if (level !== "off" && row.required) {
-    const msg = os(`${row.target} (${label}) is required and came out empty`);
+    // "PID-3 (PID-3) is required" is what an unlabelled row used to print. The
+    // parenthetical is there to name the field in human terms for whoever reads
+    // the Event Log at 3am; repeating the path says nothing and looks like a
+    // bug in the generator, which costs trust the log line needs.
+    const named = label === row.target ? row.target : `${row.target} (${label})`;
+    const msg = os(`${named} is required and came out empty`);
     out.push(...code(indent, `if '$LENGTH(${codeRef(prop)}) { $$$LOGWARNING(${msg}) }`));
   }
 

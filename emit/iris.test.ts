@@ -62,6 +62,29 @@ describe("no curly braces inside <code>", () => {
     expect(guard).not.toMatch(BRACED);
   });
 
+  test("the guard names the field in human terms when the row has a label", () => {
+    const cls = emitIris(
+      base({
+        blocks: [{ id: "MSH", rows: [{ target: "MSH-10", from: copy("MSH-10"), required: true, label: "Control ID" }] }],
+      }),
+    );
+    expect(cdata(cls).find((c) => c.includes("LOGWARNING"))).toContain(
+      "MSH-10 (Control ID) is required and came out empty",
+    );
+  });
+
+  test("and does not repeat the path back at itself when it has none", () => {
+    // An unlabelled row used to print "PID-3 (PID-3) is required", which reads
+    // like a generator bug in the one place the reader has to trust the
+    // generator: an Event Log line at 3am telling them what broke.
+    const cls = emitIris(
+      base({ blocks: [{ id: "PID", rows: [{ target: "PID-3", from: copy("PID-3"), required: true }] }] }),
+    );
+    const guard = cdata(cls).find((c) => c.includes("LOGWARNING"))!;
+    expect(guard).toContain("PID-3 is required and came out empty");
+    expect(guard).not.toContain("(PID-3)");
+  });
+
   test("an unmapped lookup code", () => {
     const cls = emitIris(
       base({
