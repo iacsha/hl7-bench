@@ -92,6 +92,48 @@ function os(s: string): string {
   return `"${s.replace(/"/g, '""')}"`;
 }
 
+/**
+ * A DTL path rendered as an ObjectScript STRING expression.
+ *
+ * The curly form, `{PID:5.1}`, is a DTL compiler feature. It works in a DTL
+ * attribute -- `<assign value=`, `<if condition=`, `<foreach property=` -- and
+ * nowhere else. A `<code>` body is handed to the ObjectScript compiler exactly
+ * as written, so a brace there fails with "invalid name" at compile time
+ * rather than at runtime, which is at least the good kind of failure.
+ *
+ * Occurrence numbers that are loop VARIABLES have to come out of the literal
+ * and be concatenated in, or the class looks for a repetition literally
+ * numbered "k1". A `*` or a fixed digit stays inside the string, because that
+ * is what it means to the message class.
+ */
+function osPath(path: string): string {
+  const parts: string[] = [];
+  let lit = "";
+  let last = 0;
+  for (const m of path.matchAll(/\(([^)]*)\)/g)) {
+    const inner = m[1];
+    if (inner === "" || inner === "*" || /^\d+$/.test(inner)) continue;
+    lit += path.slice(last, m.index) + "(";
+    parts.push(os(lit));
+    parts.push(inner);
+    lit = ")";
+    last = m.index! + m[0].length;
+  }
+  lit += path.slice(last);
+  if (lit !== "") parts.push(os(lit));
+  return parts.join("_");
+}
+
+/**
+ * The same reference a DTL attribute would write, in the form a `<code>` body
+ * can compile. `source.{PID:8}` becomes `source.GetValueAt("PID:8")`.
+ */
+function codeRef(braced: string): string {
+  const m = /^(\w+)\.\{(.+)\}$/.exec(braced);
+  if (!m) throw new Error(`Not a DTL reference: "${braced}"`);
+  return `${m[1]}.GetValueAt(${osPath(m[2])})`;
+}
+
 /** A class name out of a free-text spec name. */
 function classNameFor(spec: Spec): string {
   if (spec.iris.className) return spec.iris.className;
@@ -190,8 +232,11 @@ function sourceCode(
       const i = `i${v}`;
       const id = segmentOf(from.path);
       const f = from.path.slice(id.length + 1).split(/[.(]/)[0];
+      // codeRef, not the braced form: every use below lands inside <code>.
       const at = (idx: string, comp?: number) =>
-        `source.${dtlPath(`${id}-${f}(${idx})${comp === undefined ? "" : "." + comp}`, scope.sourcePrefix)}`;
+        codeRef(
+          `source.${dtlPath(`${id}-${f}(${idx})${comp === undefined ? "" : "." + comp}`, scope.sourcePrefix)}`,
+        );
       return {
         expr: v,
         pre: [
@@ -217,15 +262,17 @@ function sourceCode(
       const v = `p${st.temp++}`;
       const seg = from.segment;
       const rest = (p: string) => p.slice(seg.length + 1);
+      const count = codeRef(`source.{${seg}(*)}`);
+      const ref = (p: string) => codeRef(`source.{${seg}(i${v}):${rest(p)}}`);
       return {
         expr: v,
         pre: [
           `<code>`,
           `  <![CDATA[`,
           `  set ${v} = ""`,
-          `  for i${v}=1:1:source.{${seg}(*)} {`,
-          `    if $LENGTH(source.{${seg}(i${v}):${rest(from.nonEmpty)}}) > 0 {`,
-          `      set ${v} = source.{${seg}(i${v}):${rest(from.path)}}`,
+          `  for i${v}=1:1:${count} {`,
+          `    if $LENGTH(${ref(from.nonEmpty)}) > 0 {`,
+          `      set ${v} = ${ref(from.path)}`,
           `      quit`,
           `    }`,
           `  }`,
@@ -319,7 +366,7 @@ function emitRow(st: State, row: Row, scope: Scope, indent: string, out: string[
   // one of exactly two silent failures the class can see for itself: the
   // message is delivered, it is well formed, and the field is wrong.
   if (level !== "off" && row.from.kind === "lookup") {
-    const ref = `source.${dtlPath(row.from.path, scope.sourcePrefix)}`;
+    const ref = codeRef(`source.${dtlPath(row.from.path, scope.sourcePrefix)}`);
     const t = os(row.from.table);
     // Built with os() on both halves rather than typed as one literal: a
     // table name or a label is free text out of the spec, and one quote in it
@@ -343,14 +390,14 @@ function emitRow(st: State, row: Row, scope: Scope, indent: string, out: string[
   // catches a source that was populated and a step that emptied it.
   if (level !== "off" && row.required) {
     const msg = os(`${row.target} (${label}) is required and came out empty`);
-    out.push(...code(indent, `if '$LENGTH(${prop}) { $$$LOGWARNING(${msg}) }`));
+    out.push(...code(indent, `if '$LENGTH(${codeRef(prop)}) { $$$LOGWARNING(${msg}) }`));
   }
 
   // A trace carries the VALUE, which is message content. That is not a new
   // exposure -- Visual Trace already shows you the whole message either side
   // of this transform -- but it is the reason this is not the default.
   if (level === "trace") {
-    out.push(...code(indent, `$$$TRACE(${os(`${row.target} = `)}_${prop})`));
+    out.push(...code(indent, `$$$TRACE(${os(`${row.target} = `)}_${codeRef(prop)})`));
   }
 }
 

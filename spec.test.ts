@@ -506,15 +506,17 @@ describe("emitIris", () => {
 
   test("pickRepeat emits a scan, not a fixed repetition index", () => {
     const out = of({ blocks: [{ id: "PV1", rows: [{ target: "PV1-7", from: pickRepeat("PV1-7", 7, "NPI", 1) }] }] });
-    expect(out).toContain("source.{PV1:7(*)}");
+    // GetValueAt rather than {PV1:7(*)}: the scan is a <code> body, and the
+    // curly form only compiles in a DTL attribute. See emit/iris.test.ts.
+    expect(out).toContain(`source.GetValueAt("PV1:7(*)")`);
     expect(out).toContain(`= "NPI"`);
-    expect(out).not.toContain("{PV1:7(2)");
+    expect(out).not.toContain(`"PV1:7(2)`);
   });
 
   test("fromFirst emits a scan over the segment repetitions", () => {
     const out = of({ blocks: [{ id: "GT1", rows: [{ target: "GT1-3", from: fromFirst("NK1", "NK1-2", "NK1-2.1") }] }] });
-    expect(out).toContain("source.{NK1(*)}");
-    expect(out).toContain("$LENGTH(source.{NK1(i");
+    expect(out).toContain(`source.GetValueAt("NK1(*)")`);
+    expect(out).toContain(`$LENGTH(source.GetValueAt("NK1("_i`);
   });
 
   test("todo emits a TODO comment and NO assign", () => {
@@ -673,9 +675,9 @@ describe("iris.log puts the class's own logging in the spec", () => {
 
   test("a required target is checked AFTER the assign, on the target", () => {
     const out = withLog("warn");
-    expect(out).toContain("if '$LENGTH(target.{PID:3}) { $$$LOGWARNING(");
+    expect(out).toContain(`if '$LENGTH(target.GetValueAt("PID:3")) { $$$LOGWARNING(`);
     expect(out.indexOf("property='target.{PID:3}'")).toBeLessThan(
-      out.indexOf("if '$LENGTH(target.{PID:3})"),
+      out.indexOf(`if '$LENGTH(target.GetValueAt("PID:3"))`),
     );
   });
 
@@ -686,7 +688,9 @@ describe("iris.log puts the class's own logging in the spec", () => {
   // The obvious test -- did Lookup come back empty -- cannot tell a miss from
   // a hit under passthrough or constant, because the fallback IS a real value.
   test("an unmapped code is detected with a sentinel, not with emptiness", () => {
-    expect(withLog("warn")).toContain('..Lookup("Sex",source.{PID:8},$CHAR(0))=$CHAR(0)');
+    expect(withLog("warn")).toContain(
+      '..Lookup("Sex",source.GetValueAt("PID:8"),$CHAR(0))=$CHAR(0)',
+    );
   });
 
   test("the lookup check runs before the assign that swallows the miss", () => {
