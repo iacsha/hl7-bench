@@ -90,6 +90,22 @@ textarea, .out, .mono {
 .picker .ptext { color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .picker .pbar { display: flex; gap: 6px; align-items: center; margin-top: 9px; }
 .out .sep { color: var(--sep); }
+.out .fld:hover { background: var(--chg-bg); border-radius: 2px; }
+
+/* Position readout. Both message panes answer the same question, so both say
+   it the same way: PV1-7[2].1, not "the seventh pipe, second repeat". */
+#msgfile { margin-left: 12px; }
+#msgpos { color: var(--seg); font-weight: 600; }
+.tip {
+  position: fixed; z-index: 40; display: none; pointer-events: none;
+  background: var(--panel); color: var(--text);
+  border: 1px solid var(--border); border-radius: 5px;
+  padding: 4px 8px; font: 11.5px/1.5 var(--mono);
+  box-shadow: 0 2px 10px rgba(0,0,0,.28); white-space: nowrap;
+}
+.tip.on { display: block; }
+.tip b { color: var(--seg); font-weight: 600; }
+.tip span { color: var(--muted); }
 .out .chg { background: var(--chg-bg); color: var(--chg-text); border-radius: 2px; }
 .diag { font: 12px/1.6 var(--mono); padding: 10px 12px; white-space: pre-wrap; overflow: auto; flex: 1 1 auto; margin: 0; }
 .diag.bad { color: var(--bad); }
@@ -182,6 +198,7 @@ input.md { width: 116px; }
     <section class="pane half">
       <h2>Message in
         <button id="grab" class="tiny" type="button" title="Build spec rows from the segments in this message">Copy segments to spec</button>
+        <span class="hint" id="msgpos"></span>
         <span class="hint" id="msgfile"></span>
       </h2>
       <div class="picker" id="picker"></div>
@@ -221,6 +238,8 @@ input.md { width: 116px; }
     </section>
   </div>
 </main>
+
+<div id="tip" class="tip"></div>
 
 <script type="module">
 import { Message } from "./hl7.js";
@@ -764,6 +783,164 @@ function renderSpec() {
 // The message diff
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+// Where am I in this message
+//
+// Counting pipes by eye is how a mapping ends up one field off, and the MSH
+// line makes it worse: MSH-1 IS the field separator and MSH-2 IS the encoding
+// characters, so everything after the segment id on an MSH sits one slot left
+// of where a naive split puts it. Both message panes answer the question the
+// same way, in the same notation the spec uses, so a readout can be typed
+// straight into a row.
+// ---------------------------------------------------------------------------
+
+/** Delimiters from the same parser bench.ts uses, with the standard fallback. */
+function delimsOf(raw) {
+  try {
+    return new Message(raw).delims;
+  } catch {
+    return { field: "|", comp: "^", rep: "~", esc: "\\", sub: "&" };
+  }
+}
+
+/**
+ * Which occurrence of its own segment id each line is, and how many there are.
+ * Blank lines keep their slot, so a line index stays a line index.
+ */
+function occurrences(lines, fieldDelim) {
+  const total = new Map();
+  const out = lines.map((line) => {
+    if (line.trim() === "") return null;
+    const id = line.split(fieldDelim)[0];
+    const n = (total.get(id) ?? 0) + 1;
+    total.set(id, n);
+    return { id, occ: n };
+  });
+  for (const o of out) if (o) o.total = total.get(o.id);
+  return out;
+}
+
+/**
+ * Which slice of `raw` the offset lands in, given a one character delimiter.
+ * With no offset it is slice 0, which is what the output pane wants: the
+ * label describes the field, not a point inside it.
+ */
+function sliceAt(raw, delim, offset) {
+  const parts = raw.split(delim);
+  if (offset === undefined) return { index: 0, parts };
+  let seen = 0;
+  for (let i = 0; i < parts.length; i++) {
+    const end = seen + parts[i].length;
+    if (offset <= end) return { index: i, parts, before: seen };
+    seen = end + 1;
+  }
+  return { index: parts.length - 1, parts, before: seen };
+}
+
+/**
+ * The HL7 path for a raw split index on a line, e.g. "PV1-7[2].1".
+ *
+ * `fieldIndex` is the split index, so 0 is the segment id. Repetition and
+ * component are shown only when the field actually has them: a path carrying
+ * indexes that are always 1 is noise in the one place noise gets copied
+ * straight into a spec.
+ */
+function hl7Path(line, delims, fieldIndex, charInField) {
+  const parts = line.split(delims.field);
+  const id = parts[0];
+  if (fieldIndex <= 0) return id;
+
+  // MSH-1 is the separator itself, so the id occupies the slot MSH-1 would
+  // take and every later field shifts by one. MSH-2 is never split further:
+  // it is the field that DEFINES the delimiters, and splitting it returns "^".
+  const isMsh = id === "MSH";
+  const num = isMsh ? fieldIndex + 1 : fieldIndex;
+  if (isMsh && num <= 2) return id + "-" + num;
+
+  let path = id + "-" + num;
+  let rest = parts[fieldIndex] ?? "";
+  let offset = charInField;
+
+  const rep = sliceAt(rest, delims.rep, offset);
+  if (rep.parts.length > 1) {
+    path += "[" + (rep.index + 1) + "]";
+    rest = rep.parts[rep.index];
+    offset = offset === undefined ? undefined : offset - (rep.before ?? 0);
+  }
+
+  const comp = sliceAt(rest, delims.comp, offset);
+  if (comp.parts.length > 1) path += "." + (comp.index + 1);
+
+  return path;
+}
+
+/** "PID-5.1 \u00b7 PID #1 of 1 \u00b7 line 3", or "" when there is no segment there. */
+function positionLabel(raw, lineIndex, fieldIndex, charInField) {
+  const lines = raw.split(/\r\n|\r|\n/);
+  const line = lines[lineIndex];
+  if (line === undefined || line.trim() === "") return "";
+
+  const delims = delimsOf(raw);
+  const occ = occurrences(lines, delims.field)[lineIndex];
+  const path = hl7Path(line, delims, fieldIndex, charInField);
+  const which = occ.total > 1 ? occ.id + " #" + occ.occ + " of " + occ.total : occ.id;
+  return path + " \u00b7 " + which + " \u00b7 line " + (lineIndex + 1);
+}
+
+// ---- the textarea: read the caret ------------------------------------------
+
+function caretPosition() {
+  const ta = $("message");
+  const raw = ta.value;
+  const at = ta.selectionStart ?? 0;
+
+  // A textarea normalises line endings to LF in .value, so the separator is
+  // always one character and these offsets line up with the split.
+  const before = raw.slice(0, at);
+  const lineIndex = (before.match(/\n/g) ?? []).length;
+  const col = at - (before.lastIndexOf("\n") + 1);
+
+  const line = raw.split(/\r\n|\r|\n/)[lineIndex] ?? "";
+  const upto = line.slice(0, col).split(delimsOf(raw).field);
+  return positionLabel(raw, lineIndex, upto.length - 1, upto[upto.length - 1].length);
+}
+
+function showCaretPosition() {
+  $("msgpos").textContent = caretPosition();
+}
+
+for (const ev of ["click", "keyup", "input", "select", "focus"]) {
+  $("message").addEventListener(ev, showCaretPosition);
+}
+$("message").addEventListener("blur", () => { $("msgpos").textContent = ""; });
+
+// ---- the output pane: hover a field ----------------------------------------
+
+const tip = $("tip");
+
+$("output").addEventListener("mousemove", (e) => {
+  const fld = e.target.closest ? e.target.closest(".fld") : null;
+  if (!fld) { tip.classList.remove("on"); return; }
+
+  const [path, ...rest] = (fld.dataset.pos ?? "").split(" \u00b7 ");
+  tip.replaceChildren(
+    el("b", { text: path }),
+    el("span", { text: rest.length ? " \u00b7 " + rest.join(" \u00b7 ") : "" }),
+  );
+  tip.classList.add("on");
+
+  // Flip to the left of the cursor near the right edge, so the tooltip never
+  // pushes the window into a horizontal scroll.
+  const w = tip.offsetWidth;
+  const x = e.clientX + 14 + w > window.innerWidth ? e.clientX - w - 14 : e.clientX + 14;
+  tip.style.left = Math.max(4, x) + "px";
+  tip.style.top = (e.clientY + 18) + "px";
+});
+
+$("output").addEventListener("mouseleave", () => tip.classList.remove("on"));
+
+// ---------------------------------------------------------------------------
+
 // Field-level diff. Delimiters come from the same parser bench.ts uses, then
 // segments are compared by (id, occurrence) and fields by raw split index,
 // which sidesteps the MSH off-by-one entirely: both sides of the comparison are
@@ -783,12 +960,7 @@ function indexSegments(raw, delims) {
 }
 
 function renderDiff(before, after) {
-  let delims;
-  try {
-    delims = new Message(after).delims;
-  } catch {
-    delims = { field: "|", comp: "^", rep: "~", esc: "\\", sub: "&" };
-  }
+  const delims = delimsOf(after);
 
   let beforeMap = new Map();
   try { beforeMap = indexSegments(before, delims); } catch { /* no baseline, show plain */ }
@@ -797,13 +969,23 @@ function renderDiff(before, after) {
   const frag = document.createDocumentFragment();
   let changed = 0;
 
-  for (const line of after.split(/\r\n|\r|\n/)) {
-    if (line.trim() === "") continue;
+  const lines = after.split(/\r\n|\r|\n/);
+  // Once for the message, not once per field: positionLabel would re-split the
+  // whole message for every span, which on a fat ADT is a few hundred passes.
+  const occs = occurrences(lines, delims.field);
+  lines.forEach((line, lineIndex) => {
+    if (line.trim() === "") return;
     const parts = line.split(delims.field);
     const id = parts[0];
     const occ = (seen.get(id) ?? 0) + 1;
     seen.set(id, occ);
     const old = beforeMap.get(id + "#" + occ);
+    const o = occs[lineIndex];
+    const where =
+      " · " +
+      (o.total > 1 ? id + " #" + o.occ + " of " + o.total : id) +
+      " · line " +
+      (lineIndex + 1);
 
     const row = document.createElement("div");
     parts.forEach((value, i) => {
@@ -814,13 +996,17 @@ function renderDiff(before, after) {
         row.appendChild(sep);
       }
       const span = document.createElement("span");
-      if (i === 0) span.className = "segid";
-      else if (old && (old[i] ?? "") !== value) { span.className = "chg"; changed++; }
+      span.className = i === 0 ? "fld segid" : "fld";
+      if (i > 0 && old && (old[i] ?? "") !== value) { span.classList.add("chg"); changed++; }
+      // Stamped here rather than computed on hover: the indexes are already
+      // in hand, and a mousemove handler that reparses the message per pixel
+      // is the kind of thing that makes a pane feel broken.
+      span.dataset.pos = hl7Path(line, delims, i, undefined) + where;
       span.textContent = value;
       row.appendChild(span);
     });
     frag.appendChild(row);
-  }
+  });
 
   $("output").replaceChildren(frag);
   return changed;
@@ -1320,8 +1506,7 @@ function activePaneText() {
   // The message pane is one div per segment, so textContent would run the
   // whole message onto a single line and lose the segment boundaries.
   const out = pane.querySelector("#output");
-  if (out) return [...out.children].map((row) => row.textContent).join("
-");
+  if (out) return [...out.children].map((row) => row.textContent).join("\n");
 
   const pre = pane.querySelector("pre");
   return pre ? pre.textContent : pane.textContent;
@@ -1354,8 +1539,7 @@ async function copyActivePane() {
     b.textContent = "empty";
   } else {
     const ok = await toClipboard(text);
-    b.textContent = ok ? `copied ${text.split("
-").length} lines` : "copy failed";
+    b.textContent = ok ? `copied ${text.split("\n").length} lines` : "copy failed";
     b.classList.toggle("done", ok);
   }
   clearTimeout(copyFlash);

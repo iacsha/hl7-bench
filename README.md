@@ -85,6 +85,17 @@ did. The ObjectScript tab is the one this is for. That class exists to be pasted
 into Studio, and a drag-selection that stops one line short of the closing brace
 produces a class that will not compile for a reason nothing on screen explains.
 
+**Both message panes tell you where you are.** Put the caret anywhere in the
+message on the left and the pane heading reads back the position: `PV1-7[2].1
+· PV1 #1 of 1 · line 5`. Hover a field on the right and the same label
+appears in a tooltip. Repetition and component are shown only when the field
+actually has them, so a path that is all ones stays short. The MSH line is
+handled the way HL7 defines it rather than the way it splits: `MSH-1` **is** the
+field separator and `MSH-2` **is** the encoding characters, so everything after
+the segment id sits one slot left of a naive pipe count, and `MSH-2` is never
+broken into components because it is the field that defines what a component
+separator even is. Counting pipes by eye is how a mapping ends up one field off.
+
 Bound to loopback deliberately. Binding a public interface is what triggers the
 Windows Firewall prompt you cannot approve without admin, and this endpoint
 writes a file and executes it. It has no business listening anywhere else.
