@@ -108,3 +108,57 @@ Lower value than it looks: the emitted class is a lossy view of the spec. Notes,
 labels, and the reasoning behind a row do not survive the trip out, so what
 comes back is a mapping, not a spec. Worth it only as a rescue, not as a
 workflow.
+
+## Gate on membership in a lookup table
+
+`gate.require` does exact equality only, `{ path, equals }`. An interface that
+should run for some facilities and not others cannot say so.
+
+```ts
+gate: {
+  path: "MSH-9.2",
+  permit: { A01: "A28", A08: "A28" },
+  require: [{ path: "PV1-39", inTable: "PermittedFacilities" }],
+}
+```
+
+emitting `Lookup("PermittedFacilities",HL7.{PV1:39},"") != ""` into the rule
+condition.
+
+The emitted string is the small half. The real payoff is that
+`referencedTables()` would then see the gate's table, so the existing *EMPTY IN
+THE SPEC, a go-live gate* warning fires on an empty allowlist. An empty
+allowlist refuses every message, and refuses it quietly, which is exactly the
+silent failure that warning was written for.
+
+Two things the emitter must not get wrong. A blank value in a row is
+indistinguishable from a missing key, because `Lookup` returns the default for
+both, so the spec should refuse a table row with an empty value when that table
+is used as a gate. And `Lookup` has an optional fourth argument that changes
+what a miss returns; getting it backwards turns an allowlist into a passthrough,
+which fails open.
+
+## Run the gate on the bench
+
+The bench emits the rule condition and never evaluates it. So the one question
+worth asking before you compile, *would this message get through*, is the one
+question the bench cannot answer.
+
+Print PERMIT or REFUSE for a pasted message, and when refused, say which clause
+did it: the trigger event, a required equality, or a table miss.
+
+The commonest allowlist failure is a facility code typed slightly wrong in the
+table. That is a laptop-sized problem being diagnosed in a dev namespace today.
+
+## Export the lookup tables as loadable XML
+
+`spec.tables` already holds the rows. Emit them in the format the Data Lookup
+Tables page imports.
+
+Lookup tables are namespace **data**, not code. They do not travel with a class
+export and they do not travel with a production deployment. A table that did not
+make it into the next namespace makes `Lookup` return the default for every
+message, so an allowlist drops everything, with a trace rather than an error.
+Nothing in the error log, interface looks alive, delivers nothing.
+
+Turning that from a thing you remember into a file you deploy is the whole item.
