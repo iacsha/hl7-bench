@@ -78,6 +78,13 @@ it. The message pane is never in that file, because a timer copying a live
 message to disk every few minutes is an exposure nobody asked for. Your choice
 of interval is remembered per browser.
 
+**copy**, on the right of the tab bar, copies the visible tab. `Ctrl+C` does the
+same when the browser would otherwise copy nothing: a real selection still wins,
+and so does a focused input, so `Ctrl+C` inside a spec field behaves as it always
+did. The ObjectScript tab is the one this is for. That class exists to be pasted
+into Studio, and a drag-selection that stops one line short of the closing brace
+produces a class that will not compile for a reason nothing on screen explains.
+
 Bound to loopback deliberately. Binding a public interface is what triggers the
 Windows Firewall prompt you cannot approve without admin, and this endpoint
 writes a file and executes it. It has no business listening anywhere else.

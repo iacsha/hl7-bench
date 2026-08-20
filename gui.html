@@ -103,6 +103,9 @@ textarea, .out, .mono {
   text-transform: uppercase; letter-spacing: .07em;
 }
 .tabs button.on { color: var(--text); border-bottom-color: var(--accent); }
+.tabs button.copy { margin-left: auto; border-bottom-color: transparent; }
+.tabs button.copy:hover { color: var(--text); }
+.tabs button.copy.done { color: var(--ok); }
 .tabpane { display: none; flex: 1 1 auto; min-height: 0; flex-direction: column; }
 .tabpane.on { display: flex; }
 
@@ -206,6 +209,7 @@ input.md { width: 116px; }
         <button data-tab="mapping">Mapping</button>
         <button data-tab="inventory">Inventory</button>
         <button data-tab="source">transform.ts</button>
+        <button id="copytab" class="copy" title="Copy this tab. Ctrl+C does the same when nothing is selected.">copy</button>
       </div>
       <div class="tabpane on" id="tab-output">
         <div class="out" id="output"></div>
@@ -1290,17 +1294,93 @@ $("savecls").addEventListener("click", async () => {
   else setStatus(`saved ${res.bytes} bytes to ${res.file}`, "ok");
 });
 
-for (const b of $("tabs").querySelectorAll("button")) {
+for (const b of $("tabs").querySelectorAll("button[data-tab]")) {
   b.addEventListener("click", () => {
-    for (const other of $("tabs").querySelectorAll("button")) other.classList.toggle("on", other === b);
+    for (const other of $("tabs").querySelectorAll("button[data-tab]")) other.classList.toggle("on", other === b);
     for (const pane of document.querySelectorAll(".tabpane")) {
       pane.classList.toggle("on", pane.id === `tab-${b.dataset.tab}`);
     }
   });
 }
 
+// ---------------------------------------------------------------------------
+// Copying a tab
+//
+// The ObjectScript tab exists to be pasted into Studio, so getting it out has
+// to be one motion. Dragging a selection over a 200 line class in a scrolling
+// pane is not one motion, and a selection that stops one line short produces a
+// class that does not compile for a reason nothing on screen explains.
+// ---------------------------------------------------------------------------
+
+/** The visible tab's text, as text rather than as markup. */
+function activePaneText() {
+  const pane = document.querySelector(".tabpane.on");
+  if (!pane) return "";
+
+  // The message pane is one div per segment, so textContent would run the
+  // whole message onto a single line and lose the segment boundaries.
+  const out = pane.querySelector("#output");
+  if (out) return [...out.children].map((row) => row.textContent).join("
+");
+
+  const pre = pane.querySelector("pre");
+  return pre ? pre.textContent : pane.textContent;
+}
+
+/** Clipboard, with the pre-secure-context fallback still in reach. */
+async function toClipboard(text) {
+  try {
+    await navigator.clipboard.writeText(text);
+    return true;
+  } catch {
+    const ta = document.createElement("textarea");
+    ta.value = text;
+    ta.style.position = "fixed";
+    ta.style.opacity = "0";
+    document.body.appendChild(ta);
+    ta.select();
+    const ok = document.execCommand("copy");
+    ta.remove();
+    return ok;
+  }
+}
+
+let copyFlash = null;
+
+async function copyActivePane() {
+  const text = activePaneText();
+  const b = $("copytab");
+  if (text.trim() === "") {
+    b.textContent = "empty";
+  } else {
+    const ok = await toClipboard(text);
+    b.textContent = ok ? `copied ${text.split("
+").length} lines` : "copy failed";
+    b.classList.toggle("done", ok);
+  }
+  clearTimeout(copyFlash);
+  copyFlash = setTimeout(() => {
+    b.textContent = "copy";
+    b.classList.remove("done");
+  }, 1400);
+}
+
+$("copytab").addEventListener("click", copyActivePane);
+
 document.addEventListener("keydown", (e) => {
   if ((e.ctrlKey || e.metaKey) && e.key === "Enter") { e.preventDefault(); run(); }
+
+  // Ctrl+C copies the visible tab, but only when the browser would otherwise
+  // copy nothing. A real selection wins, and so does a focused field: taking
+  // Ctrl+C away from an input the user is editing would be a worse bug than
+  // the one this fixes.
+  if ((e.ctrlKey || e.metaKey) && (e.key === "c" || e.key === "C")) {
+    const tag = (document.activeElement?.tagName ?? "").toUpperCase();
+    if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return;
+    if ((window.getSelection()?.toString() ?? "") !== "") return;
+    e.preventDefault();
+    copyActivePane();
+  }
 });
 
 await load();
