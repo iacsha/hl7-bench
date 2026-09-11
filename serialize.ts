@@ -223,6 +223,7 @@ export function specToSource(spec: Spec): string {
     out.push("    {");
     out.push(`      id: ${q(block.id)},`);
     if (block.group) out.push(`      group: ${q(block.group)},`);
+    if (block.continuesNumbering) out.push(`      continuesNumbering: true,`);
     if (block.note) out.push(`      note: ${q(block.note)},`);
     if (block.repeat) {
       const r = block.repeat;

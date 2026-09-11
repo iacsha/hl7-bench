@@ -409,16 +409,25 @@ export function walk(
   visit: (block: Block, ctx: Ctx) => void,
 ): void {
   const tables = spec.tables ?? {};
+  // How many of each target segment have been delivered so far, so a block with
+  // continuesNumbering picks up where the last one left off rather than at 1.
+  const delivered = new Map<string, number>();
+
   for (const block of spec.blocks) {
+    const start = block.continuesNumbering ? (delivered.get(block.id) ?? 0) : 0;
+
     if (!block.repeat) {
-      visit(block, { msg, event, tables, ordinal: 1 });
+      const ordinal = start + 1;
+      visit(block, { msg, event, tables, ordinal });
+      delivered.set(block.id, ordinal);
       continue;
     }
-    let ordinal = 0;
+    let ordinal = start;
     for (const current of occurrences(msg, block)) {
       ordinal++;
       visit(block, { msg, event, tables, ordinal, repeatOver: block.repeat.over, current });
     }
+    delivered.set(block.id, ordinal);
   }
 }
 

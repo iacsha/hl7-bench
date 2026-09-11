@@ -698,21 +698,47 @@ export function emitIris(spec: Spec): string {
 
   // Segment order is the block order, the same order the runner delivers in.
   let repeatIndex = 0;
+  let contIndex = 0;
+  // The counter variable a repeat left behind, per target segment id, so a
+  // block with continuesNumbering can start one past it.
+  const lastCounter = new Map<string, string>();
+
   for (const block of spec.blocks) {
     if (block.repeat) {
-      emitRepeat(st, block, repeatIndex++, out);
+      const idx = repeatIndex++;
+      emitRepeat(st, block, idx, out);
+      lastCounter.set(block.id, `n${idx + 1}`);
       continue;
     }
     out.push("");
     if (block.note) out.push(`  <!-- ${text(block.note)} -->`);
 
+    // A block that continues an earlier one's numbering needs the occurrence in
+    // a variable of its own. `{OBX(n1+1):3}` is not a DTL reference -- the
+    // occurrence has to be a plain name -- so the addition happens once, in
+    // code, and the reference uses the result.
+    let contVar: string | undefined;
+    if (block.continuesNumbering) {
+      const from = lastCounter.get(block.id);
+      if (from) {
+        contVar = `c${++contIndex}`;
+        out.push(
+          `  <!-- ${text(block.id)}: one more, after the ${text(block.id)} loop above. -->`,
+          ...code("  ", `set ${contVar} = ${from} + 1`),
+        );
+        lastCounter.set(block.id, contVar);
+      }
+    }
+
     // A group on a block that does NOT repeat still has to be addressed. The
     // segment lives inside the group's first occurrence, so a bare {IN1:2} on
     // a schema whose IN1 sits in IN1group writes nowhere -- and writes nowhere
     // quietly, which is the whole reason the header tells you to check.
-    const scope: Scope = block.group
-      ? { sourcePrefix: `${block.group}(1)`, targetPrefix: `${block.group}(1)` }
-      : TOP;
+    const scope: Scope = contVar
+      ? { sourcePrefix: "", targetPrefix: `${block.id}(${contVar})`, counterVar: contVar }
+      : block.group
+        ? { sourcePrefix: `${block.group}(1)`, targetPrefix: `${block.group}(1)` }
+        : TOP;
     for (const row of block.rows) emitRow(st, row, scope, "  ", out);
   }
 

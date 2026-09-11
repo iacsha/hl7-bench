@@ -283,6 +283,20 @@ export interface Block {
   /** Target segment id. */
   id: string;
   /**
+   * This block's target segment CONTINUES the occurrence numbering of the
+   * nearest earlier block with the same id, instead of starting at 1.
+   *
+   * For one more segment after a repeat: a radiology feed whose narrative
+   * arrives as 143 OBX and whose receiver wants the CPT appended as one final
+   * OBX after it. Without this the block writes OBX(1) and overwrites the first
+   * line of the report, which reads as a mangled report rather than as a
+   * mapping fault.
+   *
+   * `counter()` inside such a block reports the continued ordinal, so the CPT
+   * segment is numbered 44 rather than 1.
+   */
+  continuesNumbering?: boolean;
+  /**
    * IRIS group name when the target segment sits inside one, e.g.
    * "INSURANCEgrp". Ignored by the JavaScript runner, which has no groups, and
    * load-bearing in the DTL, where `target.{IN1(1):2}` resolves to nothing but
@@ -776,8 +790,17 @@ export function validate(spec: Spec): string[] {
   const repeated = new Set(spec.blocks.filter((b) => b.repeat).map((b) => b.repeat!.over));
 
   for (const block of spec.blocks) {
-    if (seen.has(block.id) && !block.repeat) {
-      problems.push(`${block.id}: two non-repeating blocks with the same segment id`);
+    if (seen.has(block.id) && !block.repeat && !block.continuesNumbering) {
+      problems.push(
+        `${block.id}: two non-repeating blocks with the same segment id. If the second is ` +
+          `meant to follow the first rather than replace it, set continuesNumbering.`,
+      );
+    }
+    if (block.continuesNumbering && !seen.has(block.id)) {
+      problems.push(
+        `${block.id}: continuesNumbering, but no earlier block targets ${block.id}. There is ` +
+          `nothing to continue, and the segment would be written at occurrence 1 anyway.`,
+      );
     }
     seen.add(block.id);
 
@@ -887,7 +910,7 @@ export function validate(spec: Spec): string[] {
         }
       }
 
-      if (row.from.kind === "counter" && !block.repeat) {
+      if (row.from.kind === "counter" && !block.repeat && !block.continuesNumbering) {
         problems.push(`${row.target}: counter() outside a repeat has no ordinal to report`);
       }
       if (row.from.kind === "lookup" && !(row.from.table in tables)) {
