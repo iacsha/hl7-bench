@@ -20,6 +20,7 @@ import {
   copy, literal, firstOf, lookup, counter, event, pickRepeat, fromFirst, todo,
   blank, passthrough, constant,
   date8, truncate, upper, stripDelims, stripChars, defaultTo,
+  highest, equals, continuation,
   type Spec,
 } from "./spec";
 import { runSpec } from "./run";
@@ -52,8 +53,9 @@ const base = (over: Partial<Spec> = {}): Spec => ({
 });
 
 /**
- * Every source kind, every step kind, a group, a repeat with both of its
- * options, an odd table name, an inventory and an out-of-scope note.
+ * Every source kind, every step kind, every select and fold kind, a group, a
+ * repeat with all four of its options, an odd table name, an inventory and an
+ * out-of-scope note.
  *
  * A kind nobody round-trips is a kind whose printer is untested, and the way
  * that shows up in the field is a GUI save that drops one field out of forty.
@@ -67,8 +69,16 @@ const rich = (): Spec => ({
     require: [{ path: "MSH-9.1", equals: "ADT" }],
   },
   iris: {
+    schema: {
+      category: "2.3.1_RICH",
+      base: "2.3.1",
+      description: "as the sender really sends it",
+      structures: [
+        { name: "ADT_A01", definition: "2.3.1:MSH~[~2.3.1:EVN~]~2.3.1:PID", note: "EVN optional here" },
+      ],
+    },
     className: "Test.Rich",
-    sourceDocType: "2.3:ADT_A01",
+    sourceDocType: "2.3.1_RICH:ADT_A01",
     targetDocType: "2.3.1:ADT_A05",
     create: "new",
     log: "trace",
@@ -113,16 +123,17 @@ const rich = (): Spec => ({
     },
     {
       id: "NK1",
-      repeat: { over: "NK1" },
+      repeat: { over: "NK1", select: equals("NK1-1", "1"), fold: continuation("NK1-2", " / ") },
       rows: [
         { target: "NK1-1", from: counter() },
-        { target: "NK1-2", from: fromFirst("NK1", "NK1-2", "NK1-2") },
+        { target: "NK1-2", from: copy("NK1-2") },
+        { target: "NK1-3", from: fromFirst("NK1", "NK1-2", "NK1-2") },
       ],
     },
     {
       id: "IN1",
       group: "INSURANCEgrp",
-      repeat: { over: "IN1", skipWhenEmpty: "IN1-2", max: 3 },
+      repeat: { over: "IN1", skipWhenEmpty: "IN1-2", select: highest("IN1-1"), max: 3 },
       rows: [{ target: "IN1-1", from: counter() }],
     },
   ],

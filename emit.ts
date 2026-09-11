@@ -32,13 +32,14 @@ import { spec } from "./transform";
 import { emitIris, routingCondition } from "./emit/iris";
 import { emitProcess } from "./emit/process";
 import { buildLookup } from "./emit/lookup";
+import { emitSchema } from "./emit/schema";
 import { fingerprint } from "./fingerprint";
 import { emptyTables, validate } from "./spec";
 import { logEvent } from "./log";
 
 // ---------------------------------------------------------------------------
 
-const ARTIFACTS = ["dtl", "process", "tables"] as const;
+const ARTIFACTS = ["dtl", "process", "tables", "schema"] as const;
 type Artifact = (typeof ARTIFACTS)[number];
 
 const ENGINES = ["iris"] as const;
@@ -70,7 +71,8 @@ if (!ARTIFACTS.includes(artifact as Artifact)) {
     `Unknown artifact "${artifact}". Known: ${ARTIFACTS.join(", ")}\n` +
       `  dtl      the transform class, the default\n` +
       `  process  the business process template\n` +
-      `  tables   lookup tables as an import document\n`,
+      `  tables   lookup tables as an import document\n` +
+      `  schema   the custom HL7 schema category this spec depends on\n`,
   );
   process.exit(2);
 }
@@ -93,6 +95,41 @@ if (problems.length > 0) {
 const stamp = fingerprint(spec);
 
 // ---------------------------------------------------------------------------
+
+if (artifact === "schema") {
+  let xml: string;
+  try {
+    xml = emitSchema(spec);
+  } catch (e) {
+    process.stderr.write(`${(e as Error).message}\n`);
+    process.exit(2);
+  }
+
+  const sch = spec.iris.schema!;
+  logEvent("emit", {
+    spec: spec.name, engine, artifact, fingerprint: stamp,
+    category: sch.category, base: sch.base,
+    structures: sch.structures.length, result: "ok",
+  });
+
+  process.stdout.write(xml);
+
+  process.stderr.write(
+    `\nSCHEMA CATEGORY ${sch.category} (base ${sch.base}), ` +
+      `${sch.structures.length} structure(s)\n`,
+  );
+  for (const st of sch.structures) process.stderr.write(`  ${st.name}\n`);
+  process.stderr.write(
+    `\nImport it BEFORE running the transform:\n` +
+      `  do ##class(EnsLib.HL7.SchemaXML).Import("<path>", .cat)\n\n` +
+      `Then name ${sch.category} in the HL7 Business Service's MessageSchemaCategory\n` +
+      `setting. Nothing in a message names it: MSH-12 is the HL7 version, not the\n` +
+      `schema category, so a service left on the default reads every named path as\n` +
+      `empty and reports no error at all.\n\n` +
+      `Confirm with:  bun navcheck.ts <a real message>.hl7\n`,
+  );
+  process.exit(0);
+}
 
 if (artifact === "tables") {
   let built;

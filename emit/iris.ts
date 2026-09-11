@@ -55,7 +55,16 @@ export function dtlPath(path: string, prefix = ""): string {
   // id is already in the prefix and repeating it gives {IN1(k1).IN1:4}, which
   // resolves to nothing and does it silently.
   const p = /^([A-Z0-9]{3})\((\w+)\)$/.exec(prefix);
-  if (p && p[1] === seg) return `{${seg}(${p[2]}):${rest}}`;
+  if (p) {
+    // A bare segment prefix, so the loop walks the segment itself.
+    if (p[1] === seg) return `{${seg}(${p[2]}):${rest}}`;
+    // A DIFFERENT segment read from inside that loop is not nested in it -- it
+    // is elsewhere in the message, and `{OBX(k1).OBR:4.1}` resolves to nothing.
+    // `run.ts` reads it off the message for exactly this case, so this escapes
+    // the loop to agree with it. A group prefix falls through below, because
+    // there the segment really is inside the group.
+    return `{${seg}:${rest}}`;
+  }
 
   return `{${prefix}.${seg}:${rest}}`;
 }
@@ -444,16 +453,101 @@ function emitRepeat(st: State, block: Block, index: number, out: string[]): void
   if (r.skipWhenEmpty) {
     guards.push(`$LENGTH(source.${dtlPath(r.skipWhenEmpty, scope.sourcePrefix)})>0`);
   }
+
+  // select, between skipWhenEmpty and max, because that is the order the stages
+  // run in and the order decides the result.
+  if (r.select) {
+    const sel = r.select;
+    const here = `source.${dtlPath(sel.path, scope.sourcePrefix)}`;
+    if (sel.kind === "equals") {
+      guards.push(`${here}=${os(sel.value)}`);
+    } else {
+      // `highest` cannot be a guard on its own: the maximum is not known until
+      // every occurrence has been read, so it needs a pass of its own first.
+      // Two sequential <foreach> elements over the same property, not a nested
+      // one -- the scan finishes before the emit starts.
+      const mx = `max${index + 1}`;
+      const v = `v${index + 1}`;
+      const km = `${k}m`;
+      const scanPrefix = grp ? `${grp}(${km})` : `${r.over}(${km})`;
+      const read = codeRef(`source.${dtlPath(sel.path, scanPrefix)}`);
+      out.push(
+        `  <!-- ${text(block.id)}: first pass finds the highest ${text(sel.path)}. -->`,
+        `  <!--      Empty ranks lowest, so a message that carries none keeps them all. -->`,
+        `  <!--      Digits compare as numbers so 10 beats 9; anything else compares as text. -->`,
+        ...code("  ", `set ${mx} = ""`),
+        `  <foreach property='${attr(srcRef)}' key='${km}' >`,
+        ...code(
+          "    ",
+          `set ${v} = ${read} ` +
+            `if ${v}'="" { ` +
+            `if ${mx}="" { set ${mx} = ${v} } ` +
+            `elseif ((${v}?1.N)&&(${mx}?1.N)) { if +${v}>+${mx} set ${mx} = ${v} } ` +
+            `elseif (${v}]${mx}) { set ${mx} = ${v} } }`,
+        ),
+        `  </foreach>`,
+      );
+      guards.push(`${here}=${mx}`);
+    }
+  }
+
   if (r.max !== undefined) guards.push(`${n}<${r.max}`);
 
   const body: string[] = [];
   const bodyIndent = guards.length ? "        " : "    ";
-  body.push(
-    `${bodyIndent}<code>`,
-    `${bodyIndent}  <![CDATA[ set ${n} = ${n} + 1 ]]>`,
-    `${bodyIndent}</code>`,
-  );
-  for (const row of block.rows) emitRow(st, row, scope, bodyIndent, body);
+
+  if (r.fold) {
+    // A fold is n:1, and a <foreach> has nowhere to hold a segment across an
+    // iteration. So rather than deferring the head, this writes the head
+    // immediately and APPENDS a continuation onto the target field already
+    // there -- same delivered text, no held state.
+    //
+    // The cost is that steps would run per piece instead of on the joined
+    // value, which is why validate() refuses `via` on a row that carries the
+    // folded field, and refuses `max` on a repeat that folds.
+    const fold = r.fold;
+    const here = `source.${dtlPath(fold.path, scope.sourcePrefix)}`;
+    const isCont = `(${n}>0)&&($EXTRACT(${here},1)=" ")`;
+    const carriers = block.rows.filter(
+      (row) => row.from.kind === "copy" && row.from.path === fold.path,
+    );
+
+    const headIndent = `${bodyIndent}    `;
+    const head: string[] = [
+      `${headIndent}<code>`,
+      `${headIndent}  <![CDATA[ set ${n} = ${n} + 1 ]]>`,
+      `${headIndent}</code>`,
+    ];
+    for (const row of block.rows) emitRow(st, row, scope, headIndent, head);
+
+    const joined = (target: string) =>
+      fold.join === ""
+        ? `target.${target}_${here}`
+        : `target.${target}_${os(fold.join)}_${here}`;
+
+    body.push(
+      `${bodyIndent}<!-- A continuation line does not open a new segment. It is appended -->`,
+      `${bodyIndent}<!-- to the one already written, and ${n} is left where it is.       -->`,
+      `${bodyIndent}<if condition='${attr(isCont)}' >`,
+      `${bodyIndent}  <true>`,
+      ...carriers.map((row) => {
+        const t = dtlPath(row.target, scope.targetPrefix);
+        return `${bodyIndent}    <assign value='${attr(joined(t))}' property='${attr(`target.${t}`)}' action='set' />`;
+      }),
+      `${bodyIndent}  </true>`,
+      `${bodyIndent}  <false>`,
+      ...head,
+      `${bodyIndent}  </false>`,
+      `${bodyIndent}</if>`,
+    );
+  } else {
+    body.push(
+      `${bodyIndent}<code>`,
+      `${bodyIndent}  <![CDATA[ set ${n} = ${n} + 1 ]]>`,
+      `${bodyIndent}</code>`,
+    );
+    for (const row of block.rows) emitRow(st, row, scope, bodyIndent, body);
+  }
 
   if (guards.length) {
     out.push(

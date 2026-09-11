@@ -18,8 +18,9 @@
 import { Message, Segment, type Delims } from "./hl7";
 import { logEvent } from "./log";
 import {
-  validate, segmentOf, fieldOf,
+  validate, segmentOf, fieldOf, describeSelect, describeFold,
   type Spec, type Source, type Step, type Row, type Block,
+  type Repeat, type Select, type Fold,
 } from "./spec";
 
 // ---------------------------------------------------------------------------
@@ -245,12 +246,106 @@ export function blankSegment(id: string, d: Delims): Segment {
 }
 
 /** Which source occurrences a repeat block delivers, after skip and max. */
+/**
+ * Order two source values for `select`. Numeric when both sides are numeric,
+ * string otherwise, and empty always lowest.
+ *
+ * Plain string comparison puts "10" below "9", which is correct for exactly as
+ * long as a report has fewer than ten revisions. It is also silent when it
+ * stops being correct: the transform keeps delivering, it just delivers the
+ * wrong revision, and every field in it is individually right.
+ *
+ * `emit/iris.ts` has to order the same way. That is why this is a named
+ * function and not an inline comparison -- two spellings of one ordering is the
+ * bench-disagrees-with-the-engine split in miniature.
+ */
+const DIGITS = /^\d+$/;
+
+function rank(a: string, b: string): number {
+  if (a === b) return 0;
+  if (a === "") return -1;
+  if (b === "") return 1;
+  // Digits only, deliberately narrow. `Number()` also accepts "02", " 2", "2e3"
+  // and "0x10", and ObjectScript agrees with it on none of them -- so the wider
+  // rule is the one that makes the bench and the engine order differently on a
+  // value neither author thought about. `?1.N` is the exact same test on the
+  // other side. Anything else compares as text, on both sides.
+  if (DIGITS.test(a) && DIGITS.test(b)) return Number(a) - Number(b);
+  return a < b ? -1 : 1;
+}
+
+/** The occurrences a `select` keeps. */
+function selected(segs: Segment[], sel: Select): Segment[] {
+  switch (sel.kind) {
+    case "equals":
+      return segs.filter((s) => s.get(sel.path) === sel.value);
+    case "highest": {
+      if (segs.length === 0) return segs;
+      // Two passes, because the maximum is not known until every occurrence
+      // has been read. Inherent, not an implementation choice, and the reason
+      // this cannot be a plain <foreach> in the emitted DTL.
+      let max = segs[0].get(sel.path);
+      for (const s of segs) if (rank(s.get(sel.path), max) > 0) max = s.get(sel.path);
+      return segs.filter((s) => s.get(sel.path) === max);
+    }
+  }
+}
+
+/**
+ * The occurrences a `fold` leaves, merged.
+ *
+ * Clones before writing. `walk` is shared with `trace.ts`, which describes a
+ * message and must not change it.
+ */
+function folded(segs: Segment[], f: Fold): Segment[] {
+  switch (f.kind) {
+    case "continuation": {
+      const out: Segment[] = [];
+      let held: Segment | undefined;
+      for (const s of segs) {
+        if (held !== undefined && s.get(f.path).startsWith(" ")) {
+          held.set(f.path, held.get(f.path) + f.join + s.get(f.path));
+          continue;
+        }
+        if (held !== undefined) out.push(held);
+        held = s.clone();
+      }
+      if (held !== undefined) out.push(held);
+      return out;
+    }
+  }
+}
+
+/** Every intermediate state of a repeat, so both callers read the same numbers. */
+interface Stages {
+  all: Segment[];
+  afterSkip: Segment[];
+  afterSelect: Segment[];
+  afterFold: Segment[];
+  delivered: Segment[];
+}
+
+/**
+ * The repeat pipeline, in order, with each stage kept.
+ *
+ * One implementation, two consumers: `occurrences` takes the last stage and the
+ * drop notes take the differences between them. Recomputing the pipeline in the
+ * note loop would be a second place for the skip rule and the max cap to live,
+ * which is the thing `walk`'s header promises does not happen.
+ */
+function stages(msg: Message, r: Repeat): Stages {
+  const all = msg.all(r.over);
+  const afterSkip = r.skipWhenEmpty
+    ? all.filter((s) => s.get(r.skipWhenEmpty!) !== "")
+    : all;
+  const afterSelect = r.select ? selected(afterSkip, r.select) : afterSkip;
+  const afterFold = r.fold ? folded(afterSelect, r.fold) : afterSelect;
+  const delivered = r.max !== undefined ? afterFold.slice(0, r.max) : afterFold;
+  return { all, afterSkip, afterSelect, afterFold, delivered };
+}
+
 function occurrences(msg: Message, block: Block): Segment[] {
-  const r = block.repeat!;
-  let segs = msg.all(r.over);
-  if (r.skipWhenEmpty) segs = segs.filter((s) => s.get(r.skipWhenEmpty!) !== "");
-  if (r.max !== undefined) segs = segs.slice(0, r.max);
-  return segs;
+  return stages(msg, block.repeat!).delivered;
 }
 
 function fill(ctx: Ctx, block: Block, out: Segment, result: RunResult): void {
@@ -377,20 +472,33 @@ export function runSpec(spec: Spec, msg: Message): RunResult {
   for (const block of spec.blocks) {
     if (!block.repeat) continue;
     const r = block.repeat;
-    const all = msg.all(r.over);
-    const kept = r.skipWhenEmpty
-      ? all.filter((s) => s.get(r.skipWhenEmpty!) !== "")
-      : all;
-    const skipped = all.length - kept.length;
-    if (skipped > 0) {
+    const st = stages(msg, r);
+
+    if (st.all.length - st.afterSkip.length > 0) {
       result.notes.push(
-        `${skipped} ${r.over} segment(s) skipped: ${r.skipWhenEmpty} empty`,
+        `${st.all.length - st.afterSkip.length} ${r.over} segment(s) skipped: ` +
+          `${r.skipWhenEmpty} empty`,
       );
     }
-    if (r.max !== undefined && kept.length > r.max) {
+    // The largest silent drop this bench can perform. On a radiology addendum
+    // `select` discards two thirds of the OBX segments, and the message it
+    // leaves is a correct one -- nothing downstream can tell it was a choice.
+    if (r.select && st.afterSkip.length - st.afterSelect.length > 0) {
       result.notes.push(
-        `${kept.length} ${r.over} segment(s) qualify but this interface delivers at most ` +
-          `${r.max}; dropping ${kept.length - r.max}`,
+        `${st.afterSkip.length - st.afterSelect.length} of ${st.afterSkip.length} ${r.over} ` +
+          `segment(s) dropped by select (${describeSelect(r.select)})`,
+      );
+    }
+    if (r.fold && st.afterSelect.length - st.afterFold.length > 0) {
+      result.notes.push(
+        `${st.afterSelect.length} ${r.over} segment(s) folded into ${st.afterFold.length} ` +
+          `(${describeFold(r.fold)})`,
+      );
+    }
+    if (r.max !== undefined && st.afterFold.length > r.max) {
+      result.notes.push(
+        `${st.afterFold.length} ${r.over} segment(s) qualify but this interface delivers at most ` +
+          `${r.max}; dropping ${st.afterFold.length - r.max}`,
       );
     }
   }

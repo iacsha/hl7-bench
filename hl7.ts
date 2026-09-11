@@ -142,9 +142,45 @@ export class Segment {
     return v === "" ? 0 : v.split(this.d.rep).length;
   }
 
+  /**
+   * A copy that can be written to without touching this one.
+   *
+   * `parts` is private and MSH numbers its fields one off from its array, so
+   * rebuilding a segment through `getField` from outside gets MSH wrong. Doing
+   * it here is three lines and cannot.
+   */
+  clone(): Segment {
+    return new Segment(this.id, [...this.parts], this.d);
+  }
+
   toString(): string {
     return this.parts.join(this.d.field);
   }
+}
+
+/**
+ * Remove MLLP framing, if it is there.
+ *
+ * A message read off a TCP feed arrives wrapped as `<VT> body <FS><CR>`. Those
+ * two bytes are transport, not HL7, and a file captured from a wire keeps them.
+ * 0x0B happens to be JavaScript whitespace, so `trim()` already eats a leading
+ * one; 0x1C is neither whitespace nor a line terminator, so a trailing one
+ * survives into the last field of the last segment and stays there.
+ *
+ * POSITIONAL ON PURPOSE. A global strip of 0x0B and 0x1C would also remove them
+ * from the middle of a field, where they are not framing but corruption, and
+ * the message would then parse clean and be wrong -- which is strictly worse
+ * than parsing wrong and being caught.
+ *
+ * One of the samples this was written against carried a trailing 0x1C with no
+ * opening 0x0B. It landed in OBX-17 and was invisible until a `select` rule
+ * ranked that one control character above all 24 real values and discarded the
+ * entire report. The delivered message was well formed and had one segment.
+ */
+export function stripMllp(raw: string): string {
+  const start = raw.charCodeAt(0) === 0x0b ? raw.slice(1) : raw;
+  const body = start.replace(/[\r\n]+$/, "");
+  return body.charCodeAt(body.length - 1) === 0x1c ? body.slice(0, -1) : start;
 }
 
 export class Message {
@@ -152,7 +188,7 @@ export class Message {
   readonly segments: Segment[];
 
   constructor(raw: string) {
-    const lines = raw
+    const lines = stripMllp(raw)
       .split(/\r\n|\r|\n/)
       .map((l) => l.trim())
       .filter((l) => l.length > 0);

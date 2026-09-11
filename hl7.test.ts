@@ -7,7 +7,7 @@
 // until a receiver rejects everything.
 
 import { expect, test, describe } from "bun:test";
-import { Message } from "./hl7";
+import { Message, stripMllp } from "./hl7";
 
 const SAMPLE =
   "MSH|^~\\&|SENDAPP|SENDFAC|RECVAPP|RECVFAC|20260804120000||ADT^A01^ADT_A01|MSG00001|P|2.5\r\n" +
@@ -117,4 +117,44 @@ describe("bad input is rejected loudly", () => {
   test("nonsense path", () => expect(() => new Message(SAMPLE).get("nonsense")).toThrow());
   test("missing segment on write", () =>
     expect(() => new Message(SAMPLE).set("ZZZ-1", "x")).toThrow());
+});
+
+describe("MLLP framing", () => {
+  const VT = "\x0b", FS = "\x1c";
+
+  test("a fully framed message parses as if it were not framed", () => {
+    const m = new Message(VT + SAMPLE + FS + "\r");
+    expect(m.segments[0].id).toBe("MSH");
+    expect(m.get("MSH-3")).toBe(new Message(SAMPLE).get("MSH-3"));
+  });
+
+  test("a trailing FS does not land in the last field", () => {
+    // The real defect this was written for. A capture with a trailing 0x1C and
+    // no opening 0x0B put the control character in the last segment's last
+    // field, where nothing reads as wrong until something ranks or compares it.
+    const framed = new Message(SAMPLE + FS + "\r");
+    const plain = new Message(SAMPLE);
+    const last = (m: Message) => m.segments.at(-1)!;
+    expect(last(framed).toString()).toBe(last(plain).toString());
+  });
+
+  test("a leading VT alone is removed", () => {
+    expect(new Message(VT + SAMPLE).segments[0].id).toBe("MSH");
+  });
+
+  test("an FS inside a field is left alone, because that is corruption", () => {
+    // Stripping positionally rather than globally is the whole point: a message
+    // damaged in the middle must keep reading as damaged.
+    const dirty = SAMPLE.replace("19800115", `1980${FS}0115`);
+    expect(new Message(dirty).get("PID-7")).toBe(`1980${FS}0115`);
+  });
+
+  test("an FS mid-message survives even when the message is also framed", () => {
+    const dirty = SAMPLE.replace("19800115", `1980${FS}0115`);
+    expect(new Message(VT + dirty + FS + "\r").get("PID-7")).toBe(`1980${FS}0115`);
+  });
+
+  test("an unframed message is returned untouched", () => {
+    expect(stripMllp(SAMPLE)).toBe(SAMPLE);
+  });
 });

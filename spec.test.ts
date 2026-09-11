@@ -1,11 +1,13 @@
 import { expect, test, describe } from "bun:test";
 import { Message } from "./hl7";
 import {
-  SOURCE_KINDS, STEP_KINDS, validate, emptyTables, describeSource,
+  SOURCE_KINDS, STEP_KINDS, SELECT_KINDS, FOLD_KINDS,
+  validate, emptyTables, describeSource, describeSelect, describeFold,
   copy, literal, firstOf, lookup, counter, event, pickRepeat, fromFirst, todo,
   blank, passthrough, constant,
   date8, truncate, upper, stripDelims, stripChars, defaultTo, stamp,
-  type Spec, type Source, type Step,
+  highest, equals, continuation,
+  type Spec, type Source, type Step, type Select, type Fold, type Repeat,
 } from "./spec";
 import { runSpec } from "./run";
 import { trace, inventory } from "./trace";
@@ -900,6 +902,167 @@ describe("every vocabulary kind is handled by every backend", () => {
       expect(() => emitIris(spec)).not.toThrow();
     });
   }
+
+  // Select and fold are the only vocabulary that decides HOW MANY segments are
+  // delivered rather than what goes in a field. They reach every backend the
+  // same way a source does, and they are held to it the same way.
+  const SELECT_SAMPLES: Record<(typeof SELECT_KINDS)[number], Select> = {
+    highest: highest("IN1-1"),
+    equals: equals("IN1-1", "1"),
+  };
+
+  const FOLD_SAMPLES: Record<(typeof FOLD_KINDS)[number], Fold> = {
+    continuation: continuation("IN1-2"),
+  };
+
+  test("the select and fold sample tables cover every declared kind", () => {
+    expect(Object.keys(SELECT_SAMPLES).sort()).toEqual([...SELECT_KINDS].sort());
+    expect(Object.keys(FOLD_SAMPLES).sort()).toEqual([...FOLD_KINDS].sort());
+  });
+
+  /**
+   * The emitted class without the line that changes on its own.
+   *
+   * `emitIris` stamps a fingerprint of the spec into the header, so ANY two
+   * different specs produce different bytes -- including two that generate
+   * identical ObjectScript. Comparing raw output would make the tests below
+   * pass against an emitter that ignores the clause entirely, which is the one
+   * thing they exist to catch.
+   */
+  const generated = (spec: Spec) =>
+    emitIris(spec).replace(/^\/\/\/ Spec fingerprint: .*$/m, "");
+
+  // The row copies IN1-2, which is what fold needs: validate() refuses a fold on
+  // a field no row carries, because such a fold cannot change what is delivered.
+  const repeatFor = (extra: Partial<Repeat>): Spec =>
+    base({
+      blocks: [{
+        id: "IN1",
+        repeat: { over: "IN1", ...extra },
+        rows: [{ target: "IN1-4", from: copy("IN1-2") }],
+      }],
+    });
+
+  for (const kind of SELECT_KINDS) {
+    test(`run.ts handles select ${kind}`, () => {
+      expect(() => runOn(repeatFor({ select: SELECT_SAMPLES[kind] }))).not.toThrow();
+    });
+
+    test(`emit/iris.ts handles select ${kind}`, () => {
+      // The minimum any correct emitter must clear: the GENERATED CODE for a
+      // spec with the clause cannot match the code for one without it. An
+      // emitter that silently drops select passes every other test in this file
+      // and ships a DTL that delivers every occurrence.
+      expect(generated(repeatFor({ select: SELECT_SAMPLES[kind] })))
+        .not.toBe(generated(repeatFor({})));
+    });
+
+    test(`describeSelect handles ${kind}`, () => {
+      expect(describeSelect(SELECT_SAMPLES[kind])).not.toBe("");
+    });
+  }
+
+  for (const kind of FOLD_KINDS) {
+    test(`run.ts handles fold ${kind}`, () => {
+      expect(() => runOn(repeatFor({ fold: FOLD_SAMPLES[kind] }))).not.toThrow();
+    });
+
+    test(`emit/iris.ts handles fold ${kind}`, () => {
+      expect(generated(repeatFor({ fold: FOLD_SAMPLES[kind] })))
+        .not.toBe(generated(repeatFor({})));
+    });
+
+    test(`describeFold handles ${kind}`, () => {
+      expect(describeFold(FOLD_SAMPLES[kind])).not.toBe("");
+    });
+  }
+});
+
+// ---------------------------------------------------------------------------
+
+describe("select and fold do what they say", () => {
+  // Structural coverage above only proves every backend SEES the clause. These
+  // prove the runner acts on it, on messages built to make the answer obvious.
+
+  const withIn1 = (...lines: string[]) =>
+    [
+      "MSH|^~\\&|SENDAPP|SENDFAC|RECVAPP|RECVFAC|20260819101500||ADT^A01|MSG0001|P|2.3",
+      ...lines,
+    ].join("\r\n");
+
+  const onlyIn1 = (extra: Partial<Repeat>): Spec =>
+    base({
+      blocks: [{
+        id: "IN1",
+        repeat: { over: "IN1", ...extra },
+        rows: [{ target: "IN1-2", from: copy("IN1-2") }],
+      }],
+    });
+
+  test("highest keeps only the top-ranked occurrences", () => {
+    const raw = withIn1("IN1|1|A", "IN1|3|C", "IN1|2|B");
+    const r = runOn(onlyIn1({ select: highest("IN1-1") }), raw);
+    expect(r.out.all("IN1").length).toBe(1);
+    expect(r.out.get("IN1-2")).toBe("C");
+  });
+
+  test("highest orders numerically, so 10 beats 9", () => {
+    // String comparison puts "10" below "9" and stays right until a report has
+    // ten revisions, then delivers the wrong one with every field correct.
+    const raw = withIn1("IN1|9|NINE", "IN1|10|TEN");
+    const r = runOn(onlyIn1({ select: highest("IN1-1") }), raw);
+    expect(r.out.get("IN1-2")).toBe("TEN");
+  });
+
+  test("an empty discriminator sorts lowest, so an unversioned message keeps all", () => {
+    // The property that lets one rule cover an addendum and a plain final
+    // report without a flag telling them apart.
+    const raw = withIn1("IN1||A", "IN1||B", "IN1||C");
+    const r = runOn(onlyIn1({ select: highest("IN1-1") }), raw);
+    expect(r.out.all("IN1").length).toBe(3);
+  });
+
+  test("equals keeps the occurrences that match", () => {
+    const raw = withIn1("IN1|1|A", "IN1|2|B", "IN1|1|C");
+    const r = runOn(onlyIn1({ select: equals("IN1-1", "1") }), raw);
+    expect(r.out.all("IN1").length).toBe(2);
+  });
+
+  test("continuation joins a leading-space value into its predecessor", () => {
+    const raw = withIn1("IN1|1|PLANA", "IN1|2| continued");
+    const r = runOn(onlyIn1({ fold: continuation("IN1-2") }), raw);
+    expect(r.out.all("IN1").length).toBe(1);
+    expect(r.out.get("IN1-2")).toBe("PLANA continued");
+  });
+
+  test("the leading space is the separator and is not doubled or trimmed", () => {
+    const raw = withIn1("IN1|1|by M", "IN1|2| N, Radiologist");
+    const r = runOn(onlyIn1({ fold: continuation("IN1-2") }), raw);
+    expect(r.out.get("IN1-2")).toBe("by M N, Radiologist");
+  });
+
+  test("select runs before fold, so a fold never crosses a group boundary", () => {
+    // Reverse the order and " two" folds onto version 1's text instead of
+    // being discarded with it. Every field still reads correctly.
+    const raw = withIn1("IN1|1|one", "IN1|2|two", "IN1|2| more");
+    const r = runOn(onlyIn1({ select: highest("IN1-1"), fold: continuation("IN1-2") }), raw);
+    expect(r.out.all("IN1").length).toBe(1);
+    expect(r.out.get("IN1-2")).toBe("two more");
+  });
+
+  test("a drop note says how many segments select discarded", () => {
+    // The largest silent drop the bench can perform. Without the note the
+    // output is a well-formed message that simply has less in it.
+    const raw = withIn1("IN1|1|A", "IN1|2|B", "IN1|2|C");
+    const r = runOn(onlyIn1({ select: highest("IN1-1") }), raw);
+    expect(r.notes.join("\n")).toContain("dropped by select");
+  });
+
+  test("a drop note says how many segments fold merged", () => {
+    const raw = withIn1("IN1|1|A", "IN1|2| B");
+    const r = runOn(onlyIn1({ fold: continuation("IN1-2") }), raw);
+    expect(r.notes.join("\n")).toContain("folded into");
+  });
 });
 
 // ---------------------------------------------------------------------------

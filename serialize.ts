@@ -26,7 +26,7 @@
  * fails at compile time rather than quietly.
  */
 
-import type { Row, Source, Spec, Step, Unmapped } from "./spec";
+import type { Fold, Row, Select, Source, Spec, Step, Unmapped } from "./spec";
 
 // ---------------------------------------------------------------------------
 // Value printing
@@ -38,10 +38,23 @@ const q = (s: string) => JSON.stringify(s);
 const IDENT = /^[A-Za-z_$][A-Za-z0-9_$]*$/;
 const key = (k: string) => (IDENT.test(k) ? k : q(k));
 
-/** Constructor names this spec needs, so the import line can be regenerated. */
+/**
+ * Constructor names this spec needs, so the import line can be regenerated.
+ *
+ * This collects KINDS and filters a list of CONSTRUCTOR names, which only works
+ * because every constructor in spec.ts is named for the kind it builds. Keep it
+ * that way when adding one: a constructor whose name differs from its kind is
+ * silently dropped from the import line here, and the transform.ts the GUI
+ * writes then fails to compile on a save rather than in a test.
+ */
 export function constructorsUsed(spec: Spec): string[] {
   const used = new Set<string>();
   for (const block of spec.blocks) {
+    // A select or fold is a constructor call in the emitted spec exactly like a
+    // source is, so it needs its import too. Missed here, the block serializes
+    // to something the file cannot resolve.
+    if (block.repeat?.select) used.add(block.repeat.select.kind);
+    if (block.repeat?.fold) used.add(block.repeat.fold.kind);
     for (const row of block.rows) {
       used.add(row.from.kind);
       if (row.from.kind === "lookup") used.add(row.from.unmapped.kind);
@@ -55,6 +68,7 @@ export function constructorsUsed(spec: Spec): string[] {
     "pickRepeat", "fromFirst", "todo",
     "blank", "passthrough", "constant",
     "date8", "truncate", "upper", "stripDelims", "stripChars", "defaultTo",
+    "highest", "equals", "continuation",
   ];
   return order.filter((n) => used.has(n));
 }
@@ -86,6 +100,25 @@ function source(from: Source): string {
     case "fromFirst":
       return `fromFirst(${q(from.segment)}, ${q(from.nonEmpty)}, ${q(from.path)})`;
     case "todo": return `todo(${q(from.why)})`;
+  }
+}
+
+function select(s: Select): string {
+  switch (s.kind) {
+    case "highest": return `highest(${q(s.path)})`;
+    case "equals": return `equals(${q(s.path)}, ${q(s.value)})`;
+  }
+}
+
+function fold(f: Fold): string {
+  switch (f.kind) {
+    // "" is the constructor default, and it is the right default: the leading
+    // space on a continuation line IS the separator. Printing it adds an
+    // argument that says nothing, same reason pickRepeat omits "whole".
+    case "continuation":
+      return f.join === ""
+        ? `continuation(${q(f.path)})`
+        : `continuation(${q(f.path)}, ${q(f.join)})`;
   }
 }
 
@@ -155,6 +188,25 @@ export function specToSource(spec: Spec): string {
   out.push(`    targetDocType: ${q(spec.iris.targetDocType)},`);
   if (spec.iris.create) out.push(`    create: ${q(spec.iris.create)},`);
   if (spec.iris.log) out.push(`    log: ${q(spec.iris.log)},`);
+
+  // The schema category, one structure per line because the definitions are
+  // long and a diff on one of them should show which structure moved.
+  const sch = spec.iris.schema;
+  if (sch) {
+    out.push("    schema: {");
+    out.push(`      category: ${q(sch.category)},`);
+    out.push(`      base: ${q(sch.base)},`);
+    if (sch.description) out.push(`      description: ${q(sch.description)},`);
+    out.push("      structures: [");
+    for (const st of sch.structures) {
+      const parts = [`name: ${q(st.name)}`, `definition: ${q(st.definition)}`];
+      if (st.note) parts.push(`note: ${q(st.note)}`);
+      out.push(`        { ${parts.join(", ")} },`);
+    }
+    out.push("      ],");
+    out.push("    },");
+  }
+
   out.push("  },");
 
   const tables = Object.keys(spec.tables ?? {});
@@ -174,8 +226,12 @@ export function specToSource(spec: Spec): string {
     if (block.note) out.push(`      note: ${q(block.note)},`);
     if (block.repeat) {
       const r = block.repeat;
+      // Printed in pipeline order -- skipWhenEmpty, select, fold, max -- because
+      // that is the order they run in and the order decides the result.
       const parts = [`over: ${q(r.over)}`];
       if (r.skipWhenEmpty) parts.push(`skipWhenEmpty: ${q(r.skipWhenEmpty)}`);
+      if (r.select) parts.push(`select: ${select(r.select)}`);
+      if (r.fold) parts.push(`fold: ${fold(r.fold)}`);
       if (r.max !== undefined) parts.push(`max: ${r.max}`);
       out.push(`      repeat: { ${parts.join(", ")} },`);
     }

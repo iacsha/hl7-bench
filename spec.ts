@@ -132,6 +132,109 @@ export const STEP_KINDS = [
 ] as const;
 
 // ---------------------------------------------------------------------------
+// Select and Fold: which occurrences of a repeat participate, and how they merge
+//
+// `Source` and `Step` both answer "what goes in this field". Neither can answer
+// "how many segments are there", so a repeat that has to drop or combine
+// occurrences has nowhere to say so and the mapping ends up in the runner,
+// invisible to the document and to the emitter. These two are that vocabulary.
+//
+// `over`, `skipWhenEmpty` and `max` stayed plain scalars because each says one
+// thing and there is no second way to say it. These are tagged unions because
+// there is obviously more than one way to choose an occurrence, and the kind
+// lists are what lets `spec.test.ts` hold every backend to all of them.
+// ---------------------------------------------------------------------------
+
+export type Select =
+  /**
+   * Keep only the occurrences whose `path` holds the highest value present.
+   *
+   * Written for report versioning. A radiology addendum carries the whole
+   * report once per revision IN ONE MESSAGE -- three complete copies in the
+   * sample that prompted this -- discriminated by OBX-17, and the receiver
+   * wants the newest only. Sending all of them triples the document, and the
+   * duplication is invisible in any field-level diff because every individual
+   * field is correct.
+   *
+   * Empty sorts lowest, and a message where every occurrence is empty keeps all
+   * of them. That is what makes one rule cover both an addendum and a plain
+   * final report instead of needing a flag to tell them apart.
+   */
+  | { kind: "highest"; path: string }
+  /**
+   * Keep only the occurrences whose `path` equals `value`.
+   *
+   * The fixed-value counterpart, for a discriminator you already know: one
+   * result status, one document type, one coverage priority.
+   */
+  | { kind: "equals"; path: string; value: string };
+
+export const SELECT_KINDS = ["highest", "equals"] as const;
+
+export type Fold =
+  /**
+   * Join an occurrence into its predecessor when `path` begins with a space.
+   *
+   * Narrative text arrives hard-wrapped, one segment per display line, with
+   * continuation lines marked by a leading space. The receiver wants whole
+   * paragraphs. 57 segments become 43 on the sample this was written for.
+   *
+   * `join` defaults to "" and should stay there: the leading space IS the
+   * separator. Adding one gives "by  M" and trimming gives "byM", and both read
+   * as a typo in a signed clinical report rather than as a mapping defect.
+   *
+   * A continuation arriving with nothing held becomes a head in its own right,
+   * leading space and all. Losing a line of a signed report to a formatting
+   * quirk is the worse of the two failures, and the space makes it visible.
+   */
+  | { kind: "continuation"; path: string; join: string };
+
+export const FOLD_KINDS = ["continuation"] as const;
+
+// ---------------------------------------------------------------------------
+// Custom schema: the feed as it is really sent
+//
+// A DTL walks the SCHEMA, not the segments. On a message the schema does not
+// describe, the structure walk stops at the first violation and every path past
+// it resolves to EMPTY rather than erroring -- the transform runs, and a
+// well-formed message comes out with nothing in it.
+//
+// The fix is a schema category describing the feed as sent. That category is an
+// ARTIFACT: it has to exist on whatever instance runs the transform, or every
+// named path silently reads nothing. Declaring it here makes it something the
+// spec ships rather than something somebody remembers to import.
+// ---------------------------------------------------------------------------
+
+export interface SchemaStructure {
+  /** Structure name, e.g. "DFT_P03". */
+  name: string;
+  /**
+   * The `~`-delimited definition. Brackets and braces are their own tokens:
+   * `[~{~2.5:SFT~}~]`, never the compact `[{SFT}]`, which IRIS rejects with
+   * "Unresolved SS reference".
+   *
+   * Derive this from the stock definition rather than typing it. On any IRIS:
+   *
+   *     zwrite ^EnsHL7.Schema("2.5","MS","DFT_P03")
+   *
+   * then change only what the feed forces, so a conforming message still
+   * validates exactly as it did.
+   */
+  definition: string;
+  /** What was changed from the base, and why the feed made you change it. */
+  note?: string;
+}
+
+export interface CustomSchema {
+  /** Category name, e.g. "2.5_EXA". Must differ from `base`. */
+  category: string;
+  /** Stock category it extends, e.g. "2.5". */
+  base: string;
+  description?: string;
+  structures: SchemaStructure[];
+}
+
+// ---------------------------------------------------------------------------
 // Rows, blocks, and the spec itself
 // ---------------------------------------------------------------------------
 
@@ -152,12 +255,27 @@ export interface Row {
   note?: string;
 }
 
+/**
+ * How a repeating source segment becomes repeating target segments.
+ *
+ * The stages run in this order and the order is load-bearing:
+ *
+ *     all  ->  skipWhenEmpty  ->  select  ->  fold  ->  max
+ *
+ * `select` before `fold`, or folding joins the tail of one report revision onto
+ * the head of the next. `max` last, because max means "deliver at most n" and
+ * delivered is counted after folding, not before.
+ */
 export interface Repeat {
   /** Source segment id to walk. */
   over: string;
   /** Skip a source occurrence when this path is empty. */
   skipWhenEmpty?: string;
-  /** Stop after this many delivered occurrences. */
+  /** Which occurrences participate at all. Runs after skipWhenEmpty. */
+  select?: Select;
+  /** How surviving occurrences merge into each other. Runs after select. */
+  fold?: Fold;
+  /** Stop after this many delivered occurrences. Counted after fold. */
   max?: number;
 }
 
@@ -244,6 +362,16 @@ export interface Spec {
     className?: string;
     sourceDocType: string;
     targetDocType: string;
+    /**
+     * A custom schema category this spec depends on, emitted by
+     * `bun emit.ts schema` and imported with EnsLib.HL7.SchemaXML.
+     *
+     * Required whenever sourceDocType or targetDocType names a category that is
+     * not a plain HL7 version. validate() enforces that, because the failure it
+     * prevents has no symptom: the transform delivers an empty message and
+     * every test still passes.
+     */
+    schema?: CustomSchema;
     /** "new" builds a fresh target, which is what block order below describes. */
     create?: "new" | "copy";
     /**
@@ -353,6 +481,17 @@ export const stripDelims = (): Step => ({ kind: "stripDelims" });
 export const stripChars = (chars: string): Step => ({ kind: "stripChars", chars });
 export const defaultTo = (value: string): Step => ({ kind: "defaultTo", value });
 
+export const highest = (path: string): Select => ({ kind: "highest", path });
+// Named for its kind, not for how it reads in a spec. `constructorsUsed` in
+// serialize.ts regenerates the import line by collecting KINDS and filtering a
+// list of CONSTRUCTOR names, so the two have to spell the same. A mismatch
+// writes a transform.ts that does not compile, and it does it at GUI-save time
+// rather than at test time.
+export const equals = (path: string, value: string): Select =>
+  ({ kind: "equals", path, value });
+export const continuation = (path: string, join = ""): Fold =>
+  ({ kind: "continuation", path, join });
+
 // ---------------------------------------------------------------------------
 // Shared helpers. Both backends need these and must agree on them.
 // ---------------------------------------------------------------------------
@@ -391,6 +530,27 @@ export function describeSource(from: Source): string {
     }
     case "fromFirst": return `first ${from.segment} with ${from.nonEmpty}`;
     case "todo": return "(TODO)";
+  }
+}
+
+/**
+ * A short human description of a select, for the trace and the drop notes.
+ *
+ * These read in the mapping document, not just in the log. A receiver asking
+ * "does the addendum contain the original report" is asking what `select` does,
+ * and the answer belongs in the document rather than in a conversation.
+ */
+export function describeSelect(s: Select): string {
+  switch (s.kind) {
+    case "highest": return `highest ${s.path}`;
+    case "equals": return `${s.path} = ${s.value}`;
+  }
+}
+
+/** A short human description of a fold, for the trace and the drop notes. */
+export function describeFold(f: Fold): string {
+  switch (f.kind) {
+    case "continuation": return `join ${f.path} continuation lines`;
   }
 }
 
@@ -464,11 +624,83 @@ function classNameProblems(name: string | undefined): string[] {
   return problems;
 }
 
+/** A stock HL7 schema category is a bare version: "2.3", "2.5", "2.3.1". */
+const STOCK_CATEGORY = /^\d+(\.\d+)*$/;
+
+/** The category half of a DocType: "2.5_EXA" out of "2.5_EXA:DFT_P03". */
+function categoryOf(docType: string): string {
+  return docType.includes(":") ? docType.split(":", 1)[0] : "";
+}
+
 export function validate(spec: Spec): string[] {
   const problems: string[] = [];
 
   if (Object.keys(spec.gate.permit).length === 0) {
     problems.push("gate.permit is empty, so this interface would refuse every message");
+  }
+
+  // The custom schema, and the deliverable nobody tracks.
+  //
+  // A DocType naming a category that does not ship with IRIS is a dependency on
+  // an artifact that has to be imported before the transform can read anything.
+  // Miss it and there is no error: the structure walk finds nothing, every named
+  // path resolves to empty, and a well-formed message is delivered with nothing
+  // in it. Measured: 143 OBX in, 0 out, whole suite green.
+  const sch = spec.iris.schema;
+  const used = [spec.iris.sourceDocType, spec.iris.targetDocType]
+    .map(categoryOf)
+    .filter((c) => c !== "" && !STOCK_CATEGORY.test(c));
+
+  for (const cat of [...new Set(used)]) {
+    if (sch?.category === cat) continue;
+    problems.push(
+      `iris: DocType uses schema category "${cat}", which is not a stock HL7 version, ` +
+        `and iris.schema does not declare it. Declare it so \`bun emit.ts schema\` ships it. ` +
+        `An undeclared category is imported by somebody remembering to, and when they do not, ` +
+        `every named path reads empty and nothing errors.`,
+    );
+  }
+
+  if (sch) {
+    if (sch.category === sch.base) {
+      problems.push(
+        `iris.schema.category is "${sch.category}", the same as its base. A category cannot ` +
+          `extend itself, and importing it would overwrite the stock schema.`,
+      );
+    }
+    if (STOCK_CATEGORY.test(sch.category)) {
+      problems.push(
+        `iris.schema.category "${sch.category}" looks like a stock HL7 version. Importing it ` +
+          `replaces the shipped schema for every interface in the namespace. Use a suffix, ` +
+          `e.g. "${sch.category}_SITE".`,
+      );
+    }
+    if (sch.structures.length === 0) {
+      problems.push(`iris.schema declares category "${sch.category}" with no structures in it`);
+    }
+    for (const st of sch.structures) {
+      // The compact form is the mistake everybody makes once. IRIS answers
+      // "Unresolved SS reference '[{SFT}]'", which does not say what to do.
+      if (/\[\{|\}\]/.test(st.definition)) {
+        problems.push(
+          `iris.schema structure ${st.name}: brackets must be their own "~"-delimited tokens ` +
+            `("[~{~${sch.base}:SFT~}~]"), not the compact form ("[{SFT}]"). IRIS rejects the ` +
+            `compact form with "Unresolved SS reference".`,
+        );
+      }
+      if (!st.definition.includes("~")) {
+        problems.push(
+          `iris.schema structure ${st.name}: the definition has no "~" separators at all`,
+        );
+      }
+    }
+    if (used.length === 0) {
+      problems.push(
+        `iris.schema declares "${sch.category}" but no DocType uses it. Either point ` +
+          `sourceDocType or targetDocType at it, or drop it -- a schema nothing references ` +
+          `is an artifact somebody will keep importing for no reason.`,
+      );
+    }
   }
 
   problems.push(...classNameProblems(spec.iris.className));
@@ -544,6 +776,66 @@ export function validate(spec: Spec): string[] {
       problems.push(`${block.id}: two non-repeating blocks with the same segment id`);
     }
     seen.add(block.id);
+
+    // A select or fold path that names a different segment reads the message
+    // rather than the current occurrence, so it returns the same value for
+    // every occurrence: select keeps all or none, fold folds everything or
+    // nothing. Both deliver a plausible message and neither raises anything.
+    const rep = block.repeat;
+
+    /**
+     * What a fold is allowed to be, so both backends can express it.
+     *
+     * `run.ts` folds the SOURCE and then applies rows to the joined value. The
+     * DTL has nowhere to hold a segment across a <foreach>, so it appends into
+     * the target field already written. Those two agree only while the folded
+     * field goes somewhere with no `via` steps -- otherwise the bench truncates
+     * the joined text and the engine truncates each piece and concatenates.
+     *
+     * Refused here rather than documented, because the difference shows up as
+     * a report that reads correctly and is missing the end of every paragraph.
+     */
+    if (rep?.fold) {
+      const carriers = block.rows.filter(
+        (row) => row.from.kind === "copy" && row.from.path === rep.fold!.path,
+      );
+      if (carriers.length === 0) {
+        problems.push(
+          `${block.id}: repeat.fold joins ${rep.fold.path}, but no row copies it, ` +
+            `so the fold would have no effect on the delivered message`,
+        );
+      }
+      for (const row of carriers.filter((c) => c.via?.length)) {
+        problems.push(
+          `${block.id}: ${row.target} copies the folded field ${rep.fold.path} and has via ` +
+            `steps. The bench would apply them to the joined value and the DTL to each ` +
+            `piece. Drop the steps, or fold a different field.`,
+        );
+      }
+      if (rep.max !== undefined) {
+        problems.push(
+          `${block.id}: repeat.fold with repeat.max. The bench applies max after folding; ` +
+            `the DTL cannot, and would append continuations of a capped occurrence onto the ` +
+            `last one it kept. Use one or the other.`,
+        );
+      }
+    }
+
+    for (const [what, path] of [
+      ["select", rep?.select?.path],
+      ["fold", rep?.fold?.path],
+    ] as const) {
+      if (path === undefined) continue;
+      try {
+        if (segmentOf(path) !== rep!.over) {
+          problems.push(
+            `${block.id}: repeat.${what} reads ${path}, but the repeat walks ${rep!.over}`,
+          );
+        }
+      } catch (e) {
+        problems.push(`${block.id}: repeat.${what}: ${(e as Error).message}`);
+      }
+    }
 
     for (const row of block.rows) {
       let targetSeg: string;

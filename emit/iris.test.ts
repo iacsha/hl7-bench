@@ -19,7 +19,7 @@
 import { expect, test, describe } from "bun:test";
 
 import { copy, fromFirst, literal, lookup, pickRepeat, blank, type Spec } from "../spec";
-import { emitIris } from "./iris";
+import { emitIris, dtlPath } from "./iris";
 
 const base = (over: Partial<Spec> = {}): Spec => ({
   name: "Iris Emit Test",
@@ -323,5 +323,22 @@ describe("attributes still use the curly form", () => {
     // whole file exists to keep out of Studio.
     const cls = emitIris(base({ blocks: [{ id: "PID", rows: [{ target: "PID-3", from: copy("PID-3") }] }] }));
     expect(cls).toContain(`<assign value='source.{PID:3}' property='target.{PID:3}' action='set' />`);
+  });
+});
+
+describe("a path read from inside a repeat, naming another segment", () => {
+  // run.ts falls through to the message when the path is not the repeated
+  // segment. The DTL has to agree, or the bench reads OBR and the engine reads
+  // nothing -- both silently, on a message that stays well formed.
+  test("escapes the loop rather than nesting under it", () => {
+    expect(dtlPath("OBR-4.1", "OBX(k1)")).toBe("{OBR:4.1}");
+  });
+
+  test("the repeated segment itself still carries the occurrence", () => {
+    expect(dtlPath("OBX-5", "OBX(k1)")).toBe("{OBX(k1):5}");
+  });
+
+  test("a GROUP prefix still nests, because the segment really is inside it", () => {
+    expect(dtlPath("IN1-4", "INSURANCEgrp(k1)")).toBe("{INSURANCEgrp(k1).IN1:4}");
   });
 });

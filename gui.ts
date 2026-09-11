@@ -48,7 +48,10 @@ import { readFileSync, writeFileSync, existsSync, mkdirSync, copyFileSync } from
 import { join, resolve, relative, isAbsolute, dirname, basename } from "node:path";
 
 import { Message } from "./hl7";
-import { SOURCE_KINDS, STEP_KINDS, emptyTables, validate, type Spec } from "./spec";
+import {
+  SOURCE_KINDS, STEP_KINDS, SELECT_KINDS, FOLD_KINDS,
+  emptyTables, validate, type Spec,
+} from "./spec";
 import { rewriteTransform } from "./serialize";
 import { trace, inventory } from "./trace";
 import { emitIris, routingCondition } from "./emit/iris";
@@ -242,6 +245,12 @@ const server = Bun.serve({
         // when it has no form for one, which is the loud version of the gap.
         sourceKinds: SOURCE_KINDS,
         stepKinds: STEP_KINDS,
+        // Same reason as the two above. A repeat's select and fold are the only
+        // parts of the vocabulary that decide how many segments exist rather
+        // than what goes in a field, and they are served, not hardcoded, so the
+        // page cannot fall behind spec.ts without saying so on screen.
+        selectKinds: SELECT_KINDS,
+        foldKinds: FOLD_KINDS,
       });
     }
 

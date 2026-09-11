@@ -300,6 +300,34 @@ const STEP_DEFAULT = {
   defaultTo: () => ({ kind: "defaultTo", value: "" }),
 };
 
+// A repeat's select and fold. Unlike a source, which every row must have, both
+// of these are usually absent -- so their dropdown carries a (none) entry and
+// choosing it removes the clause rather than leaving an empty one behind.
+const SELECT_FORM = {
+  highest: [{ k: "path", ph: "OBX-17", w: "sm", title: "keep only the highest value of this field" }],
+  equals: [
+    { k: "path", ph: "PV1-2", w: "sm" },
+    { k: "value", ph: "IP", w: "sm", title: "keep only occurrences equal to this" },
+  ],
+};
+
+const SELECT_DEFAULT = {
+  highest: () => ({ kind: "highest", path: "" }),
+  equals: () => ({ kind: "equals", path: "", value: "" }),
+};
+
+const FOLD_FORM = {
+  continuation: [
+    { k: "path", ph: "OBX-5", w: "sm", title: "the field carrying the wrapped text" },
+    { k: "join", ph: "(blank: the leading space is the separator)", w: "md",
+      title: "joined between the two values. Blank is almost always right." },
+  ],
+};
+
+const FOLD_DEFAULT = {
+  continuation: () => ({ kind: "continuation", path: "", join: "" }),
+};
+
 // ---------------------------------------------------------------------------
 // State
 // ---------------------------------------------------------------------------
@@ -307,6 +335,8 @@ const STEP_DEFAULT = {
 let spec = null;
 let sourceKinds = Object.keys(SOURCE_FORM);
 let stepKinds = Object.keys(STEP_FORM);
+let selectKinds = Object.keys(SELECT_FORM);
+let foldKinds = Object.keys(FOLD_FORM);
 let messageFile = "sample.hl7";
 let defaultOut = "messages/output.hl7";
 let lastOutput = "";
@@ -448,6 +478,105 @@ function unmappedEditor(from) {
     }
   };
   draw();
+  return wrap;
+}
+
+/**
+ * The custom schema category, if this interface needs one.
+ *
+ * Metadata is editable. The DEFINITION is shown but not meant to be typed here:
+ * it is the stock structure with the feed's departures applied, and the way to
+ * get one is
+ *
+ *     bun schema-sync.ts --derive DFT_P03 --base 2.5
+ *
+ * which reads it off the instance you are targeting. Typing one by hand into a
+ * text box produces a definition nobody can diff against stock, and the diff
+ * against stock is the thing you have to defend to whoever owns the interface.
+ */
+function schemaEditor(redraw) {
+  const box = el("fieldset", {}, [el("legend", { text: "Custom HL7 schema" })]);
+  const sch = spec.iris.schema;
+
+  if (!sch) {
+    box.appendChild(el("div", { class: "note", text: "None. Stock schemas only. Add one ONLY if a DocType above names a category IRIS does not ship, e.g. 2.5_EXA:DFT_P03 \u2014 without it every named path in the generated DTL resolves to empty and nothing errors." }));
+    box.appendChild(btn("Add a schema category", "declare a custom category this spec depends on", () => {
+      spec.iris.schema = { category: "", base: "", structures: [] };
+      markEdited(); redraw(); schedulePreview();
+    }));
+    return box;
+  }
+
+  box.appendChild(el("div", { class: "note", text: "A DEPENDENCY of this transform. Emit with `bun emit.ts schema`, load with `bun schema-sync.ts --import`, and confirm the engine still matches with `bun schema-sync.ts`. A category that exists but is STALE passes navcheck: the message navigates, under the wrong definition." }));
+  box.appendChild(el("label", { class: "f" }, [el("span", { text: "category" }), text(sch, "category", { w: "md", ph: "2.5_EXA" })]));
+  box.appendChild(el("label", { class: "f" }, [el("span", { text: "base" }), text(sch, "base", { w: "sm", ph: "2.5" })]));
+  box.appendChild(el("label", { class: "f" }, [el("span", { text: "description" }), text(sch, "description", { w: "grow", optional: true, ph: "the feed as it is really sent" })]));
+
+  sch.structures = sch.structures ?? [];
+  sch.structures.forEach((st, i) => {
+    box.appendChild(el("div", { class: "row" }, [
+      text(st, "name", { w: "sm", ph: "DFT_P03" }),
+      btn("x", "remove this structure", () => {
+        sch.structures.splice(i, 1); markEdited(); redraw(); schedulePreview();
+      }),
+    ]));
+    box.appendChild(el("label", { class: "f" }, [
+      el("span", { text: "definition" }),
+      text(st, "definition", { w: "grow", ph: "bun schema-sync.ts --derive " + (st.name || "DFT_P03") }),
+    ]));
+    box.appendChild(el("label", { class: "f" }, [
+      el("span", { text: "note" }),
+      text(st, "note", { w: "grow", optional: true, ph: "what changed from stock, and what in the feed forced it" }),
+    ]));
+  });
+
+  box.appendChild(btn("Add structure", "another message structure in this category", () => {
+    sch.structures.push({ name: "", definition: "" });
+    markEdited(); redraw(); schedulePreview();
+  }));
+  box.appendChild(btn("x remove the category", "this spec stops depending on a custom schema", () => {
+    delete spec.iris.schema; markEdited(); redraw(); schedulePreview();
+  }));
+  return box;
+}
+
+const NO_CLAUSE = "(none)";
+
+/**
+ * The select or fold clause of a repeat, or nothing at all.
+ *
+ * Optional in a way a row's `from` is not, so the kind list gets a (none) entry
+ * and picking it deletes the clause. Leaving an empty one behind would serialize
+ * a call with blank arguments into transform.ts, which validate() then rejects
+ * on a field the author never meant to add.
+ *
+ * Kinds come from the server, same as sources and steps, so a kind added to
+ * spec.ts shows up here the moment it exists and an unknown one says so rather
+ * than rendering as a finished field.
+ */
+function clauseEditor(holder, prop, kinds, FORM, DEFAULT, redraw) {
+  const wrap = el("span", { class: "steps" });
+  wrap.appendChild(select(holder[prop]?.kind ?? NO_CLAUSE, [NO_CLAUSE, ...kinds], (k) => {
+    if (k === NO_CLAUSE) delete holder[prop];
+    else holder[prop] = (DEFAULT[k] ?? (() => ({ kind: k })))();
+    markEdited();
+    redraw();
+    schedulePreview();
+  }));
+
+  const clause = holder[prop];
+  if (!clause) return wrap;
+
+  const form = FORM[clause.kind];
+  if (!form) {
+    wrap.appendChild(el("span", {
+      class: "tag",
+      style: "color:var(--bad)",
+      text: `no form for "${clause.kind}", edit transform.ts by hand`,
+    }));
+    return wrap;
+  }
+  for (const f of form) wrap.appendChild(text(clause, f.k, f));
   return wrap;
 }
 
@@ -615,6 +744,15 @@ function renderSpec() {
     el("div", { class: "note", text: "What the generated class writes to the IRIS Event Log, not what this bench writes here. warn: one warning on an unmapped lookup code and on a required field that came out empty. trace: that plus a $$TRACE per assigned field, visible in Visual Trace. A sender that routinely emits an unmapped code writes one warning PER MESSAGE until the table is fixed." }),
   ]));
 
+  // ---- custom schema ---------------------------------------------------
+  //
+  // Visible here because it is a DEPENDENCY, not a setting: a DocType naming a
+  // category the engine does not hold reads every path as empty and reports no
+  // error at all. Definitions are not authored in this box. They are several
+  // hundred characters of bracket tokens, and the only safe way to make one is
+  // to start from the stock structure and change what the feed forces.
+  host.appendChild(schemaEditor(redraw));
+
   // ---- tables ----------------------------------------------------------
   spec.tables = spec.tables ?? {};
   const tables = el("fieldset", {}, [
@@ -694,6 +832,14 @@ function renderSpec() {
       repeatRow.appendChild(text(block.repeat, "over", { w: "sm", ph: "IN1" }));
       repeatRow.appendChild(el("span", { class: "tag", text: "skip when empty" }));
       repeatRow.appendChild(text(block.repeat, "skipWhenEmpty", { w: "sm", optional: true, ph: "IN1-4" }));
+      // Laid out in the order the stages run -- skip, select, fold, max -- because
+      // the order decides the result and reading it left to right should say so.
+      repeatRow.appendChild(el("span", { class: "tag", text: "select" }));
+      repeatRow.appendChild(
+        clauseEditor(block.repeat, "select", selectKinds, SELECT_FORM, SELECT_DEFAULT, redraw));
+      repeatRow.appendChild(el("span", { class: "tag", text: "fold" }));
+      repeatRow.appendChild(
+        clauseEditor(block.repeat, "fold", foldKinds, FOLD_FORM, FOLD_DEFAULT, redraw));
       repeatRow.appendChild(el("span", { class: "tag", text: "max" }));
       repeatRow.appendChild(text(block.repeat, "max", { w: "sm", num: true, ph: "3" }));
     }
@@ -1202,6 +1348,8 @@ async function load() {
   defaultOut = res.defaultOut ?? defaultOut;
   sourceKinds = res.sourceKinds ?? sourceKinds;
   stepKinds = res.stepKinds ?? stepKinds;
+  selectKinds = res.selectKinds ?? selectKinds;
+  foldKinds = res.foldKinds ?? foldKinds;
   $("msgfile").textContent = messageFile;
   $("specfile").textContent = res.transformFile ?? "transform.ts";
   lastOutput = "";
