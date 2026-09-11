@@ -771,6 +771,10 @@ export function validate(spec: Spec): string[] {
   const tables = spec.tables ?? {};
   const seen = new Set<string>();
 
+  // Segments some block walks with a repeat. Reading one of these from OUTSIDE
+  // that repeat is the single most expensive mistake this vocabulary allows.
+  const repeated = new Set(spec.blocks.filter((b) => b.repeat).map((b) => b.repeat!.over));
+
   for (const block of spec.blocks) {
     if (seen.has(block.id) && !block.repeat) {
       problems.push(`${block.id}: two non-repeating blocks with the same segment id`);
@@ -854,6 +858,32 @@ export function validate(spec: Spec): string[] {
           segmentOf(p);
         } catch (e) {
           problems.push(`${row.target}: ${(e as Error).message}`);
+        }
+      }
+
+      // A bare `{OBX:14}` returns EMPTY in IRIS on a message carrying several
+      // OBX segments -- not the first one, nothing at all. `run.ts` returns the
+      // first, because an array scan has no reason not to. So a copy() of a
+      // repeating segment read from outside its loop delivers a value on the
+      // bench and an empty field on the engine, and both messages are well
+      // formed. `fromFirst` exists precisely for this and says which occurrence
+      // it means.
+      //
+      // Measured: four rows sourced from OBX-14 this way put a datetime in
+      // MSH-7, EVN-2, TXA-4 and TXA-22 on the bench and left all four empty in
+      // the generated DTL.
+      if (row.from.kind === "copy" || row.from.kind === "firstOf") {
+        for (const p of sourcePathsOf(row.from)) {
+          let ps: string;
+          try { ps = segmentOf(p); } catch { continue; }
+          if (!repeated.has(ps)) continue;
+          if (block.repeat?.over === ps) continue; // inside its own loop, correct
+          problems.push(
+            `${row.target}: reads ${p}, and ${ps} is a repeating segment this spec walks ` +
+              `elsewhere. A bare ${ps} path outside that loop returns the first occurrence ` +
+              `in the bench and EMPTY in IRIS. Use fromFirst("${ps}", "${p}", "${p}") to say ` +
+              `which occurrence you mean.`,
+          );
         }
       }
 
