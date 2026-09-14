@@ -29,6 +29,21 @@ const INSTANCE = process.env.IRIS_INSTANCE ?? "IRIS";
 const IRIS_EXE = process.env.IRIS_EXE ?? "iris";
 
 /**
+ * The whole command, when the built-in shapes do not fit.
+ *
+ * `iris session <instance>` is the UNIX spelling. On Windows `iris.exe` answers
+ * it with a usage dump, because the subcommand is not there -- the programmatic
+ * entry point is `irisdb.exe`, pointed at the instance's mgr directory:
+ *
+ *   IRIS_CMD=C:\InterSystems\IRISHealth\bin\irisdb.exe -s C:\InterSystems\IRISHealth\mgr -U DEV
+ *
+ * Run through a shell, so it is a command line a person writes rather than an
+ * argv this code has to parse. Stdin still carries the script, and the
+ * credentials still go first when IRIS_USER is set.
+ */
+const IRIS_CMD = process.env.IRIS_CMD?.trim();
+
+/**
  * Credentials for an instance whose console asks for them.
  *
  * A piped session CAN answer the prompts: the terminal reads the first line as
@@ -120,6 +135,9 @@ export const REMOTE = process.env.IRIS_LAB_DIR ?? "/lab";
 export { MODE, CONTAINER, INSTANCE };
 
 export function irisCommand(): string[] {
+  if (IRIS_CMD) {
+    return process.platform === "win32" ? ["cmd", "/c", IRIS_CMD] : ["sh", "-c", IRIS_CMD];
+  }
   return MODE === "docker"
     ? ["docker", "exec", "-i", CONTAINER, "iris", "session", INSTANCE]
     : [IRIS_EXE, "session", INSTANCE];
@@ -127,7 +145,7 @@ export function irisCommand(): string[] {
 
 export type IrisResult = { out: string; err: string; code: number | null };
 
-const head = (s: string, n = 6) =>
+const head = (s: string, n = 12) =>
   redact(s)
     .split(/\r?\n/)
     .filter((l) => l.trim() !== "")
@@ -184,7 +202,20 @@ export function runIris(
   if (err.trim()) lines.push(`  on stderr`, head(err));
   if (!out.trim() && !err.trim()) lines.push(`  it printed nothing at all`);
 
-  if (/username:/i.test(out)) {
+  if (/^\s*usage:/im.test(out) || /\biris start <instance>/i.test(out)) {
+    lines.push(
+      ``,
+      `That is a usage dump, which means the subcommand does not exist on this build.`,
+      `"iris session <instance>" is the UNIX spelling; Windows has no session subcommand.`,
+      ``,
+      `Name the whole command in .env instead. On Windows that is irisdb.exe, pointed`,
+      `at the instance's mgr directory:`,
+      ``,
+      `  IRIS_CMD=<install dir>\\bin\\irisdb.exe -s <install dir>\\mgr -U ${NAMESPACE}`,
+      ``,
+      `Check what your binary does offer by running it with no arguments.`,
+    );
+  } else if (/username:/i.test(out)) {
     lines.push(
       ``,
       IRIS_USER
