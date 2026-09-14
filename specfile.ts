@@ -17,16 +17,17 @@
  * vendor and two accession numbers one `git push` from being public, and the only
  * thing that stopped it was somebody reading the diff first.
  *
- *     HL7_BENCH_TRANSFORM=C:\work\exa\transform.exa.ts
+ *     HL7_BENCH_TRANSFORM=transform.exa.local.ts
  *
  * Set it and every reader -- bench, emit, navcheck, schema-sync, trace, reads,
  * and the GUI, which also SAVES there -- uses that file. Leave it unset and
- * nothing about this tool changes.
+ * nothing about this tool changes. `*.local.ts` is gitignored and is not in the
+ * upgrade zip, which is what makes it the right home; see WHERE TO PUT THE FILE
+ * below for why a sibling folder is not.
  *
- * The external file is an ordinary spec module: it exports `spec`, and it may
- * export `transform`. A copy of `transform.ts` already qualifies, which is the
- * point -- moving an interface out is a file move and an environment variable,
- * not a rewrite.
+ * The file is an ordinary spec module: it exports `spec`, and it may export
+ * `transform`. A copy of `transform.ts` already qualifies, which is the point --
+ * moving an interface out is a rename and an environment variable, not a rewrite.
  *
  * This fails CLOSED. A path that is not there, or a module with no `spec` export,
  * stops the run. It does not fall back to the demo spec, because running a
@@ -59,10 +60,48 @@ if (specIsExternal && !existsSync(specPath)) {
   );
 }
 
-const loaded = (await import(pathToFileURL(specPath).href)) as {
-  spec?: Spec;
-  transform?: (msg: Message) => void;
-};
+/**
+ * WHERE TO PUT THE FILE, and the mistake that looks obvious first.
+ *
+ * A spec module imports the vocabulary -- `./spec`, `./run`, `./hl7` -- and those
+ * are relative to the FILE, not to the bench. Move the file to a sibling folder
+ * and every one of them stops resolving:
+ *
+ *     error: Cannot find module './run' from 'C:\work\transform.exa.ts'
+ *
+ * So "outside the folder" is the wrong shape. Keep the spec IN the bench folder
+ * and name it `*.local.ts`, which is gitignored:
+ *
+ *     HL7_BENCH_TRANSFORM=transform.exa.local.ts
+ *
+ * That still removes both failures this variable was added for. A zip unpacked
+ * over the folder to upgrade the tool carries `transform.ts` and not your file,
+ * so the upgrade cannot overwrite your interface. And a gitignored file cannot be
+ * pushed to a public repo by accident.
+ *
+ * A genuinely external path still works when its imports resolve -- a folder with
+ * its own copy of the vocabulary, or a path alias. The error below says which
+ * problem you have, because "cannot find module ./run" points at the bench and
+ * reads like a broken install.
+ */
+let loaded: { spec?: Spec; transform?: (msg: Message) => void };
+try {
+  loaded = (await import(pathToFileURL(specPath).href)) as typeof loaded;
+} catch (e) {
+  const detail = e instanceof Error ? e.message : String(e);
+  if (/Cannot find module/.test(detail)) {
+    die(
+      `the spec file loaded, and its own imports did not.\n` +
+        `  read           ${specPath}\n` +
+        `  it said        ${detail.split("\n")[0]}\n\n` +
+        `A spec imports the vocabulary relatively -- ./spec, ./run, ./hl7 -- so those\n` +
+        `resolve against the SPEC FILE, not against the bench. Put the file in the bench\n` +
+        `folder and name it *.local.ts, which is gitignored and survives a zip upgrade:\n` +
+        `  HL7_BENCH_TRANSFORM=transform.exa.local.ts`,
+    );
+  }
+  die(`the spec file threw while loading.\n  read           ${specPath}\n  it said        ${detail}`);
+}
 
 if (!loaded.spec) {
   die(

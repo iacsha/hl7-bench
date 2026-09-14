@@ -17,11 +17,40 @@ import { join, resolve } from "node:path";
 const DIR = import.meta.dir;
 const BUN = process.execPath;
 
+/**
+ * Children run from a scratch directory, never from the bench folder.
+ *
+ * bun auto-loads `.env` from the directory a process runs in, and on a real
+ * machine that file is where HL7_BENCH_TRANSFORM lives. A child spawned in the
+ * bench folder therefore inherits the machine's spec no matter what this test
+ * passes, and "unset" becomes untestable -- which is exactly how these two tests
+ * passed here and failed on the first machine that used the variable for real.
+ */
+const SCRATCH = mkdtempSync(join(tmpdir(), "hl7-bench-scratch-"));
+
+/** The parent's own variable must not leak in either. */
+function envWithout(extra: Record<string, string | undefined>) {
+  const env: Record<string, string> = {};
+  for (const [k, v] of Object.entries(process.env)) {
+    if (k === "HL7_BENCH_TRANSFORM") continue;
+    if (v !== undefined) env[k] = v;
+  }
+  for (const [k, v] of Object.entries(extra)) {
+    if (v === undefined) delete env[k];
+    else env[k] = v;
+  }
+  return env;
+}
+
 /** Print what `specpath.ts` resolved, with the environment we want tested. */
 function resolvePathWith(env: Record<string, string | undefined>) {
   const p = Bun.spawnSync(
-    [BUN, "-e", 'import("./specpath").then(m => console.log(m.specPath + "|" + m.specIsExternal))'],
-    { cwd: DIR, env: { ...process.env, ...env }, stdout: "pipe", stderr: "pipe" },
+    [
+      BUN,
+      "-e",
+      `import(${JSON.stringify(join(DIR, "specpath.ts"))}).then(m => console.log(m.specPath + "|" + m.specIsExternal))`,
+    ],
+    { cwd: SCRATCH, env: envWithout(env), stdout: "pipe", stderr: "pipe" },
   );
   const [path, external] = p.stdout.toString().trim().split("|");
   return { path, external: external === "true", stderr: p.stderr.toString() };
@@ -29,9 +58,9 @@ function resolvePathWith(env: Record<string, string | undefined>) {
 
 /** Run the bench over a message with the environment we want tested. */
 function bench(env: Record<string, string | undefined>, message: string) {
-  const p = Bun.spawnSync([BUN, "bench.ts"], {
-    cwd: DIR,
-    env: { ...process.env, ...env, HL7_BENCH_NOTES: "off" },
+  const p = Bun.spawnSync([BUN, join(DIR, "bench.ts")], {
+    cwd: SCRATCH,
+    env: envWithout({ ...env, HL7_BENCH_NOTES: "off" }),
     stdin: new TextEncoder().encode(message),
     stdout: "pipe",
     stderr: "pipe",
@@ -82,7 +111,7 @@ describe("which file holds the spec", () => {
   // point somewhere else and still find a file often enough to be believed.
   test("a relative path resolves against the working directory", () => {
     const got = resolvePathWith({ HL7_BENCH_TRANSFORM: "transform.local.ts" });
-    expect(got.path).toBe(resolve(DIR, "transform.local.ts"));
+    expect(got.path).toBe(resolve(SCRATCH, "transform.local.ts"));
   });
 
   test("surrounding whitespace is trimmed", () => {
@@ -125,6 +154,38 @@ describe("loading it", () => {
     expect(got.code).not.toBe(0);
     expect(got.err).toContain("exports no");
     expect(got.out).toBe("");
+  });
+
+  // The mistake the variable invites: a spec file in a sibling folder, whose own
+  // `./run` and `./spec` imports then resolve against ITS folder and are not there.
+  // The raw message reads like a broken bench install, so the error has to name
+  // the real cause.
+  test("a spec file whose own imports cannot resolve says so, and says where to put it", () => {
+    const dir = mkdtempSync(join(tmpdir(), "hl7-bench-outside-"));
+    const file = join(dir, "transform.outside.ts");
+    // The imports have to be USED. An unused value import is elided by the
+    // transpiler, so a fixture that only declares one resolves fine and proves
+    // nothing -- which is how the first version of this test passed.
+    writeFileSync(
+      file,
+      [
+        'import { literal, type Spec } from "./spec";',
+        'import { runSpec } from "./run";',
+        'export const spec: Spec = {',
+        '  name: "Outside The Folder",',
+        '  gate: { path: "MSH-9.2", permit: { A01: "A01" } },',
+        '  iris: { sourceDocType: "2.3:ADT_A01", targetDocType: "2.3:ADT_A01" },',
+        '  blocks: [{ id: "MSH", rows: [{ target: "MSH-3", from: literal("X") }] }],',
+        '};',
+        'export function transform(msg: any): void { runSpec(spec, msg); }',
+        '',
+      ].join("\n"),
+      "utf8",
+    );
+    const got = bench({ HL7_BENCH_TRANSFORM: file }, A01);
+    expect(got.code).not.toBe(0);
+    expect(got.err).toContain("its own imports did not");
+    expect(got.err).toContain("*.local.ts");
   });
 
   test("the demo spec still runs when the variable is unset", () => {

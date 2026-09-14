@@ -180,6 +180,12 @@ reader follows: bench, check, emit, navcheck, schema-sync, trace, reads, and the
 GUI, which also saves there. Unset, the spec is `transform.ts` and nothing
 changed.
 
+The shape is `*.local.ts` **in this folder**, not a sibling folder. That was wrong
+on the first try and a dry run on the work-PC drop caught it: a spec imports
+`./spec` and `./run`, which resolve against the spec file, so a file one directory
+over dies with `Cannot find module './run'` and reads like a broken install.
+Gitignored and absent from the zip removes both original failures anyway.
+
 It fails closed, which was the part worth getting right. A path with a typo, or a
 module with no `spec` export, stops the run. Falling back to the demo spec would
 exit 0 and produce a message that looks like work.

@@ -608,7 +608,7 @@ it out of PipeHat or a script.
 
 ### `HL7_BENCH_TRANSFORM` -- keep the interface out of the tool folder
 
-    HL7_BENCH_TRANSFORM=C:\work\exa\transform.exa.ts
+    HL7_BENCH_TRANSFORM=transform.exa.local.ts
 
 Unset, the spec is `transform.ts` here and nothing changes. Set, every reader
 follows it: `bench.ts`, `check.ts`, `emit.ts`, `navcheck.ts`, `schema-sync.ts`,
@@ -621,9 +621,20 @@ happens. And this repo is public: a tracked `transform.ts` holding a real mappin
 carries a customer's name, their vendor, accession numbers and the reasoning
 behind every row.
 
-The external file is an ordinary spec module -- it exports `spec`, and may export
-`transform`. A copy of `transform.ts` already qualifies, so moving an interface
-out is a file move and a variable, not a rewrite.
+**Keep the file in this folder and name it `*.local.ts`**, which is gitignored.
+Both failures are still removed: a zip unpacked over the folder carries
+`transform.ts` and not your file, and a gitignored file cannot be pushed.
+
+Not a sibling folder, which is the obvious first guess and does not work. A spec
+imports the vocabulary relatively -- `./spec`, `./run`, `./hl7` -- and those
+resolve against the SPEC FILE, so a file one directory over fails with
+`Cannot find module './run'`, which reads like a broken bench install. A truly
+external path works only where its imports resolve. `specfile.ts` detects that
+case and says so rather than leaving you with the raw message.
+
+The file is an ordinary spec module -- it exports `spec`, and may export
+`transform`. A copy of `transform.ts` already qualifies, so moving an interface out
+is a rename and a variable, not a rewrite.
 
 It fails closed. A path that is not there, or a module with no `spec` export,
 stops the run rather than quietly delivering the demo mapping, which exits 0 and

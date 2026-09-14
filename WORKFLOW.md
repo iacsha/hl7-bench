@@ -74,17 +74,24 @@ If this folder is a git clone, install the push guard once:
 git config core.hooksPath hooks
 ```
 
-### One file per interface, outside the folder
+### One file per interface, gitignored
 
 A spec holds exactly one interface, because `bench.ts` and the GUI both call a
 single exported `transform()`. Two interfaces in one file means an `if` on message
 type at the top, and that `if` grows an else branch nobody tested.
 
-Keep each one in its own file, outside the tool folder, and name it:
+Keep each one in its own file, in this folder, named `*.local.ts`:
 
 ```powershell
-$env:HL7_BENCH_TRANSFORM = "C:\work\exa\transform.exa.ts"
+$env:HL7_BENCH_TRANSFORM = "transform.exa.local.ts"
 ```
+
+Or put that line in `.env` here, which bun loads from the folder you run commands
+in, and then there is no session variable to forget.
+
+`*.local.ts` is gitignored, so the file cannot be pushed, and it is not in the zip,
+so an upgrade cannot overwrite it. A sibling folder looks tidier and does not work:
+the spec imports `./spec` and `./run`, which resolve against the spec file.
 
 Every reader follows that variable -- bench, check, emit, navcheck, schema-sync,
 trace, reads -- and the GUI saves there. Switching interfaces is one variable, and
@@ -93,7 +100,8 @@ two people can work two interfaces from one copy of the tool.
 Copying the whole folder per interface was the old advice and it has now cost
 something twice. A second copy means fixes land in one of them. And on a machine
 without git the upgrade story is a zip unpacked over the folder, which overwrites
-`transform.ts` -- the one file in there that cannot be replaced from upstream.
+`transform.ts` -- the one file in there that cannot be replaced from upstream. A
+`*.local.ts` spec is not in the zip, so the upgrade leaves it alone.
 
 It also keeps interface work out of this repo, which is public. `messages\` is
 gitignored for the same reason, and `hooks/pre-push` refuses a push whose

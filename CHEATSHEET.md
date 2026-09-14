@@ -57,7 +57,7 @@ the whole design: one spec, six readers.
 | ...one of them | `bun patterns.ts P7` |
 | ...one of them against my message | `bun patterns.ts P7 my.hl7` |
 | Is the bench itself still sound? | `bun test` |
-| Keep my interface out of the tool folder | `HL7_BENCH_TRANSFORM=C:\work\exa\transform.exa.ts` |
+| Keep my interface out of git and out of an upgrade's way | `HL7_BENCH_TRANSFORM=transform.exa.local.ts` |
 | Stop a push from publishing a real interface | `git config core.hooksPath hooks` (once per clone) |
 
 `bench.ts`, `trace.ts` and `reads.ts` all fall back to `sample.hl7` when nothing
@@ -179,9 +179,11 @@ not the incantation. Every pattern is runnable, so you see it work before you
 copy it.
 
 **`specpath.ts` and `specfile.ts`** answer where the spec lives. Set
-`HL7_BENCH_TRANSFORM` to a path and every reader uses that file, including the
-GUI, which saves there. A real interface belongs outside this folder: the folder
-gets a zip unpacked over it to upgrade, and it gets pushed to a public repo.
+`HL7_BENCH_TRANSFORM` to a path and every reader uses that file, including the GUI,
+which saves there. Name it `*.local.ts` and keep it in this folder: gitignored, so
+it cannot be pushed, and absent from the zip, so an upgrade cannot overwrite it. A
+sibling folder does NOT work -- the spec's own `./spec` and `./run` imports resolve
+against the spec file, not the bench.
 
 ---
 
