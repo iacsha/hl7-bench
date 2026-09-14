@@ -235,6 +235,20 @@ export function runIris(
           `as UnknownUser, which will not have the privileges to import a schema or compile\n` +
           `a class until you grant them.`,
     );
+  } else if (/access denied/i.test(out)) {
+    lines.push(
+      ``,
+      IRIS_USER
+        ? `"Access Denied" with IRIS_USER=${IRIS_USER} being sent means the credentials\n` +
+          `reached the prompt and were refused. Check the password, and that the account is\n` +
+          `enabled and not expired. Prove the password on its own first:\n` +
+          (IRIS_PASSWORD_CMD ? `  ${IRIS_PASSWORD_CMD}\n` : ``) +
+          `A password that prints correctly and is still refused is an account problem, not\n` +
+          `a wiring one.`
+        : `"Access Denied" with no IRIS_USER set means the prompt ate the first two lines of\n` +
+          `the script as a username and password. Set IRIS_USER and IRIS_PASSWORD (or\n` +
+          `IRIS_PASSWORD_CMD) in .env so the credentials arrive ahead of the script.`,
+    );
   } else if (/<PROTECT>/.test(out)) {
     lines.push(
       ``,
