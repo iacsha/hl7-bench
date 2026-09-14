@@ -29,7 +29,7 @@
  * is the thing you actually have to defend to whoever owns the interface.
  */
 
-import { spec } from "./transform";
+import { spec } from "./specfile";
 import { emitSchema } from "./emit/schema";
 import { validate, type CustomSchema } from "./spec";
 

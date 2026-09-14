@@ -18,6 +18,22 @@
  * cannot say what your interface does, add a kind there and handle it in
  * `run.ts` and `emit/iris.ts`. Both, always. That is about twenty lines and the
  * completeness test in `spec.test.ts` will tell you if you missed one.
+ *
+ * WHERE TO PUT A REAL INTERFACE
+ *
+ * Not here, if this folder is ever pushed anywhere. A customer's mapping carries
+ * their name, their vendor, their accession numbers and the reasoning behind
+ * every row, and this file is tracked. Put it outside the folder and name it:
+ *
+ *     HL7_BENCH_TRANSFORM=C:\work\exa\transform.exa.ts
+ *
+ * Every reader follows that variable, the GUI saves there, and a zip unpacked
+ * over this folder to upgrade the tool can no longer overwrite your interface.
+ * See `specfile.ts`.
+ *
+ * SYNTHETIC-DEMO-SPEC -- the spec below is invented. `hooks/pre-push` refuses to
+ * push a `transform.ts` that has lost this marker, on the assumption that what
+ * replaced it is somebody's real interface.
  */
 
 import type { Message } from "./hl7";

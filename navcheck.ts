@@ -39,7 +39,7 @@
  * THIS SPEC READS return what is really in the message.
  */
 
-import { spec } from "./transform";
+import { spec } from "./specfile";
 import { Message } from "./hl7";
 import { segmentOf, sourcePathsOf, type Spec } from "./spec";
 import { dtlPath } from "./emit/iris";

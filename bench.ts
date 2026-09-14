@@ -27,7 +27,7 @@
  */
 
 import { Message } from "./hl7";
-import { transform } from "./transform";
+import { transform } from "./specfile";
 import { logEvent } from "./log";
 import { readFileSync, existsSync } from "node:fs";
 import { join } from "node:path";

@@ -23,6 +23,7 @@ messages/
 # its patterns are general; a specific feed's transform, field spec, port notes
 # and golden gate are not. Keep them local and carry them by hand.
 transform.local.ts
+transform.*.local.ts
 mapping.*.ts
 PORT-TO-IRIS.md
 
@@ -36,3 +37,8 @@ PORT-TO-IRIS.md
 # rule read). The authoring log records spec names and shapes. Neither belongs
 # in git.
 logs/
+
+# The publish denylist is local by definition. A list of the customer names you
+# are keeping out of a public repo publishes them the moment it is committed.
+# .publish-denylist.example is the tracked, empty-of-real-names version.
+.publish-denylist

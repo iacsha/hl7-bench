@@ -1,0 +1,27 @@
+# .publish-denylist.example -- copy to .publish-denylist and fill in.
+#
+#     cp .publish-denylist.example .publish-denylist
+#     git config core.hooksPath hooks
+#
+# One extended regex per line, matched case-insensitively against every file in
+# every commit you push. A match refuses the push.
+#
+# `.publish-denylist` is gitignored, and that is the point: a list of the names
+# you are trying to keep out of a public repo publishes those names the moment it
+# is committed. This example file is tracked and holds no real ones.
+#
+# Keep it short. The list is a backstop for the structural checks in
+# hooks/pre-push, not a substitute for reading the diff.
+
+# The customer and the sending vendor.
+# AcmeHealth
+# Ingenio(us)? *Med
+
+# Product and system names that identify the site rather than the standard.
+# SomeRIS
+
+# Accession, visit and account number shapes specific to your feed.
+# \b13[0-9]{6}\b
+
+# People. A radiologist's name in a note is still a name.
+# Dr\.? +Lastname

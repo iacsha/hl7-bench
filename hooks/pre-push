@@ -1,0 +1,125 @@
+#!/bin/sh
+#
+# pre-push -- refuse to publish somebody's interface by accident.
+#
+# Install, once per clone:
+#
+#     git config core.hooksPath hooks
+#
+# WHY
+#
+# This repo is public and `transform.ts` is tracked. A real interface living in
+# that file put a customer's name, their vendor and two accession numbers one
+# `git push` away from permanent publication, and the only thing that stopped it
+# was somebody reading the diff first. Public git does not forget: a force-push
+# leaves the objects fetchable by SHA, forks keep their copy, and crawlers index.
+#
+# So the check runs before the push rather than after the incident.
+#
+# WHAT IT CHECKS, and against what
+#
+#   1. The TIP being pushed: `transform.ts` still carries the
+#      SYNTHETIC-DEMO-SPEC marker. A real spec replaces that header, so its
+#      absence means the file is no longer the demo. Real interfaces belong in
+#      HL7_BENCH_TRANSFORM; see specfile.ts. Checked at the tip because the tip is
+#      the state being published, and history is not rewritten to satisfy a marker
+#      added later.
+#
+#   2. Every commit in the range, by what it ADDS: no `.hl7` other than
+#      `sample.hl7`, and no `.cls`. Both are gitignored, and `git add -f` is all
+#      it takes to walk past that. Per commit rather than at the tip, because a
+#      message added in one commit and deleted in the next is still published.
+#
+#   3. Every commit in the range, by the lines it ADDS: any pattern in
+#      `.publish-denylist`, if that file exists. One extended regex per line, `#`
+#      comments allowed. It is gitignored on purpose: a denylist of customer
+#      names, committed, publishes the customer names. Added lines only, so a
+#      pattern that matches something already public does not block every push
+#      from here on.
+#
+# Bypass, when you have read the diff and you are sure:
+#
+#     git push --no-verify
+#
+set -eu
+
+MARKER="SYNTHETIC-DEMO-SPEC"
+DENYLIST=".publish-denylist"
+ZERO="0000000000000000000000000000000000000000"
+fail=0
+
+say() { printf '%s\n' "$*" >&2; }
+
+refuse() {
+  say "pre-push: $1"
+  fail=1
+}
+
+short() { git log -1 --format=%h "$1"; }
+
+# Commits reachable from what is being pushed but not from anything the remote
+# already has. `--not --remotes` keeps a new branch from re-checking the whole
+# history, and keeps a rewritten branch from being waved through.
+commits_for() {
+  if [ "$2" = "$ZERO" ]; then
+    git rev-list "$1" --not --remotes
+  else
+    git rev-list "$2..$1"
+  fi
+}
+
+# The state being published.
+check_tip() {
+  tip="$1"
+  git cat-file -e "$tip:transform.ts" 2>/dev/null || return 0
+  git show "$tip:transform.ts" | grep -q "$MARKER" && return 0
+  refuse "the transform.ts you are about to publish has no $MARKER marker.
+  A real interface does not belong in a tracked file in this repo.
+  Move it out, name it with HL7_BENCH_TRANSFORM, and leave transform.ts as the demo spec.
+  tip: $(short "$tip")"
+}
+
+# What one commit adds.
+check_commit() {
+  c="$1"
+
+  stowaways=$(git diff-tree --no-commit-id --name-only -r --diff-filter=AM "$c" \
+    | grep -E '\.(hl7|cls)$' \
+    | grep -v -x 'sample.hl7' || true)
+  if [ -n "$stowaways" ]; then
+    refuse "commit $(short "$c") adds files that are gitignored for a reason:
+$(printf '    %s\n' $stowaways)
+  Messages carry PHI and an emitted class carries the interface's identity. Take them out of the commit."
+  fi
+
+  [ -f "$DENYLIST" ] || return 0
+
+  added=$(git show --format= --unified=0 "$c" | grep '^+' | grep -v '^+++' || true)
+  [ -n "$added" ] || return 0
+
+  while IFS= read -r pattern; do
+    case "$pattern" in "" | \#*) continue ;; esac
+    hit=$(printf '%s\n' "$added" | grep -i -E -m 3 "$pattern" || true)
+    if [ -n "$hit" ]; then
+      refuse "commit $(short "$c") adds lines matching a denylist pattern: $pattern
+$(printf '    %s\n' "$hit")"
+    fi
+  done <"$DENYLIST"
+}
+
+while read -r _local_ref local_sha _remote_ref remote_sha; do
+  [ "$local_sha" = "$ZERO" ] && continue # branch deletion
+  check_tip "$local_sha"
+  for c in $(commits_for "$local_sha" "$remote_sha"); do
+    check_commit "$c"
+  done
+done
+
+if [ "$fail" -ne 0 ]; then
+  say ""
+  say "pre-push: refused. Nothing was pushed."
+  say "          Read the diff, fix the commit, or push with --no-verify if you are certain."
+  exit 1
+fi
+
+exit 0

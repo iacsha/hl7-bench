@@ -57,11 +57,13 @@ import { trace, inventory } from "./trace";
 import { emitIris, routingCondition } from "./emit/iris";
 import { logAuthoring } from "./log";
 import { discardDraft, draftPath, readDraft, writeDraft } from "./draft";
+import { specPath } from "./specpath";
+import { pathToFileURL } from "node:url";
 
 const DIR = import.meta.dir;
 const PORT = Number(process.env.BENCH_PORT ?? 7317);
-const TRANSFORM = join(DIR, "transform.ts");
-const BACKUP = join(DIR, "transform.ts.bak");
+const TRANSFORM = specPath;
+const BACKUP = `${specPath}.bak`;
 const PAGE = join(DIR, "gui.html");
 
 /**
@@ -123,7 +125,7 @@ function json(body: unknown, status = 200) {
  * GUI avoided by never importing transform.ts at all.
  */
 async function loadSpec(): Promise<Spec> {
-  const mod = await import(`./transform.ts?t=${Date.now()}`);
+  const mod = await import(`${pathToFileURL(TRANSFORM).href}?t=${Date.now()}`);
   return mod.spec as Spec;
 }
 

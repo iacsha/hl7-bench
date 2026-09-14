@@ -28,7 +28,7 @@
  * resolving, the output is empty, and nothing in the log says why.
  */
 
-import { spec } from "./transform";
+import { spec } from "./specfile";
 import { emitIris, routingCondition } from "./emit/iris";
 import { emitProcess } from "./emit/process";
 import { buildLookup } from "./emit/lookup";

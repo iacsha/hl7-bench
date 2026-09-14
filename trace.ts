@@ -206,7 +206,7 @@ export function inventory(spec: Spec, msg: Message): string {
 // ---------------------------------------------------------------------------
 
 if (import.meta.main) {
-  const { spec } = await import("./transform");
+  const { spec } = await import("./specfile");
   const { readFileSync, existsSync } = await import("node:fs");
   const { join } = await import("node:path");
 

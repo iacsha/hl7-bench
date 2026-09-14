@@ -41,7 +41,7 @@
 process.env.HL7_BENCH_NOTES = "off";
 
 import { Message } from "./hl7";
-import { transform } from "./transform";
+import { transform } from "./specfile";
 import { logEvent } from "./log";
 import { readdirSync, readFileSync, existsSync } from "node:fs";
 import { join } from "node:path";
