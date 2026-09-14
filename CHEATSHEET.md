@@ -18,7 +18,7 @@ edit the spec in transform.ts   ->  bun gui.ts
                                         or type it; the GUI writes the same file
 does it produce the right bytes ->  bun check.ts
                                         golden files in messages\, PASS/FAIL
-what does the engine get         ->  bun emit.ts > My.cls
+what does the engine get         ->  bun emit.ts -o My.cls
 hand the receiver the document   ->  bun trace.ts
 ```
 
@@ -38,9 +38,9 @@ the whole design: one spec, six readers.
 | ...just the A01 ones | `bun check.ts a01` |
 | Let me edit the spec in a form instead of typing | `bun gui.ts` (http://127.0.0.1:7317) |
 | ...against a real message, not sample.hl7 | `bun gui.ts messages\yours.hl7` |
-| Give me the DTL | `bun emit.ts > My.cls` |
-| Give me the business process | `bun emit.ts process > MyProcess.cls` |
-| Give me the lookup tables as loadable data | `bun emit.ts tables > Tables.xml` |
+| Give me the DTL | `bun emit.ts -o My.cls` |
+| Give me the business process | `bun emit.ts process -o MyProcess.cls` |
+| Give me the lookup tables as loadable data | `bun emit.ts tables -o Tables.xml` |
 | ...just one table | `bun emit.ts tables --table Facilities` |
 | Turn this spreadsheet into a lookup table | `bun tables.ts Facilities facilities.csv` |
 | ...as its own importable module | `bun tables.ts Facilities --module facilities.csv > tables.facilities.ts` |
@@ -52,7 +52,7 @@ the whole design: one spec, six readers.
 | ...under a doctype other than the spec's | `bun navcheck.ts messages\real.hl7 --doctype 2.5:DFT_P03` |
 | Does the engine's custom schema still match the spec? | `bun schema-sync.ts` |
 | Read the stock definition off the instance to derive one | `bun schema-sync.ts --derive DFT_P03 --base 2.5` |
-| Load the spec's schema into the engine | `bun emit.ts schema > s.xml` then `bun schema-sync.ts --import` |
+| Load the spec's schema into the engine | `bun emit.ts schema -o s.xml` then `bun schema-sync.ts --import` |
 | How do I do <the move>? Show me it running | `bun patterns.ts` |
 | ...one of them | `bun patterns.ts P7` |
 | ...one of them against my message | `bun patterns.ts P7 my.hl7` |
@@ -68,6 +68,11 @@ They still read a pipe, and the first three fall back to `sample.hl7` when
 nothing is named and nothing is piped, so a bare `bun trace.ts` works and does
 not hang. A filename that is not there is refused rather than quietly becoming
 `sample.hl7`.
+
+**Use `-o`, never a `>` redirect.** PowerShell 5.1 writes UTF-16LE that way, so an
+emitted class arrives with a byte order mark and IRIS refuses it: `COMPILE FAILED
+-- ERROR #5001: Illegal Header Line: ??Include Ensemble`. `bench.ts` and `emit.ts`
+both write the bytes themselves with `-o`.
 
 **PowerShell 5.1 has no `<`.** It answers `The '<' operator is reserved for
 future use`, which is why every example here names the file instead. If you have
@@ -131,7 +136,7 @@ Things you will want in a hurry, with the shortest correct answer.
 { target: "MSH-4", from: literal("WEST_LAB") }
 ```
 ```powershell
-bun check.ts ; bun emit.ts > My.cls
+bun check.ts ; bun emit.ts -o My.cls
 ```
 
 **"...but only for THIS receiver, the other one keeps its own."** Now it depends
@@ -145,7 +150,7 @@ process: {
 },
 ```
 ```powershell
-bun emit.ts process > MyProcess.cls
+bun emit.ts process -o MyProcess.cls
 ```
 
 The generated block sets `IsMutable` before it writes, and you want that: a

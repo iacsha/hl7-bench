@@ -237,7 +237,7 @@ typing it:
 
 ```powershell
 bun schema-sync.ts --derive DFT_P03 --base 2.5    # the stock definition off the instance
-bun emit.ts schema > schema.xml                   # the import document
+bun emit.ts schema -o schema.xml                   # the import document
 bun schema-sync.ts --import                       # load it into the engine
 bun schema-sync.ts                                # are they still the same?
 ```
@@ -585,7 +585,7 @@ Now, and not before. The mapping is settled, the goldens are green, and the
 questions have been asked. What is left is translation, and you do not type it.
 
 ```powershell
-bun emit.ts > MyTransform.cls
+bun emit.ts -o MyTransform.cls
 ```
 
 Diagnostics go to stderr, so the redirected file is clean ObjectScript. The
@@ -664,7 +664,7 @@ fingerprint stops being true.
 ### The business process, if you need one
 
 ```powershell
-bun emit.ts process > MyProcess.cls
+bun emit.ts process -o MyProcess.cls
 ```
 
 This one says **TEMPLATE** in its first line and means it. Nothing in it has run
@@ -733,7 +733,7 @@ gets.
 ### The lookup tables, as a file you can import
 
 ```powershell
-bun emit.ts tables > Tables.xml           # every table in the spec
+bun emit.ts tables -o Tables.xml           # every table in the spec
 bun emit.ts tables --table Facilities     # just the one
 ```
 

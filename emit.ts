@@ -6,7 +6,10 @@
  *   bun emit.ts tables               every lookup table, as import XML
  *   bun emit.ts tables --table Sex   one of them
  *
- *   bun emit.ts > My.cls             ...into a file you import into Studio
+ *   bun emit.ts -o My.cls            ...into a file you import into Studio
+ *
+ * Use -o, not a `>` redirect. PowerShell 5.1 writes UTF-16LE that way, and IRIS
+ * rejects the result with "Illegal Header Line: ??Include Ensemble".
  *
  * The argument is `[engine:]artifact`. Bare names mean IRIS, because IRIS is the
  * only engine in front of us; `iris:process` spells it out and reads the same.
@@ -45,7 +48,37 @@ type Artifact = (typeof ARTIFACTS)[number];
 const ENGINES = ["iris"] as const;
 
 const argv = process.argv.slice(2);
-const positional = argv.filter((a) => !a.startsWith("--"));
+
+/**
+ * -o writes the file itself instead of leaning on the shell.
+ *
+ * PowerShell 5.1's `>` redirect writes UTF-16LE. An emitted class then begins
+ * with a byte order mark, and IRIS refuses it at the first line:
+ *
+ *   COMPILE FAILED -- ERROR #5001: Illegal Header Line: ??Include Ensemble
+ *
+ * Which reads as a broken emitter rather than a broken redirect. `bench.ts` has
+ * carried -o for this reason since the beginning; this file should have had it
+ * the day it started writing artifacts somebody imports.
+ */
+const outIndex = argv.findIndex((a) => a === "-o" || a === "--out");
+const outFile = outIndex === -1 ? undefined : argv[outIndex + 1];
+if (outIndex !== -1 && !outFile) {
+  process.stderr.write("-o needs a filename after it.\n");
+  process.exit(2);
+}
+
+const positional = argv.filter((a, i) => !a.startsWith("--") && i !== outIndex && i !== outIndex + 1);
+
+/** Everything this file emits goes through here, so -o covers every artifact. */
+function deliver(text: string): void {
+  if (!outFile) {
+    process.stdout.write(text);
+    return;
+  }
+  Bun.write(outFile, text);
+  process.stderr.write(`wrote ${outFile}  (${text.length} bytes, no BOM)\n`);
+}
 const tableFlag = (() => {
   const i = argv.indexOf("--table");
   return i === -1 ? undefined : argv[i + 1];
@@ -112,7 +145,7 @@ if (artifact === "schema") {
     structures: sch.structures.length, result: "ok",
   });
 
-  process.stdout.write(xml);
+  deliver(xml);
 
   process.stderr.write(
     `\nSCHEMA CATEGORY ${sch.category} (base ${sch.base}), ` +
@@ -158,7 +191,7 @@ if (artifact === "tables") {
     warnings: built.problems.length, result: "ok",
   });
 
-  process.stdout.write(built.xml);
+  deliver(built.xml);
 
   process.stderr.write(`\nLOOKUP TABLES (${Object.keys(built.counts).length}), ${total} row(s)\n`);
   for (const [name, n] of Object.entries(built.counts)) {
@@ -204,7 +237,7 @@ logEvent("emit", {
   result: "ok",
 });
 
-process.stdout.write(out);
+deliver(out);
 
 // Diagnostics on stderr so `bun emit.ts > My.cls` still shows them and the file
 // still holds nothing but the class.

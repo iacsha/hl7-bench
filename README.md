@@ -290,10 +290,10 @@ somebody a go-live:
 ### Generating the ObjectScript
 
 ```powershell
-bun emit.ts > MyTransform.cls        # diagnostics go to stderr, so the file stays clean
+bun emit.ts -o MyTransform.cls        # diagnostics go to stderr, so the file stays clean
 bun emit.ts iris                     # same thing, named explicitly
-bun emit.ts process > MyProcess.cls  # a business process that calls the DTL
-bun emit.ts tables > Tables.xml      # the lookup rows, as an IRIS import file
+bun emit.ts process -o MyProcess.cls  # a business process that calls the DTL
+bun emit.ts tables -o Tables.xml      # the lookup rows, as an IRIS import file
 ```
 
 The emitter cannot check four things for you, and says so in the class header:
@@ -403,7 +403,7 @@ export and they do not travel with a production deployment, which is how a
 transform arrives in production correct and translates nothing.
 
 ```powershell
-bun emit.ts tables > Tables.xml           # every table in the spec
+bun emit.ts tables -o Tables.xml           # every table in the spec
 bun emit.ts tables --table Facilities     # just the one
 ```
 
