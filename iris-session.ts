@@ -145,6 +145,24 @@ export function irisCommand(): string[] {
 
 export type IrisResult = { out: string; err: string; code: number | null };
 
+/**
+ * Which engine this run is talking to, named by the transport that is actually
+ * in use.
+ *
+ * It used to read the container name whatever the transport was, because MODE
+ * still defaults to "docker" when IRIS_CMD supersedes it -- so a native Windows
+ * instance reported itself as `iris-lab:DEV`. A line whose whole job is "which
+ * engine am I looking at" must not answer with one that is not there.
+ */
+export function engineLabel(): string {
+  if (IRIS_CMD) {
+    const exe = IRIS_CMD.split(/\s+/)[0] ?? IRIS_CMD;
+    const base = exe.split(/[\\/]/).pop() ?? exe;
+    return `${base} (IRIS_CMD):${NAMESPACE}`;
+  }
+  return `${MODE === "docker" ? CONTAINER : INSTANCE}:${NAMESPACE}`;
+}
+
 const head = (s: string, n = 12) =>
   redact(s)
     .split(/\r?\n/)

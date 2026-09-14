@@ -33,7 +33,7 @@ import { spec } from "./specfile";
 import { emitSchema } from "./emit/schema";
 import { validate, type CustomSchema } from "./spec";
 
-import { CONTAINER, MODE, NAMESPACE, REMOTE, runIris } from "./iris-session";
+import { CONTAINER, MODE, NAMESPACE, REMOTE, engineLabel, runIris } from "./iris-session";
 
 const argv = process.argv.slice(2);
 const flag = (n: string) => argv.includes(n);
@@ -178,7 +178,7 @@ if (flag("--import")) {
 // ---------------------------------------------------------------------------
 
 console.log(`spec     ${sch.category} (base ${sch.base}), ${sch.structures.length} structure(s)`);
-console.log(`engine   ${MODE === "docker" ? CONTAINER : INSTANCE}:${NAMESPACE}`);
+console.log(`engine   ${engineLabel()}`);
 console.log("");
 
 if (missing.length === 0 && drift.length === 0) {
