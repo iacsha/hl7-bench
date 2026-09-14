@@ -45,7 +45,8 @@ the whole design: one spec, six readers.
 | Turn this spreadsheet into a lookup table | `bun tables.ts Facilities facilities.csv` |
 | ...as its own importable module | `bun tables.ts Facilities --module facilities.csv > tables.facilities.ts` |
 | ...odd columns / tab delimited | `bun tables.ts Sex --key 2 --value 3 --delim tab codes.txt` |
-| The mapping document for the receiver | `bun trace.ts` |
+| The mapping document for the receiver | `bun trace.ts messages\real.hl7` |
+| ...as a file to send them | `bun trace.ts messages\real.hl7 -o mapping-document.txt` |
 | Which source paths came back empty? | `bun reads.ts messages\real.hl7` |
 | ...and fail the run if any did | `bun reads.ts --strict messages\real.hl7` |
 | Does this message navigate the way the engine will read it? | `bun navcheck.ts messages\real.hl7` |

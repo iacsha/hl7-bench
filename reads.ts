@@ -295,7 +295,8 @@ if (import.meta.main) {
 
   // A bare `bun reads.ts` with no pipe would block on a terminal that is never
   // going to send anything, which reads as a hang.
-  const { readMessage } = await import("./input");
+  const { readMessage, outArg, deliverText } = await import("./input");
+  const outFile = outArg("reads");
   const { raw, source } = await readMessage("reads");
 
   const msg = new Message(raw);
@@ -325,7 +326,7 @@ if (import.meta.main) {
     report.atRisk.map((b) => `at risk: ${b}`),
   );
 
-  process.stdout.write(renderReads(spec, report));
+  await deliverText(renderReads(spec, report), outFile);
 
   if (strict && report.atRisk.length > 0) process.exit(1);
 }

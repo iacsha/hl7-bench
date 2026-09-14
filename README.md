@@ -294,6 +294,7 @@ bun emit.ts -o MyTransform.cls        # diagnostics go to stderr, so the file st
 bun emit.ts iris                     # same thing, named explicitly
 bun emit.ts process -o MyProcess.cls  # a business process that calls the DTL
 bun emit.ts tables -o Tables.xml      # the lookup rows, as an IRIS import file
+bun trace.ts msg.hl7 -o mapping.txt   # the mapping document, as a file to send
 ```
 
 The emitter cannot check four things for you, and says so in the class header:

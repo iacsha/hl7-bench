@@ -136,3 +136,34 @@ async function read(
   );
   process.exit(1);
 }
+
+
+/**
+ * -o for the tools that print a document rather than a message.
+ *
+ * `trace.ts` produces the mapping document somebody sends to the receiving team,
+ * and it had no way to write a file -- so the obvious `-o mapping.txt` was
+ * accepted in silence and went nowhere, and a `>` redirect on PowerShell 5.1
+ * writes UTF-16LE. Both failures end with a person hunting for a file that is not
+ * there, or opening one full of nulls.
+ */
+export function outArg(toolName: string, argv: string[] = process.argv.slice(2)): string | undefined {
+  const i = argv.findIndex((a) => a === "-o" || a === "--out");
+  if (i === -1) return undefined;
+  const name = argv[i + 1];
+  if (!name || name.startsWith("-")) {
+    process.stderr.write(`${toolName}: -o needs a filename after it.\n`);
+    process.exit(2);
+  }
+  return name;
+}
+
+/** Write it, or print it. The byte count is there so a silent write is visible. */
+export async function deliverText(text: string, outFile: string | undefined): Promise<void> {
+  if (!outFile) {
+    process.stdout.write(text);
+    return;
+  }
+  await Bun.write(outFile, text);
+  process.stderr.write(`wrote ${outFile}  (${text.length} bytes, no BOM)\n`);
+}

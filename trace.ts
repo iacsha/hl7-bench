@@ -207,7 +207,8 @@ export function inventory(spec: Spec, msg: Message): string {
 
 if (import.meta.main) {
   const { spec } = await import("./specfile");
-  const { readMessage } = await import("./input");
+  const { readMessage, outArg, deliverText } = await import("./input");
+  const outFile = outArg("trace");
   const { raw, source } = await readMessage("trace");
 
   const { logEvent } = await import("./log");
@@ -228,6 +229,8 @@ if (import.meta.main) {
     result: "ok",
   });
 
-  process.stdout.write(doc);
-  if (inv) process.stdout.write("\n" + inv);
+  // The inventory is part of the document, not a footnote to the screen. A file
+  // that carried the mapping table and dropped what the sender must populate
+  // would be handed to a receiving team missing half its point.
+  await deliverText(inv ? doc + "\n" + inv : doc, outFile);
 }

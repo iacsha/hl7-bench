@@ -9,7 +9,7 @@
 // a spawned process, because exiting is the behaviour under test.
 
 import { expect, test, describe } from "bun:test";
-import { mkdtempSync, writeFileSync } from "node:fs";
+import { mkdtempSync, writeFileSync, existsSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -125,5 +125,38 @@ describe("reading it", () => {
     const got = run(["bench.ts"], A01);
     expect(got.code).toBe(0);
     expect(got.out).toContain("MSH|");
+  });
+});
+
+describe("-o, on the tools that write a document", () => {
+  test("trace writes the file, and the file carries the source inventory too", () => {
+    const msg = join(SCRATCH, "t.hl7");
+    writeFileSync(msg, "MSH|^~\\&|SEND|FAC|RECV|RFAC|20260101120000||ADT^A01|1|P|2.3\rPID|1||123456||DOE^JANE\r", "utf8");
+    const out = join(SCRATCH, "mapping.txt");
+    const got = run(["trace.ts", msg, "-o", out]);
+    expect(got.code).toBe(0);
+    expect(got.err).toContain("wrote");
+    expect(existsSync(out)).toBe(true);
+    expect(readFileSync(out, "utf8")).toContain("SPEC:");
+    // stdout stays clean, so a piped run is not doubled
+    expect(got.out).toBe("");
+  });
+
+  test("reads writes the file", () => {
+    const msg = join(SCRATCH, "t2.hl7");
+    writeFileSync(msg, "MSH|^~\\&|SEND|FAC|RECV|RFAC|20260101120000||ADT^A01|1|P|2.3\rPID|1||123456||DOE^JANE\r", "utf8");
+    const out = join(SCRATCH, "reads.txt");
+    const got = run(["reads.ts", msg, "-o", out]);
+    expect(existsSync(out)).toBe(true);
+  });
+
+  // The failure that prompted all this: a flag accepted in silence, and a person
+  // hunting for a file that was never written.
+  test("-o with no filename is refused rather than ignored", () => {
+    const msg = join(SCRATCH, "t3.hl7");
+    writeFileSync(msg, "MSH|^~\\&|SEND|FAC|RECV|RFAC|20260101120000||ADT^A01|1|P|2.3\r", "utf8");
+    const got = run(["trace.ts", msg, "-o"]);
+    expect(got.code).not.toBe(0);
+    expect(got.err).toContain("needs a filename");
   });
 });
