@@ -68,7 +68,30 @@ if (outIndex !== -1 && !outFile) {
   process.exit(2);
 }
 
-const positional = argv.filter((a, i) => !a.startsWith("--") && i !== outIndex && i !== outIndex + 1);
+// outIndex is -1 when there is no -o, and `i !== outIndex + 1` would then drop
+// argument ZERO -- which silently turned `emit.ts process` into the DTL.
+const positional = argv.filter(
+  (a, i) => !a.startsWith("--") && (outIndex === -1 || (i !== outIndex && i !== outIndex + 1)),
+);
+
+/**
+ * A filename where an artifact name belongs is a missing -o, every time.
+ *
+ * `bun emit.ts lab\Transform.cls` reads as "emit the artifact called
+ * lab\Transform.cls", and the unknown-artifact message underneath is technically
+ * right and completely unhelpful. The user meant to write a file.
+ */
+const looksLikeAFile = positional[0] !== undefined && /\.(cls|xml|txt)$/i.test(positional[0]);
+if (looksLikeAFile && outIndex === -1) {
+  process.stderr.write(
+    `"${positional[0]}" is a filename, not an artifact.\n` +
+      `To write a file, name it with -o:\n` +
+      `  bun emit.ts -o ${positional[0]}\n` +
+      `A bare \`>\` redirect is what -o exists to avoid: PowerShell 5.1 writes UTF-16LE,\n` +
+      `and IRIS answers with "Illegal Header Line: ??Include Ensemble".\n`,
+  );
+  process.exit(2);
+}
 
 /** Everything this file emits goes through here, so -o covers every artifact. */
 function deliver(text: string): void {
