@@ -59,6 +59,8 @@ the whole design: one spec, six readers.
 | Is the bench itself still sound? | `bun test` |
 | Keep my interface out of git and out of an upgrade's way | `HL7_BENCH_TRANSFORM=transform.exa.local.ts` |
 | Stop a push from publishing a real interface | `git config core.hooksPath hooks` (once per clone) |
+| navcheck says "could not reach IRIS" | read what it printed; it names the cause |
+| ...and it printed `Username:` | set `IRIS_USER` and `IRIS_PASSWORD` in `.env` |
 
 `bench.ts`, `trace.ts`, `reads.ts` and `tables.ts` take the filename directly.
 They still read a pipe, and the first three fall back to `sample.hl7` when

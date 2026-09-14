@@ -28,6 +28,23 @@ const CONTAINER = process.env.IRIS_CONTAINER ?? "iris-lab";
 const INSTANCE = process.env.IRIS_INSTANCE ?? "IRIS";
 const IRIS_EXE = process.env.IRIS_EXE ?? "iris";
 
+/**
+ * Credentials for an instance whose console asks for them.
+ *
+ * A piped session CAN answer the prompts: the terminal reads the first line as
+ * the username and the second as the password, which is exactly why a script
+ * sent to a prompting instance loses its first line and dies. Sending them
+ * deliberately costs nothing and changes no security setting on the instance.
+ *
+ * Leave unset for an instance that does not prompt -- sending a username to one
+ * that is not asking would feed it to the ObjectScript interpreter instead.
+ *
+ * These belong in `.env`, which is gitignored, and never on a command line where
+ * a shell history would keep them.
+ */
+const IRIS_USER = process.env.IRIS_USER?.trim();
+const IRIS_PASSWORD = process.env.IRIS_PASSWORD ?? "";
+
 export const NAMESPACE = process.env.IRIS_NAMESPACE ?? "USER";
 /** Where a message is readable FROM INSIDE the engine. */
 export const REMOTE = process.env.IRIS_LAB_DIR ?? "/lab";
@@ -63,10 +80,13 @@ export function runIris(
 ): IrisResult {
   const cmd = irisCommand();
 
+  const script = objectScript.endsWith("\n") ? objectScript : objectScript + "\n";
+  const stdin = IRIS_USER ? `${IRIS_USER}\n${IRIS_PASSWORD}\n${script}` : script;
+
   let p: { exitCode: number | null; stdout: Buffer; stderr: Buffer };
   try {
     p = Bun.spawnSync(cmd, {
-      stdin: new TextEncoder().encode(objectScript.endsWith("\n") ? objectScript : objectScript + "\n"),
+      stdin: new TextEncoder().encode(stdin),
       stdout: "pipe",
       stderr: "pipe",
     }) as typeof p;
@@ -98,13 +118,29 @@ export function runIris(
   if (/username:/i.test(out)) {
     lines.push(
       ``,
-      `That "Username:" is the whole problem. The terminal service wants credentials,`,
-      `so it read the first line of the script as a username. A piped session cannot`,
-      `answer a prompt.`,
+      IRIS_USER
+        ? `It asked again with IRIS_USER=${IRIS_USER} already being sent, so the credentials\n` +
+          `were refused rather than missing. Check the username and password, and that the\n` +
+          `account is not disabled or expired.`
+        : `That "Username:" is the whole problem. This instance's console service wants\n` +
+          `credentials, so it read the first line of the script as a username.\n` +
+          `\n` +
+          `Set them in .env, which is gitignored:\n` +
+          `  IRIS_USER=_system\n` +
+          `  IRIS_PASSWORD=<the password>\n` +
+          `\n` +
+          `A piped session answers the prompts with its first two lines, so nothing about\n` +
+          `the instance's security has to change. The alternative, on a local dev box you\n` +
+          `own, is to allow Unauthenticated on %Service_Console -- but that session logs in\n` +
+          `as UnknownUser, which will not have the privileges to import a schema or compile\n` +
+          `a class until you grant them.`,
+    );
+  } else if (/<PROTECT>/.test(out)) {
+    lines.push(
       ``,
-      `Fix it once: Management Portal > System Administration > Security > Services,`,
-      `%Service_Terminal (and %Service_Console on Windows) > enable Operating System`,
-      `authentication. The session then runs as the Windows user you already are.`,
+      `<PROTECT> is a privilege refusal, not a connection problem. The account that`,
+      `logged in cannot do what the script asked -- writing a schema category and`,
+      `compiling a class both need more than a default user has.`,
     );
   } else if (/<NAMESPACE>/.test(out)) {
     lines.push(

@@ -606,6 +606,34 @@ it out of PipeHat or a script.
 `HL7_BENCH_LOG_FILE=<path>` moves the bench log somewhere else. `run.ts`,
 `bench.ts`, `check.ts`, `emit.ts` and `trace.ts` all write to it.
 
+### Reaching an IRIS instance
+
+`navcheck.ts` and `schema-sync.ts` are the only things here that talk to an
+engine. They default to a Docker container, because that is where they were
+written.
+
+| Variable | Default | What it is |
+|---|---|---|
+| `IRIS_MODE` | `docker` | `local` for a native install |
+| `IRIS_EXE` | `iris` | the binary, when it is not on PATH. Windows: `<install dir>\bin\iris.exe` |
+| `IRIS_INSTANCE` | `IRIS` | as `iris list` spells it |
+| `IRIS_NAMESPACE` | `USER` | must be interoperability-enabled, or `EnsLib.HL7` is not there |
+| `IRIS_LAB_DIR` | `/lab` | where the ENGINE reads a message from, which is not where you type the filename |
+| `IRIS_CONTAINER` | `iris-lab` | docker mode only |
+| `IRIS_USER` | unset | only for an instance whose console prompts |
+| `IRIS_PASSWORD` | unset | with `IRIS_USER` |
+
+**The credentials pair, and why it exists.** An instance with password
+authentication on its console service answers a piped script with `Username:`,
+reads the first line of ObjectScript as the username, and exits having written
+nothing to stderr. A piped session can answer those prompts, so setting the pair
+sends them as the first two lines and nothing about the instance's security has to
+change. Leave both unset for an instance that does not prompt -- a username sent
+to an instance that is not asking goes to the ObjectScript interpreter instead.
+
+They belong in `.env`, which is gitignored. Not on a command line, where shell
+history keeps them.
+
 ### `HL7_BENCH_TRANSFORM` -- keep the interface out of the tool folder
 
     HL7_BENCH_TRANSFORM=transform.exa.local.ts
