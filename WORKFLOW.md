@@ -1,7 +1,9 @@
 # From a new interface to IRIS, start to finish
 
-The order of operations for building a transform yourself. Eight steps, two of
-them with a b and a c. Nothing here needs a second person or a chat window.
+The order of operations for building a transform yourself. Nine steps, counting
+the lettered ones: 3b proves the message navigates, 5b prints the mapping
+document, 5c finds the reads that came back empty. Nothing here needs a second
+person or a chat window.
 
 `METHOD.md` is the doctrine, the five questions and the traps. This file is the
 button-pressing. Read METHOD.md once, keep this one open while you work.
@@ -32,7 +34,10 @@ trace.ts             the mapping document. Never edit.
 emit.ts + emit\      the ObjectScript and lookup backends. Never edit.
 fingerprint.ts       the spec hash both emitted classes carry. Never edit.
 serialize.ts         prints a spec back into transform.ts. Never edit.
-transform.ts         YOUR WORK. One interface at a time. Holds the spec.
+transform.ts         the demo spec. Tracked, synthetic, safe to publish.
+specpath.ts          which file holds the spec. Never edit.
+specfile.ts          loads it, and refuses to run without it. Never edit.
+hooks/pre-push       refuses a push that would publish a real interface.
 bench.ts             stdin to stdout runner
 gui.ts + gui.html    the browser spec editor, 127.0.0.1:7317
 check.ts             the golden gate
@@ -63,23 +68,37 @@ bun test
 Anything other than green means you are looking at a different copy than the one
 you edited.
 
-### One folder per interface
-
-Do not edit a live interface's transform in place to start a new one. Copy the
-folder:
+If this folder is a git clone, install the push guard once:
 
 ```powershell
-Copy-Item -Recurse C:\opencode\hl7-bench C:\opencode\bench-<newinterface>
+git config core.hooksPath hooks
 ```
 
-`transform.ts` holds exactly one interface because `bench.ts` and the GUI both
-call the single exported `transform()`. Two interfaces in one file means an `if`
-on message type at the top, and that `if` grows an else branch nobody tested.
-Separate folders instead.
+### One file per interface, outside the folder
 
-That split also keeps interface work out of this repo. `messages\` is
-gitignored for the same reason: the bench and its patterns are general, a
-specific feed's mapping is not.
+A spec holds exactly one interface, because `bench.ts` and the GUI both call a
+single exported `transform()`. Two interfaces in one file means an `if` on message
+type at the top, and that `if` grows an else branch nobody tested.
+
+Keep each one in its own file, outside the tool folder, and name it:
+
+```powershell
+$env:HL7_BENCH_TRANSFORM = "C:\work\exa\transform.exa.ts"
+```
+
+Every reader follows that variable -- bench, check, emit, navcheck, schema-sync,
+trace, reads -- and the GUI saves there. Switching interfaces is one variable, and
+two people can work two interfaces from one copy of the tool.
+
+Copying the whole folder per interface was the old advice and it has now cost
+something twice. A second copy means fixes land in one of them. And on a machine
+without git the upgrade story is a zip unpacked over the folder, which overwrites
+`transform.ts` -- the one file in there that cannot be replaced from upstream.
+
+It also keeps interface work out of this repo, which is public. `messages\` is
+gitignored for the same reason, and `hooks/pre-push` refuses a push whose
+`transform.ts` is no longer the synthetic demo. The bench and its patterns are
+general; a specific feed's mapping is not.
 
 ---
 

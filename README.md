@@ -606,6 +606,29 @@ it out of PipeHat or a script.
 `HL7_BENCH_LOG_FILE=<path>` moves the bench log somewhere else. `run.ts`,
 `bench.ts`, `check.ts`, `emit.ts` and `trace.ts` all write to it.
 
+### `HL7_BENCH_TRANSFORM` -- keep the interface out of the tool folder
+
+    HL7_BENCH_TRANSFORM=C:\work\exa\transform.exa.ts
+
+Unset, the spec is `transform.ts` here and nothing changes. Set, every reader
+follows it: `bench.ts`, `check.ts`, `emit.ts`, `navcheck.ts`, `schema-sync.ts`,
+`trace.ts`, `reads.ts`, and `gui.ts`, which also **saves** there.
+
+Two failures it removes. On a machine without git the tool upgrades by unpacking
+a zip over the folder, and `transform.ts` is the one file in there that cannot be
+replaced from upstream, so the upgrade either destroys the interface or never
+happens. And this repo is public: a tracked `transform.ts` holding a real mapping
+carries a customer's name, their vendor, accession numbers and the reasoning
+behind every row.
+
+The external file is an ordinary spec module -- it exports `spec`, and may export
+`transform`. A copy of `transform.ts` already qualifies, so moving an interface
+out is a file move and a variable, not a rewrite.
+
+It fails closed. A path that is not there, or a module with no `spec` export,
+stops the run rather than quietly delivering the demo mapping, which exits 0 and
+produces something that looks like work.
+
 **The split is about PHI, not about verbosity.** Most notes are paths and
 counts. Two are not. An unmapped lookup names the source value that missed the
 table, and a gate refusal on a `require` rule names whatever that rule read.
@@ -671,12 +694,15 @@ fixed. That is usually what you want, right up until it is not.
 | `gui.ts` + `gui.html` | the local browser spec editor |
 | `toolbox.ts` | flat-record extraction and its field trace |
 | `log.ts` | the log switch. Off unless `HL7_BENCH_LOG` says otherwise |
+| `specpath.ts` | which file holds the spec. Resolves `HL7_BENCH_TRANSFORM`, no side effects |
+| `specfile.ts` | loads that file, and fails closed if it is missing or is not a spec module |
+| `hooks/pre-push` | refuses a push that would publish a real interface. `git config core.hooksPath hooks` |
 | `*.test.ts` + `emit/*.test.ts` | 440 tests across 13 files |
 | `sample.hl7` | synthetic ADT^A01 |
 | `classify.ts` | diff what you have against what you want |
 | `patterns.ts` | twelve moves, each with its IRIS DTL |
 | `CHEATSHEET.md` | which command, and when. The one to keep open on a call |
-| `WORKFLOW.md` | **start here.** New interface to IRIS, eight steps |
+| `WORKFLOW.md` | **start here.** New interface to IRIS, nine steps |
 | `METHOD.md` | the five questions, path syntax, the traps |
 
 ## PHI

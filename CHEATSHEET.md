@@ -3,7 +3,9 @@
 Organised by **what you are holding and what you want next**, not by filename.
 If you are mid-call and something is on fire, jump to [Mid-call](#mid-call).
 
-The one file you ever edit is **`transform.ts`**. Everything else reads it.
+The one file you ever edit is the spec. That is **`transform.ts`** here, or
+whatever `HL7_BENCH_TRANSFORM` names -- put a real interface there, outside this
+folder. Everything else reads it.
 
 ---
 
@@ -45,16 +47,18 @@ the whole design: one spec, six readers.
 | ...odd columns / tab delimited | `bun tables.ts Sex --key 2 --value 3 --delim tab < codes.txt` |
 | The mapping document for the receiver | `bun trace.ts` |
 | Which source paths came back empty? | `bun reads.ts < messages\real.hl7` |
+| ...and fail the run if any did | `bun reads.ts --strict < messages\real.hl7` |
 | Does this message navigate the way the engine will read it? | `bun navcheck.ts messages\real.hl7` |
 | ...under a doctype other than the spec's | `bun navcheck.ts messages\real.hl7 --doctype 2.5:DFT_P03` |
 | Does the engine's custom schema still match the spec? | `bun schema-sync.ts` |
 | Read the stock definition off the instance to derive one | `bun schema-sync.ts --derive DFT_P03 --base 2.5` |
 | Load the spec's schema into the engine | `bun emit.ts schema > s.xml` then `bun schema-sync.ts --import` |
-| ...and fail the run if any did | `bun reads.ts --strict < messages\real.hl7` |
 | How do I do <the move>? Show me it running | `bun patterns.ts` |
 | ...one of them | `bun patterns.ts P7` |
 | ...one of them against my message | `bun patterns.ts P7 my.hl7` |
 | Is the bench itself still sound? | `bun test` |
+| Keep my interface out of the tool folder | `HL7_BENCH_TRANSFORM=C:\work\exa\transform.exa.ts` |
+| Stop a push from publishing a real interface | `git config core.hooksPath hooks` (once per clone) |
 
 `bench.ts`, `trace.ts` and `reads.ts` all fall back to `sample.hl7` when nothing
 is piped in, so a bare `bun trace.ts` works and does not hang.
@@ -163,7 +167,7 @@ readable.
 
 ---
 
-## Two files that are not commands
+## Files that are not commands
 
 **`toolbox.ts`** is for mapping to a *non-HL7* target: a flat record, a pipe
 file, a billing feed. Declare rules as data, run `mapOne` or `mapEach`, print
@@ -173,6 +177,11 @@ than at IRIS.
 **`patterns.ts`** is the one to open when you know the shape of the problem but
 not the incantation. Every pattern is runnable, so you see it work before you
 copy it.
+
+**`specpath.ts` and `specfile.ts`** answer where the spec lives. Set
+`HL7_BENCH_TRANSFORM` to a path and every reader uses that file, including the
+GUI, which saves there. A real interface belongs outside this folder: the folder
+gets a zip unpacked over it to upgrade, and it gets pushed to a public repo.
 
 ---
 

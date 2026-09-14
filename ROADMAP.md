@@ -61,20 +61,6 @@ config item rebuild in one sitting, and the only thing that confirmed it still
 worked was a person reading ten segments and comparing them to ten segments from
 memory.
 
-### `HL7_BENCH_TRANSFORM`
-
-Let `transform.ts` live outside the repo folder, named by an environment
-variable.
-
-Offered twice and never taken up, and no longer speculative: there is now a
-second full copy of the tool on disk holding one site's spec. That is the
-workaround this item removes. Two copies of the same tool means fixes land in
-one of them, which is the state today.
-
-The other failure it prevents: upgrading by downloading a zip and unpacking it
-over the folder. On a machine without git that is the whole upgrade story, and
-the spec is the one file in there that cannot be replaced from upstream.
-
 ### Gate on membership in a lookup table
 
 `gate.require` does exact equality only, `{ path, equals }`. An interface that
@@ -186,6 +172,27 @@ workflow.
 ---
 
 ## Settled
+
+### `HL7_BENCH_TRANSFORM`
+
+Done. `specpath.ts` resolves the variable, `specfile.ts` loads it, and every
+reader follows: bench, check, emit, navcheck, schema-sync, trace, reads, and the
+GUI, which also saves there. Unset, the spec is `transform.ts` and nothing
+changed.
+
+It fails closed, which was the part worth getting right. A path with a typo, or a
+module with no `spec` export, stops the run. Falling back to the demo spec would
+exit 0 and produce a message that looks like work.
+
+The third failure, the one that made it urgent rather than tidy: a tracked
+`transform.ts` holding a real interface put a customer's name, their vendor and
+two accession numbers one `git push` from being public. `hooks/pre-push` now
+refuses a push whose `transform.ts` has lost its SYNTHETIC-DEMO-SPEC marker, one
+that adds a `.hl7` other than `sample.hl7` or any `.cls`, and one whose added
+lines match a pattern in the gitignored `.publish-denylist`.
+
+Leak checking at corpus scale is still hl7-toolkit's. This is a git hook on one
+repo, not a scanner.
 
 ### The business process class, as a template
 
