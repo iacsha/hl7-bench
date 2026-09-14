@@ -33,12 +33,7 @@ import { spec } from "./specfile";
 import { emitSchema } from "./emit/schema";
 import { validate, type CustomSchema } from "./spec";
 
-const MODE = (process.env.IRIS_MODE ?? "docker").toLowerCase();
-const CONTAINER = process.env.IRIS_CONTAINER ?? "iris-lab";
-const INSTANCE = process.env.IRIS_INSTANCE ?? "IRIS";
-const NAMESPACE = process.env.IRIS_NAMESPACE ?? "USER";
-const IRIS_EXE = process.env.IRIS_EXE ?? "iris";
-const REMOTE = process.env.IRIS_LAB_DIR ?? "/lab";
+import { CONTAINER, MODE, NAMESPACE, REMOTE, runIris } from "./iris-session";
 
 const argv = process.argv.slice(2);
 const flag = (n: string) => argv.includes(n);
@@ -57,19 +52,11 @@ function die(code: number, msg: string): never {
 }
 
 function iris(objectScript: string): string {
-  const cmd =
-    MODE === "docker"
-      ? ["docker", "exec", "-i", CONTAINER, "iris", "session", INSTANCE]
-      : [IRIS_EXE, "session", INSTANCE];
-  const p = Bun.spawnSync(cmd, {
-    stdin: new TextEncoder().encode(`zn "${NAMESPACE}"\n${objectScript}\nhalt\n`),
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  const out = p.stdout.toString();
-  if (p.exitCode !== 0 && out.trim() === "") {
-    die(2, `could not reach IRIS (${MODE}): ${p.stderr.toString().trim() || "no output"}`);
-  }
+  const { out } = runIris(
+    "schema-sync",
+    `zn "${NAMESPACE}"\n${objectScript}\nhalt\n`,
+    (o) => o.trim() !== "",
+  );
   return out;
 }
 

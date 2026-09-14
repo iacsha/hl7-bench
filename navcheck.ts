@@ -44,13 +44,7 @@ import { Message } from "./hl7";
 import { segmentOf, sourcePathsOf, type Spec } from "./spec";
 import { dtlPath } from "./emit/iris";
 
-const MODE = (process.env.IRIS_MODE ?? "docker").toLowerCase();
-const CONTAINER = process.env.IRIS_CONTAINER ?? "iris-lab";
-const INSTANCE = process.env.IRIS_INSTANCE ?? "IRIS";
-const NAMESPACE = process.env.IRIS_NAMESPACE ?? "USER";
-const IRIS_EXE = process.env.IRIS_EXE ?? "iris";
-/** Where the message is readable FROM INSIDE the engine. */
-const REMOTE = process.env.IRIS_LAB_DIR ?? "/lab";
+import { NAMESPACE, REMOTE, runIris } from "./iris-session";
 
 function die(code: number, msg: string): never {
   process.stderr.write(`navcheck: ${msg}\n`);
@@ -139,20 +133,9 @@ const objectScript = [
   `halt`,
 ].join("\n");
 
-const cmd =
-  MODE === "docker"
-    ? ["docker", "exec", "-i", CONTAINER, "iris", "session", INSTANCE]
-    : [IRIS_EXE, "session", INSTANCE];
-
-const p = Bun.spawnSync(cmd, {
-  stdin: new TextEncoder().encode(objectScript + "\n"),
-  stdout: "pipe",
-  stderr: "pipe",
-});
-const out = p.stdout.toString();
-if (p.exitCode !== 0 && !out.includes("DOCTYPE|")) {
-  die(2, `could not reach IRIS (${MODE}): ${p.stderr.toString().trim() || "no output"}`);
-}
+// A transcript carrying DOCTYPE| is an answer even on a non-zero exit: the
+// writes already landed and `halt` is free to leave oddly.
+const { out } = runIris("navcheck", objectScript, (o) => o.includes("DOCTYPE|"));
 
 const got = (tag: string) =>
   out
