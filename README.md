@@ -621,7 +621,8 @@ written.
 | `IRIS_LAB_DIR` | `/lab` | where the ENGINE reads a message from, which is not where you type the filename |
 | `IRIS_CONTAINER` | `iris-lab` | docker mode only |
 | `IRIS_USER` | unset | only for an instance whose console prompts |
-| `IRIS_PASSWORD` | unset | with `IRIS_USER` |
+| `IRIS_PASSWORD` | unset | the password, in the clear |
+| `IRIS_PASSWORD_CMD` | unset | a command whose first line of stdout IS the password. Wins over `IRIS_PASSWORD` |
 
 **The credentials pair, and why it exists.** An instance with password
 authentication on its console service answers a piped script with `Username:`,
@@ -633,6 +634,27 @@ to an instance that is not asking goes to the ObjectScript interpreter instead.
 
 They belong in `.env`, which is gitignored. Not on a command line, where shell
 history keeps them.
+
+**Keeping the password out of the file entirely.** `IRIS_PASSWORD_CMD` runs a
+command and takes its first line, so `.env` holds a command rather than a secret:
+
+```
+IRIS_PASSWORD_CMD=powershell -NoProfile -ExecutionPolicy Bypass -File .\Tools\Get-IrisPassword.ps1
+```
+
+`Tools\Set-IrisPassword.ps1` writes the password DPAPI-protected, once. DPAPI
+encrypts with the logged-in Windows account's own key, so the file decrypts only
+for that user on that machine -- copy it elsewhere and it is ciphertext. A
+credential manager, a vault CLI or `gpg -d` fit the same hook.
+
+What does not work, however it is dressed up: encrypting the password and keeping
+the key beside it. The tools decrypt unattended, so anything they can read, a
+reader of the folder can read. That is obfuscation. It is worth doing only when
+the key lives somewhere the file does not, which is exactly what DPAPI provides
+and a keyfile in the same folder does not.
+
+A resolved password is scrubbed out of any transcript these tools print, so a
+failure report cannot quote it back.
 
 ### `HL7_BENCH_TRANSFORM` -- keep the interface out of the tool folder
 

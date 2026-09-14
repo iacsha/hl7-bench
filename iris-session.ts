@@ -43,7 +43,76 @@ const IRIS_EXE = process.env.IRIS_EXE ?? "iris";
  * a shell history would keep them.
  */
 const IRIS_USER = process.env.IRIS_USER?.trim();
-const IRIS_PASSWORD = process.env.IRIS_PASSWORD ?? "";
+
+/**
+ * The password, or a command that prints it.
+ *
+ * `IRIS_PASSWORD` is the plain form and is fine on a box where the file itself is
+ * the boundary. `IRIS_PASSWORD_CMD` is for everywhere else: it runs a command and
+ * takes its first line, so the secret is never in a file this tool reads.
+ *
+ * That hook is deliberately dumb, because the thing that actually protects the
+ * password is whatever answers it. On Windows that is DPAPI, which encrypts with
+ * the logged-in account's own key -- the ciphertext is useless to another user and
+ * on another machine:
+ *
+ *   IRIS_PASSWORD_CMD=powershell -NoProfile -ExecutionPolicy Bypass -File .\Tools\Get-IrisPassword.ps1
+ *
+ * A credential manager, a vault CLI or `gpg -d` fit the same slot.
+ *
+ * What does NOT fit: encrypting the password and keeping the key beside it. The
+ * process has to decrypt unattended, so anything it can read, a reader of the
+ * folder can read. That is obfuscation, and calling it encryption is how a
+ * secret gets treated as safer than it is.
+ */
+const IRIS_PASSWORD_CMD = process.env.IRIS_PASSWORD_CMD?.trim();
+
+let resolved: string | undefined;
+
+export function resolvePassword(): string {
+  if (resolved !== undefined) return resolved;
+
+  if (IRIS_PASSWORD_CMD) {
+    // Through a shell, because the value is a command line a person wrote, not
+    // an argv this code gets to parse.
+    const shell =
+      process.platform === "win32" ? ["cmd", "/c", IRIS_PASSWORD_CMD] : ["sh", "-c", IRIS_PASSWORD_CMD];
+    let p: { exitCode: number | null; stdout: Buffer; stderr: Buffer };
+    try {
+      p = Bun.spawnSync(shell, { stdout: "pipe", stderr: "pipe" }) as typeof p;
+    } catch (e) {
+      fail("iris-session", [
+        `IRIS_PASSWORD_CMD could not be run.`,
+        `  ran            ${IRIS_PASSWORD_CMD}`,
+        `  it said        ${e instanceof Error ? e.message : String(e)}`,
+      ]);
+    }
+    const first = p.stdout.toString().split(/\r?\n/)[0] ?? "";
+    if (p.exitCode !== 0 || first === "") {
+      fail("iris-session", [
+        `IRIS_PASSWORD_CMD produced no password.`,
+        `  ran            ${IRIS_PASSWORD_CMD}`,
+        `  exit code      ${p.exitCode}`,
+        `  on stderr      ${p.stderr.toString().split(/\r?\n/)[0] ?? ""}`,
+        ``,
+        `It must print the password on its first line and exit 0. A PowerShell script`,
+        `run this way also needs -ExecutionPolicy Bypass unless signing is set up.`,
+      ]);
+    }
+    resolved = first;
+    return resolved;
+  }
+
+  resolved = process.env.IRIS_PASSWORD ?? "";
+  return resolved;
+}
+
+/** Never let a resolved password reach a transcript this tool prints. */
+function redact(s: string): string {
+  const pw = resolved;
+  if (!pw || pw.length < 4) return s;
+  return s.split(pw).join("********");
+}
 
 export const NAMESPACE = process.env.IRIS_NAMESPACE ?? "USER";
 /** Where a message is readable FROM INSIDE the engine. */
@@ -59,7 +128,7 @@ export function irisCommand(): string[] {
 export type IrisResult = { out: string; err: string; code: number | null };
 
 const head = (s: string, n = 6) =>
-  s
+  redact(s)
     .split(/\r?\n/)
     .filter((l) => l.trim() !== "")
     .slice(0, n)
@@ -81,7 +150,7 @@ export function runIris(
   const cmd = irisCommand();
 
   const script = objectScript.endsWith("\n") ? objectScript : objectScript + "\n";
-  const stdin = IRIS_USER ? `${IRIS_USER}\n${IRIS_PASSWORD}\n${script}` : script;
+  const stdin = IRIS_USER ? `${IRIS_USER}\n${resolvePassword()}\n${script}` : script;
 
   let p: { exitCode: number | null; stdout: Buffer; stderr: Buffer };
   try {

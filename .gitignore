@@ -47,3 +47,7 @@ logs/
 # is outside the folder: bun loads .env from the working directory, so every
 # command picks it up with no shell setup and no exported variable to forget.
 .env
+
+# The DPAPI-protected password file. Useless to anyone else, and still not
+# something to track: it is a credential for one instance on one machine.
+*.dpapi
