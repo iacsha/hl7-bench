@@ -68,6 +68,16 @@ function bench(env: Record<string, string | undefined>, message: string) {
   return { out: p.stdout.toString(), err: p.stderr.toString(), code: p.exitCode };
 }
 
+/**
+ * An absolute path, spelled the way a TypeScript import can carry it.
+ *
+ * On Windows `join()` returns `C:\\HL7-Workspace\\...\\spec`, and a backslash in
+ * a TS string literal is an escape sequence: `\\H` and `\\E` are not the folder
+ * names, they are broken escapes. Forward slashes are accepted on both platforms
+ * and mean exactly one thing. The same applies to an import you write by hand.
+ */
+const toImportPath = (p: string) => p.replaceAll("\\", "/");
+
 /** A minimal spec module, written where the test can point the variable at it. */
 function writeSpecFile(sendingApp: string): string {
   const dir = mkdtempSync(join(tmpdir(), "hl7-bench-spec-"));
@@ -75,7 +85,7 @@ function writeSpecFile(sendingApp: string): string {
   writeFileSync(
     file,
     [
-      `import { literal, copy, type Spec } from "${join(DIR, "spec")}";`,
+      `import { literal, copy, type Spec } from ${JSON.stringify(toImportPath(join(DIR, "spec")))};`,
       `export const spec: Spec = {`,
       `  name: "External Spec Under Test",`,
       `  gate: { path: "MSH-9.2", permit: { A01: "A01" } },`,
