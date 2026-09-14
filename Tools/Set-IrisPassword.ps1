@@ -25,8 +25,25 @@
 #>
 [CmdletBinding()]
 param(
-    [string]$Path = (Join-Path $PSScriptRoot 'iris-password.dpapi')
+    [string]$Path
 )
+
+# $PSScriptRoot is EMPTY in a param() default when a script with
+# [CmdletBinding()] is run via `powershell -File`, on PowerShell 5.1. Direct
+# invocation (.\\Script.ps1) populates it, which is how the encrypt half of this
+# pair worked while the decrypt half -- the one .env actually calls, with -File --
+# failed on "Cannot bind argument to parameter 'Path' because it is an empty
+# string". Reproduced on 5.1 both ways 2026-09-14.
+#
+# So the default is computed in the body, where it is populated, with
+# $MyInvocation as the fallback for the same reason.
+
+if (-not $Path) {
+    $root = $PSScriptRoot
+    if (-not $root) { $root = Split-Path -Parent $MyInvocation.MyCommand.Definition }
+    if (-not $root) { $root = (Get-Location).Path }
+    $Path = Join-Path $root 'iris-password.dpapi'
+}
 
 $secure = Read-Host -Prompt 'IRIS password' -AsSecureString
 if (-not $secure -or $secure.Length -eq 0) {
