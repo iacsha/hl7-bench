@@ -42,3 +42,8 @@ logs/
 # are keeping out of a public repo publishes them the moment it is committed.
 # .publish-denylist.example is the tracked, empty-of-real-names version.
 .publish-denylist
+
+# Local environment. HL7_BENCH_TRANSFORM lives here on a machine where the spec
+# is outside the folder: bun loads .env from the working directory, so every
+# command picks it up with no shell setup and no exported variable to forget.
+.env
