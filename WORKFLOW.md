@@ -179,6 +179,71 @@ here, it is usually two of them composed.
 
 ---
 
+## Step 3b. Prove the message navigates
+
+Do this before you write a single row, because a mapping built on a message the
+schema does not describe delivers a well formed message with nothing in it, and
+nothing in the run says why.
+
+A DTL walks the **schema**. `<foreach property='source.{OBX()}'>` asks IRIS to
+resolve a structure path, and IRIS answers from the DocType definition, not from
+what is in the message. The bench walks the **segments**, because that is what an
+array scan does. On a conforming message those agree. On one the schema does not
+describe the structure walk stops at the first violation, everything past it is
+unreachable by name, and it resolves to EMPTY rather than erroring.
+
+```powershell
+bun navcheck.ts messages\<name>.in.hl7
+```
+
+It compares, for every path the spec reads, what the schema resolves against what
+an array scan finds, and exits non-zero on a mismatch. `in message` and `via
+schema` should match on every row.
+
+A mismatch is fixed with a custom schema category, not with a change to the
+transform and not with index walking in generated code. Derive it rather than
+typing it:
+
+```powershell
+bun schema-sync.ts --derive DFT_P03 --base 2.5    # the stock definition off the instance
+bun emit.ts schema > schema.xml                   # the import document
+bun schema-sync.ts --import                       # load it into the engine
+bun schema-sync.ts                                # are they still the same?
+```
+
+Then edit only what the feed forces, and record what changed in the structure's
+`note` so the reason ships with the interface.
+
+**Run both checks.** They catch different failures. `navcheck` catches a category
+the engine does not have: paths resolve empty, and it is loud once you look.
+`schema-sync` catches a category the engine HAS but which no longer matches the
+spec, which passes navcheck -- every path resolves, and the message navigates
+under a definition nobody chose.
+
+### Telling these two commands where IRIS is
+
+Both talk to an instance, and both default to a Docker container. On a native
+Windows box, set these once in your PowerShell profile:
+
+```powershell
+$env:IRIS_MODE      = "local"
+$env:IRIS_EXE       = "C:\InterSystems\IRISHealth\bin\iris.exe"
+$env:IRIS_INSTANCE  = "IRISHEALTH"
+$env:IRIS_NAMESPACE = "USER"
+$env:IRIS_LAB_DIR   = "C:\opencode\iris-lab\lab"
+```
+
+`IRIS_LAB_DIR` is where the **engine** reads the message from, which is not the
+folder you type the filename in. `navcheck` opens
+`IRIS_LAB_DIR\<basename of your file>`, so copy the message there first. If it
+exits 2 saying the engine read no message, that is what happened, and it is not a
+schema finding.
+
+Full detail, including the bracket token form and the two things that will
+otherwise waste an hour: `Notes/custom-schema.md`.
+
+---
+
 ## Step 4. Write the spec
 
 What you are writing is one exported object: `spec` in `transform.ts`. Two ways

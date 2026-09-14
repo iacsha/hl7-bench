@@ -45,6 +45,11 @@ the whole design: one spec, six readers.
 | ...odd columns / tab delimited | `bun tables.ts Sex --key 2 --value 3 --delim tab < codes.txt` |
 | The mapping document for the receiver | `bun trace.ts` |
 | Which source paths came back empty? | `bun reads.ts < messages\real.hl7` |
+| Does this message navigate the way the engine will read it? | `bun navcheck.ts messages\real.hl7` |
+| ...under a doctype other than the spec's | `bun navcheck.ts messages\real.hl7 --doctype 2.5:DFT_P03` |
+| Does the engine's custom schema still match the spec? | `bun schema-sync.ts` |
+| Read the stock definition off the instance to derive one | `bun schema-sync.ts --derive DFT_P03 --base 2.5` |
+| Load the spec's schema into the engine | `bun emit.ts schema > s.xml` then `bun schema-sync.ts --import` |
 | ...and fail the run if any did | `bun reads.ts --strict < messages\real.hl7` |
 | How do I do <the move>? Show me it running | `bun patterns.ts` |
 | ...one of them | `bun patterns.ts P7` |
