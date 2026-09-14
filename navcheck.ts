@@ -161,6 +161,35 @@ const got = (tag: string) =>
     .map((l) => l.split("|"));
 
 const resolvedDocType = got("DOCTYPE")[0]?.[1] ?? "(none)";
+
+/**
+ * Did the engine actually get the message?
+ *
+ * `LinkToFile` on a path that is not there returns a status nobody reads, and
+ * `ImportFromLibraryStream` then hands back an empty message. Every segment
+ * resolves 0, which is indistinguishable from the schema violation this tool
+ * exists to report -- so it reported one: five mismatches and a recommendation
+ * to write a custom schema, for a message the engine never opened. A checker
+ * that cries schema on a missing file gets ignored inside a week.
+ *
+ * The engine reads `REMOTE/<basename>`, not the path you typed. In docker mode
+ * that is the mounted lab directory, so a file sitting in the bench folder is
+ * not a file the engine can see.
+ */
+const segCount = Number(got("SEGCOUNT")[0]?.[1] ?? 0);
+if (segCount === 0 || resolvedDocType === "" || resolvedDocType === "(none)") {
+  die(
+    2,
+    `the engine read no message.\n` +
+      `  it opened          ${REMOTE}/${file.split("/").pop()}\n` +
+      `  doctype resolved   ${resolvedDocType || "(empty)"}\n` +
+      `  segments seen      ${segCount}\n` +
+      `  this file carries  ${msg.segments.length}\n\n` +
+      `This is NOT a schema finding. Put the message where the engine can read it\n` +
+      `(${REMOTE} inside the engine; set IRIS_LAB_DIR if it lives elsewhere), then re-run.`,
+  );
+}
+
 const problems: string[] = [];
 
 console.log(`message   ${file}`);
