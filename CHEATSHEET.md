@@ -32,8 +32,8 @@ the whole design: one spec, six readers.
 | You are asking | Run |
 |---|---|
 | How big is this interface, really? | `bun classify.ts have.hl7 want.hl7` |
-| What does my transform do to this message? | `bun bench.ts < messages\in.hl7` |
-| Save that output without a BOM | `bun bench.ts -o messages\out.hl7 < messages\in.hl7` |
+| What does my transform do to this message? | `bun bench.ts messages\in.hl7` |
+| Save that output without a BOM | `bun bench.ts -o messages\out.hl7 messages\in.hl7` |
 | Does it still match every golden file? | `bun check.ts` |
 | ...just the A01 ones | `bun check.ts a01` |
 | Let me edit the spec in a form instead of typing | `bun gui.ts` (http://127.0.0.1:7317) |
@@ -42,12 +42,12 @@ the whole design: one spec, six readers.
 | Give me the business process | `bun emit.ts process > MyProcess.cls` |
 | Give me the lookup tables as loadable data | `bun emit.ts tables > Tables.xml` |
 | ...just one table | `bun emit.ts tables --table Facilities` |
-| Turn this spreadsheet into a lookup table | `bun tables.ts Facilities < facilities.csv` |
-| ...as its own importable module | `bun tables.ts Facilities --module < facilities.csv > tables.facilities.ts` |
-| ...odd columns / tab delimited | `bun tables.ts Sex --key 2 --value 3 --delim tab < codes.txt` |
+| Turn this spreadsheet into a lookup table | `bun tables.ts Facilities facilities.csv` |
+| ...as its own importable module | `bun tables.ts Facilities --module facilities.csv > tables.facilities.ts` |
+| ...odd columns / tab delimited | `bun tables.ts Sex --key 2 --value 3 --delim tab codes.txt` |
 | The mapping document for the receiver | `bun trace.ts` |
-| Which source paths came back empty? | `bun reads.ts < messages\real.hl7` |
-| ...and fail the run if any did | `bun reads.ts --strict < messages\real.hl7` |
+| Which source paths came back empty? | `bun reads.ts messages\real.hl7` |
+| ...and fail the run if any did | `bun reads.ts --strict messages\real.hl7` |
 | Does this message navigate the way the engine will read it? | `bun navcheck.ts messages\real.hl7` |
 | ...under a doctype other than the spec's | `bun navcheck.ts messages\real.hl7 --doctype 2.5:DFT_P03` |
 | Does the engine's custom schema still match the spec? | `bun schema-sync.ts` |
@@ -60,8 +60,16 @@ the whole design: one spec, six readers.
 | Keep my interface out of git and out of an upgrade's way | `HL7_BENCH_TRANSFORM=transform.exa.local.ts` |
 | Stop a push from publishing a real interface | `git config core.hooksPath hooks` (once per clone) |
 
-`bench.ts`, `trace.ts` and `reads.ts` all fall back to `sample.hl7` when nothing
-is piped in, so a bare `bun trace.ts` works and does not hang.
+`bench.ts`, `trace.ts`, `reads.ts` and `tables.ts` take the filename directly.
+They still read a pipe, and the first three fall back to `sample.hl7` when
+nothing is named and nothing is piped, so a bare `bun trace.ts` works and does
+not hang. A filename that is not there is refused rather than quietly becoming
+`sample.hl7`.
+
+**PowerShell 5.1 has no `<`.** It answers `The '<' operator is reserved for
+future use`, which is why every example here names the file instead. If you have
+a command that insists on a redirect, `cmd /c "... < file"` is byte-exact and
+`Get-Content -Raw file | bun ...` is the native form.
 
 ---
 

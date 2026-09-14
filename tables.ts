@@ -1,9 +1,11 @@
 /**
  * tables.ts -- a spreadsheet becomes a `spec.tables` entry.
  *
- *   bun tables.ts Facilities < facilities.csv
- *   bun tables.ts Facilities --module < facilities.csv > tables.facilities.ts
- *   bun tables.ts Sex --key 2 --value 3 --delim tab < codes.txt
+ *   bun tables.ts Facilities facilities.csv
+ *   bun tables.ts Facilities --module facilities.csv > tables.facilities.ts
+ *   bun tables.ts Sex --key 2 --value 3 --delim tab codes.txt
+ *
+ * A pipe still works. A filename is there because PowerShell 5.1 has no `<`.
  *
  * WHY THIS GOES TO TYPESCRIPT AND NOT STRAIGHT TO XML
  *
@@ -212,7 +214,7 @@ export function renderModule(name: string, rows: Record<string, string>, source:
     ` * Regenerate rather than editing by hand, and keep the source file with it:`,
     ` * a hand-edit here is a row that no longer exists anywhere else.`,
     ` *`,
-    ` *   bun tables.ts ${name} --module < ${source} > ${"<this file>"}`,
+    ` *   bun tables.ts ${name} --module ${source} > ${"<this file>"}`,
     ` *`,
     ` * Used from the spec as:`,
     ` *`,
@@ -267,7 +269,7 @@ if (import.meta.main) {
   if (!name || has("help")) {
     process.stderr.write(
       [
-        `Usage: bun tables.ts <TableName> [options] < file.csv`,
+        `Usage: bun tables.ts <TableName> [options] [file.csv]`,
         ``,
         `  --module          a complete importable .ts file instead of a paste block`,
         `  --delim <c|name>  column separator: a character, or tab/comma/semicolon/pipe`,
@@ -284,11 +286,11 @@ if (import.meta.main) {
     process.exit(has("help") ? 0 : 2);
   }
 
-  const input = process.stdin.isTTY ? "" : await Bun.stdin.text();
-  if (input.trim() === "") {
-    process.stderr.write(`Nothing on stdin. Pipe a file: bun tables.ts ${name} < file.csv\n`);
-    process.exit(2);
-  }
+  // A filename, a pipe, or a clear refusal. PowerShell 5.1 has no `<`, so the
+  // redirect this used to demand is not available on the machine most likely to
+  // be building a lookup table from a spreadsheet.
+  const { readData } = await import("./input");
+  const { raw: input, source: inputSource } = await readData("tables");
 
   let delim = ",";
   try {
@@ -320,7 +322,8 @@ if (import.meta.main) {
   }
 
   const count = Object.keys(result.rows).length;
-  const source = flag("from") ?? "the piped file";
+  // A named file knows its own name, so --module records it without --from.
+  const source = flag("from") ?? (inputSource === "stdin" ? "the piped file" : inputSource);
 
   process.stdout.write(
     has("module") ? renderModule(name, result.rows, source) : renderTable(name, result.rows),

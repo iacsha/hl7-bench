@@ -29,28 +29,14 @@
 import { Message } from "./hl7";
 import { transform } from "./specfile";
 import { logEvent } from "./log";
-import { readFileSync, existsSync } from "node:fs";
-import { join } from "node:path";
-
-const FALLBACK = join(import.meta.dir, "sample.hl7");
+import { readMessage } from "./input";
 
 function die(msg: string): never {
   process.stderr.write(msg + "\n");
   process.exit(1);
 }
 
-const piped = await Bun.stdin.text();
-let raw = piped;
-// Named for the log. A piped message has no filename to record, and saying
-// so is more honest than recording the fallback path for a run that never
-// touched it.
-let source = "stdin";
-if (raw.trim().length === 0) {
-  source = FALLBACK;
-  // Run by hand with no pipe -- use the sample so the thing is never a no-op.
-  if (!existsSync(FALLBACK)) die(`No message on stdin and no ${FALLBACK} to fall back to.`);
-  raw = readFileSync(FALLBACK, "utf8");
-}
+const { raw, source } = await readMessage("bench");
 
 const t0 = performance.now();
 

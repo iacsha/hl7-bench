@@ -426,8 +426,8 @@ four hundred rows in Excel and are otherwise retyped by hand.
 
 ```powershell
 Get-Content facilities.csv -Raw | bun tables.ts Facilities
-bun tables.ts Facilities --module < facilities.csv > tables.facilities.ts
-bun tables.ts Sex --key 2 --value 3 --delim tab < codes.txt
+bun tables.ts Facilities --module facilities.csv > tables.facilities.ts
+bun tables.ts Sex --key 2 --value 3 --delim tab codes.txt
 ```
 
 It writes TypeScript, not XML, on purpose. Straight to XML is one step shorter
@@ -449,7 +449,7 @@ code means, and picking one silently is how the wrong one reaches production.
 
 ```powershell
 Get-Content real.hl7 -Raw | bun reads.ts
-bun reads.ts --strict < real.hl7     # exit 1 if a block is at risk
+bun reads.ts --strict real.hl7     # exit 1 if a block is at risk
 ```
 
 The emitted class sets `IGNOREMISSINGSOURCE = 1`, which turns a source path IRIS

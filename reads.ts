@@ -295,16 +295,8 @@ if (import.meta.main) {
 
   // A bare `bun reads.ts` with no pipe would block on a terminal that is never
   // going to send anything, which reads as a hang.
-  const piped = process.stdin.isTTY ? "" : await Bun.stdin.text();
-  let raw = piped;
-  if (raw.trim().length === 0) {
-    const fallback = join(import.meta.dir, "sample.hl7");
-    if (!existsSync(fallback)) {
-      process.stderr.write("No message on stdin and no sample.hl7 to fall back to.\n");
-      process.exit(1);
-    }
-    raw = readFileSync(fallback, "utf8");
-  }
+  const { readMessage } = await import("./input");
+  const { raw, source } = await readMessage("reads");
 
   const msg = new Message(raw);
   let report: ReadReport;
@@ -324,7 +316,7 @@ if (import.meta.main) {
     "reads",
     {
       spec: spec.name,
-      source: piped.trim().length > 0 ? "stdin" : "sample.hl7",
+      source,
       rows: report.rows,
       empty: report.empty.length,
       atRisk: report.atRisk.length,

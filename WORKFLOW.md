@@ -125,6 +125,10 @@ gave you a spec table and no sample, hand-build the `.want` from the table, and
 write down that you did, because a hand-built want file is your reading of their
 spec rather than their statement of it.
 
+Name the file on the command line rather than redirecting into it. PowerShell
+5.1 has no `<` operator -- it answers `The '<' operator is reserved for future
+use` -- and every tool here takes the path directly.
+
 Both files: no BOM, no trailing blank lines, CR or CRLF either way. If you saved
 from PowerShell with `>` you have a BOM. Use `-o` on `bench.ts` or save from
 Notepad++ as UTF-8 without BOM.
@@ -471,7 +475,7 @@ that as a signal that the vocabulary needs a word, not as a place to live.
 Eyeballing is not proof. Turn it into a test:
 
 ```powershell
-bun bench.ts -o messages\<name>.want.hl7 < messages\<name>.in.hl7
+bun bench.ts -o messages\<name>.want.hl7 messages\<name>.in.hl7
 bun check.ts
 ```
 
@@ -501,7 +505,7 @@ Before you write any ObjectScript, produce the document that says what the
 interface does, field by field, in the receiver's language.
 
 ```powershell
-bun trace.ts < messages\<name>.in.hl7
+bun trace.ts messages\<name>.in.hl7
 ```
 
 No second file to write. `trace.ts` walks the same spec through the same
@@ -534,7 +538,7 @@ every row note you wrote. Read it before you call the mapping settled.
 ## Step 5c. Find the reads that came back with nothing
 
 ```powershell
-bun reads.ts < messages\<name>.in.hl7
+bun reads.ts messages\<name>.in.hl7
 ```
 
 The trace tells you what the receiver gets. This tells you what the mapping
@@ -562,7 +566,7 @@ Run it against every `.in.hl7` you have, not just the happy one. A self-pay
 patient with no IN1 is exactly the message that finds this.
 
 ```powershell
-bun reads.ts --strict < messages\<name>.in.hl7   # exit 1 if a block is at risk
+bun reads.ts --strict messages\<name>.in.hl7   # exit 1 if a block is at risk
 ```
 
 `--strict` is opt-in because a legitimately absent optional segment must not
@@ -757,9 +761,9 @@ key, which in an allowlist is a permitted code being quietly refused.
 Four hundred facilities in a spreadsheet:
 
 ```powershell
-bun tables.ts Facilities < facilities.csv                       # a paste block
-bun tables.ts Facilities --module < facilities.csv > tables.facilities.ts
-bun tables.ts Sex --key 2 --value 3 --delim tab < codes.txt
+bun tables.ts Facilities facilities.csv                       # a paste block
+bun tables.ts Facilities --module facilities.csv > tables.facilities.ts
+bun tables.ts Sex --key 2 --value 3 --delim tab codes.txt
 ```
 
 It writes TypeScript into `spec.tables`, not XML, so the bench and IRIS read the

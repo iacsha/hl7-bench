@@ -207,21 +207,8 @@ export function inventory(spec: Spec, msg: Message): string {
 
 if (import.meta.main) {
   const { spec } = await import("./specfile");
-  const { readFileSync, existsSync } = await import("node:fs");
-  const { join } = await import("node:path");
-
-  // A bare `bun trace.ts` with no pipe would otherwise block on a terminal
-  // that is never going to send anything, which reads as a hang.
-  const piped = process.stdin.isTTY ? "" : await Bun.stdin.text();
-  let raw = piped;
-  if (raw.trim().length === 0) {
-    const fallback = join(import.meta.dir, "sample.hl7");
-    if (!existsSync(fallback)) {
-      process.stderr.write("No message on stdin and no sample.hl7 to fall back to.\n");
-      process.exit(1);
-    }
-    raw = readFileSync(fallback, "utf8");
-  }
+  const { readMessage } = await import("./input");
+  const { raw, source } = await readMessage("trace");
 
   const { logEvent } = await import("./log");
 
@@ -235,7 +222,7 @@ if (import.meta.main) {
   // on stdout where you asked for it.
   logEvent("trace", {
     spec: spec.name,
-    source: piped.trim().length > 0 ? "stdin" : "sample.hl7",
+    source,
     segments: m.segments.length,
     chars: doc.length + inv.length,
     result: "ok",
