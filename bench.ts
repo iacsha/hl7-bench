@@ -27,9 +27,10 @@
  */
 
 import { Message } from "./hl7";
-import { transform } from "./specfile";
+import { transform, specPath } from "./specfile";
 import { logEvent } from "./log";
 import { readMessage } from "./input";
+import { basename } from "node:path";
 
 function die(msg: string): never {
   process.stderr.write(msg + "\n");
@@ -84,8 +85,8 @@ logEvent("bench", {
 
 if (outFile) {
   await Bun.write(outFile, out);
-  process.stderr.write(`OK  transform.ts  ${ms} ms  ->  ${outFile}\n`);
+  process.stderr.write(`OK  ${basename(specPath)}  ${ms} ms  ->  ${outFile}\n`);
 } else {
   process.stdout.write(out);
-  process.stderr.write(`OK  transform.ts  ${ms} ms\n`);
+  process.stderr.write(`OK  ${basename(specPath)}  ${ms} ms\n`);
 }
