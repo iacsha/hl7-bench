@@ -31,6 +31,7 @@
  * resolving, the output is empty, and nothing in the log says why.
  */
 
+import { writeFileSync } from "node:fs";
 import { spec } from "./specfile";
 import { emitIris, routingCondition } from "./emit/iris";
 import { emitProcess } from "./emit/process";
@@ -99,7 +100,12 @@ function deliver(text: string): void {
     process.stdout.write(text);
     return;
   }
-  Bun.write(outFile, text);
+  // writeFileSync, not Bun.write. Bun.write returns a promise, and this is a CLI
+  // that exits as soon as the last statement runs -- so an unawaited write races
+  // the exit and can leave a file that exists, is empty, and was reported as
+  // written. Seen for real: "wrote Tables.xml (346 bytes)" followed by a 0-byte
+  // Tables.xml. A synchronous write cannot lose that race.
+  writeFileSync(outFile, text, "utf8");
   process.stderr.write(`wrote ${outFile}  (${text.length} bytes, no BOM)\n`);
 }
 const tableFlag = (() => {

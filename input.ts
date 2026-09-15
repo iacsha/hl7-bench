@@ -30,7 +30,7 @@
  * case where nothing was named and nothing was piped.
  */
 
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 export type MessageInput = {
@@ -164,6 +164,9 @@ export async function deliverText(text: string, outFile: string | undefined): Pr
     process.stdout.write(text);
     return;
   }
-  await Bun.write(outFile, text);
+  // Synchronous for the same reason emit.ts is: a CLI exits as soon as its last
+  // statement runs, and an awaited write is only safe while every caller
+  // remembers to await it. This one cannot be got wrong by a caller.
+  writeFileSync(outFile, text, "utf8");
   process.stderr.write(`wrote ${outFile}  (${text.length} bytes, no BOM)\n`);
 }
