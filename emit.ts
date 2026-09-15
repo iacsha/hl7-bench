@@ -233,8 +233,10 @@ if (artifact === "tables") {
 
   process.stderr.write(
     `\nImport at Interoperability > Configure > Data Lookup Tables.\n` +
-      `First time on this version: export a table you already have and diff the\n` +
-      `shape against this. Thirty seconds once, and then you trust it.\n` +
+      `Use the Import button, not Import Legacy -- this is a standard document\n` +
+      `export, the same shape that page's own Export button writes.\n` +
+      `\nEach table imports whole: the file IS the table, so a row you deleted\n` +
+      `from the spec is deleted in the namespace. Nothing prompts you.\n` +
       `\nThese are namespace DATA. They do not travel with a class export and they\n` +
       `do not travel with a production deployment. Promote this file with them.\n`,
   );

@@ -14,16 +14,40 @@
  * That is a thing you currently have to REMEMBER. This turns it into a file that
  * travels beside the class export.
  *
- * VERIFY THE SHAPE ONCE, ON YOUR VERSION
+ * THE SHAPE, AND WHY IT IS THIS ONE
  *
- * The element names below are the ones the lookup table import reads. They have
- * been stable for a long time, but "a long time" is not "your namespace", and an
- * import that does not match is rejected with a message about the document
- * rather than about the table. So the first time you use this: export a table
- * you already have from the portal, run this, and diff the two. Thirty seconds,
- * once, and then you trust it.
+ * Data Lookup Tables has TWO import buttons, and they read different documents.
+ *
+ *   Import         reads a standard document export: an <Export> root holding
+ *                  one <Document name="<Table>.LUT"> per table. This is what the
+ *                  portal's own Export button writes, via
+ *                  $system.OBJ.Export("<Table>.LUT", file, "-d").
+ *
+ *   Import Legacy  reads a bare <lookupTable> document with no wrapper, which is
+ *                  what Ens.Util.LookupTable.%Import still accepts.
+ *
+ * This emitter writes the first one, because Export and Import are the pair
+ * people reach for and because a file that round-trips through the portal is a
+ * file you can diff against the namespace you are promoting into.
+ *
+ * Feed the bare legacy document to the plain Import button and it is refused
+ * with "This is not a valid export file, please select another file." -- a
+ * message about the document, which tells you nothing about the table. That
+ * happened here, on IRIS for Health 2026.1, and it is what these element names
+ * were checked against: a probe table exported off a live instance and diffed.
  *
  *   Interoperability > Configure > Data Lookup Tables > Export
+ *
+ * IMPORT REPLACES THE TABLE, IT DOES NOT MERGE
+ *
+ * Each <Document> is the whole table. Import a document holding one row into a
+ * table holding five and you have a table holding one; the other four are gone,
+ * with no prompt. Verified on 2026.1.
+ *
+ * This is the behaviour you want for promotion -- the file IS the table, so a
+ * row deleted in the spec is deleted in the namespace -- but it is the opposite
+ * of the legacy %Import path, which merges. Anyone reaching for Import Legacy
+ * out of habit gets stale rows left behind and no way to see them.
  *
  * WHAT IT REFUSES AND WHY
  *
@@ -117,12 +141,12 @@ export function buildLookup(spec: Spec, only?: string): LookupResult {
   const names = only !== undefined ? [only] : Object.keys(all);
   const problems: LookupProblem[] = [];
   const counts: Record<string, number> = {};
-
-  const lines = [`<?xml version="1.0" encoding="UTF-8"?>`, `<lookupTable>`];
+  const documents: string[] = [];
 
   for (const table of names) {
     const rows = all[table];
     counts[table] = 0;
+    const entries: string[] = [];
 
     if (hasControlChar(table)) {
       problems.push({ table, key: "", problem: "table name holds a control character", fatal: true });
@@ -154,11 +178,33 @@ export function buildLookup(spec: Spec, only?: string): LookupResult {
         });
       }
 
-      lines.push(`<entry table="${xml(table)}" key="${xml(key)}">${xml(value)}</entry>`);
+      entries.push(`<entry table="${xml(table)}" key="${xml(key)}">${xml(value)}</entry>`);
       counts[table]++;
     }
+
+    // A table with no surviving rows gets no document. An empty <Document> is a
+    // valid thing to import and it means "this table is now empty", which is
+    // never what a spec with a bad row in it was trying to say.
+    if (entries.length === 0) continue;
+
+    documents.push(
+      [
+        `<Document name="${xml(table)}.LUT">`,
+        `<lookupTable>`,
+        ...entries,
+        `</lookupTable>`,
+        `</Document>`,
+      ].join("\n"),
+    );
   }
 
-  lines.push(`</lookupTable>`, ``);
-  return { xml: lines.join("\n"), counts, problems };
+  const doc = [
+    `<?xml version="1.0" encoding="UTF-8"?>`,
+    `<Export generator="IRIS" version="26">`,
+    ...(documents.length > 0 ? [documents.join("\n\n")] : []),
+    `</Export>`,
+    ``,
+  ].join("\n");
+
+  return { xml: doc, counts, problems };
 }

@@ -20,13 +20,37 @@ const base = (tables: Spec["tables"]): Spec => ({
 });
 
 describe("document shape", () => {
-  test("an XML declaration, a lookupTable root, one entry per row", () => {
+  // The shape below is not a guess. It is what `$system.OBJ.Export("X.LUT",...)`
+  // wrote on IRIS for Health 2026.1, which is what the portal's own Export
+  // button calls, which is what its Import button reads back. Verified against a
+  // live instance: the bare <lookupTable> document this used to emit is the
+  // LEGACY shape, and the Import dialog rejects it with "This is not a valid
+  // export file, please select another file."
+  test("an Export root, one Document per table, one entry per row", () => {
     const { xml } = buildLookup(base({ Sex: { M: "MALE", F: "FEMALE" } }));
     expect(xml).toStartWith(`<?xml version="1.0" encoding="UTF-8"?>`);
+    expect(xml).toContain(`<Export generator="IRIS" version="26">`);
+    expect(xml).toContain(`<Document name="Sex.LUT">`);
     expect(xml).toContain(`<lookupTable>`);
     expect(xml).toContain(`<entry table="Sex" key="M">MALE</entry>`);
     expect(xml).toContain(`<entry table="Sex" key="F">FEMALE</entry>`);
-    expect(xml.trimEnd()).toEndWith(`</lookupTable>`);
+    expect(xml.trimEnd()).toEndWith(`</Export>`);
+  });
+
+  // The document name carries the .LUT suffix and nothing else. Get this wrong
+  // and the import succeeds while writing a table nobody's Lookup() call names.
+  test("the Document name is the table name plus .LUT", () => {
+    const { xml } = buildLookup(base({ Facilities: { x: "1" } }));
+    expect(xml).toContain(`<Document name="Facilities.LUT">`);
+    expect(xml).not.toContain(`<Document name="Facilities">`);
+  });
+
+  // Each table is its own Document. One Document holding every table imports as
+  // a single table named after the first one.
+  test("two tables are two Documents, not one Document with both", () => {
+    const { xml } = buildLookup(base({ A: { x: "1" }, B: { y: "2" } }));
+    expect(xml.match(/<Document /g)?.length).toBe(2);
+    expect(xml.match(/<lookupTable>/g)?.length).toBe(2);
   });
 
   test("row order follows the spec, so a diff against the last export reads", () => {
@@ -44,7 +68,9 @@ describe("document shape", () => {
 
   test("a spec with no tables still produces a well formed empty document", () => {
     const { xml, counts } = buildLookup(base(undefined));
-    expect(xml).toContain(`<lookupTable>`);
+    expect(xml).toContain(`<Export generator="IRIS" version="26">`);
+    expect(xml.trimEnd()).toEndWith(`</Export>`);
+    expect(xml).not.toContain(`<Document `);
     expect(counts).toEqual({});
   });
 });

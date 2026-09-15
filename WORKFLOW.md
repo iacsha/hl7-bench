@@ -830,6 +830,21 @@ transform at all.
 4. Import `Tables.xml` and verify the row count against what `emit.ts tables`
    reported. The tables are data and do not arrive with the class; promote them
    with it, every time, including to Production.
+
+   Use **Import**, not **Import Legacy**. The two buttons read different
+   documents: `Import` wants a standard document export, an `<Export>` root
+   holding one `<Document name="<Table>.LUT">` per table, which is both what
+   that page's own Export button writes and what `emit.ts tables` emits.
+   `Import Legacy` wants the older bare `<lookupTable>` document. Give the
+   legacy shape to `Import` and it is refused with *"This is not a valid export
+   file, please select another file."* -- a complaint about the document, which
+   says nothing about the table.
+
+   Each table imports **whole**. A `<Document>` is the table, not an addition to
+   it, so a row you deleted from the spec is deleted in the namespace when you
+   import, with no prompt. That is what you want when promoting -- the file is
+   the truth -- but it is the opposite of `Import Legacy`, which merges and
+   leaves stale rows behind where you cannot see them.
 5. If you emitted a business process, add it to the production as a Business
    Process and confirm `sendTo` matches a real config item name.
 6. Check the fingerprint in the compiled class against what `emit.ts` printed.
