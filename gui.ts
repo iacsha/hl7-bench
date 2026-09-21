@@ -56,6 +56,7 @@ import {
 import { rewriteTransform } from "./serialize";
 import { trace, inventory } from "./trace";
 import { emitIris, routingCondition } from "./emit/iris";
+import { emitProcess } from "./emit/process";
 import { logAuthoring } from "./log";
 import { discardDraft, draftPath, readDraft, writeDraft } from "./draft";
 import { specPath } from "./specpath";
@@ -537,6 +538,23 @@ const server = Bun.serve({
           blocks: report.spec.blocks.length,
           rows: report.spec.blocks.reduce((n, x) => n + x.rows.length, 0),
         });
+      } catch (e) {
+        return json({ error: String(e) }, 500);
+      }
+    }
+
+    // The other direction: the SPEC becomes the class again.
+    //
+    // This closes the loop the workbench opened. Import reads a class into the
+    // spec; the form edits the spec; this writes a class back out of it. The
+    // result goes into the TEXTAREA rather than straight to disk, because it
+    // is not the class that was imported -- see the warning it carries.
+    if (url.pathname === "/script/fromspec" && req.method === "POST" && SCRIPT_PATH) {
+      try {
+        const spec = await loadSpec();
+        const problems = validate(spec);
+        if (problems.length > 0) return json({ error: problems.join("\n") }, 400);
+        return json({ ok: true, source: emitProcess(spec), dtl: emitIris(spec) });
       } catch (e) {
         return json({ error: String(e) }, 500);
       }

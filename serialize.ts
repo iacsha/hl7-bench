@@ -218,6 +218,46 @@ export function specToSource(spec: Spec): string {
     out.push("    },");
   }
 
+  // externalSchemas, sourceGroups and process. Every one of these was MISSING,
+  // and each disappeared the same way: the GUI rewrites the whole spec literal
+  // on save, so a key this function does not write is a key the file no longer
+  // has. Nothing errors. The three failures that follow are:
+  //
+  //   sourceGroups   every grouped read resolves to empty in the DTL and
+  //                  reports nothing -- the exact silence the header of
+  //                  `Block.group` exists to warn about
+  //   process        `bun emit.ts process` loses the class name and the
+  //                  sendTo, which is the one fact in a spec that cannot be
+  //                  derived from the mapping
+  //   externalSchemas a declared dependency stops being declared
+  const ext = spec.iris.externalSchemas;
+  if (ext?.length) {
+    out.push("    externalSchemas: [");
+    for (const e of ext) out.push(`      { category: ${q(e.category)}, note: ${q(e.note)} },`);
+    out.push("    ],");
+  }
+
+  const groups = Object.entries(spec.iris.sourceGroups ?? {});
+  if (groups.length) {
+    out.push(`    sourceGroups: { ${groups.map(([k, v]) => `${key(k)}: ${q(v)}`).join(", ")} },`);
+  }
+
+  const proc = spec.iris.process;
+  if (proc) {
+    out.push("    process: {");
+    out.push(`      className: ${q(proc.className)},`);
+    out.push(`      sendTo: ${q(proc.sendTo)},`);
+    if (proc.comment) out.push(`      comment: ${q(proc.comment)},`);
+    if (proc.stamp?.length) {
+      out.push("      stamp: [");
+      for (const st of proc.stamp) {
+        out.push(`        { path: ${q(st.path)}, value: ${q(st.value)}, why: ${q(st.why)} },`);
+      }
+      out.push("      ],");
+    }
+    out.push("    },");
+  }
+
   out.push("  },");
 
   const tables = Object.keys(spec.tables ?? {});

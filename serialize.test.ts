@@ -434,3 +434,66 @@ describe("the import line names every kind", () => {
     }
   });
 });
+
+// ---------------------------------------------------------------------------
+
+describe("nothing on the spec is dropped on the way out", () => {
+  // The GUI rewrites the WHOLE spec literal on save, so a key this serializer
+  // does not write is a key the file no longer has. These three were missing
+  // and each one failed silently: a lost sourceGroups makes every grouped read
+  // in the DTL resolve to empty and report nothing, a lost process takes the
+  // sendTo with it -- the one fact in a spec that cannot be derived from the
+  // mapping -- and a lost externalSchemas un-declares a dependency.
+  const full: Spec = {
+    name: "Round trip",
+    gate: { path: "MSH-9.2", permit: { A01: "A28" } },
+    iris: {
+      className: "Site.Adt.Dtl",
+      sourceDocType: "2.3:ADT_A01",
+      targetDocType: "2.3:ADT_A01",
+      sourceGroups: { IN1: "IN1grp" },
+      process: {
+        className: "Site.Adt.Process",
+        sendTo: "ToReceiver.ADT.TCP",
+        comment: "why it exists",
+        stamp: [{ path: "MSH-4", value: "WEST", why: "this receiver keys routing on it" }],
+      },
+    },
+    blocks: [{ id: "PID", rows: [{ target: "PID-3", from: copy("PID-3") }] }],
+  };
+
+  test("sourceGroups survives", () => {
+    expect(specToSource(full)).toContain(`sourceGroups: { IN1: "IN1grp" }`);
+  });
+
+  test("the process, its target and its stamps survive", () => {
+    const out = specToSource(full);
+    expect(out).toContain(`className: "Site.Adt.Process"`);
+    expect(out).toContain(`sendTo: "ToReceiver.ADT.TCP"`);
+    expect(out).toContain(`path: "MSH-4"`);
+    expect(out).toContain("this receiver keys routing on it");
+  });
+
+  // The strongest form of the assertion: write it, read it back, compare. A
+  // key that vanishes cannot hide from this.
+  test("the whole iris block round-trips", async () => {
+    const file = [
+      `import { copy, type Spec } from "./spec";`,
+      ``,
+      specToSource(full),
+      ``,
+    ].join("\n");
+    // Written INTO the bench folder, not into tmpdir. A spec resolves `./spec`
+    // against its own location, so a sibling elsewhere dies with "Cannot find
+    // module './spec'" -- the same trap the cheat sheet warns about for a real
+    // interface kept outside the folder.
+    const path = join(import.meta.dir, `.rt-${Date.now()}.ts`);
+    writeFileSync(path, file, "utf8");
+    try {
+      const mod = await import(pathToFileURL(path).href);
+      expect(mod.spec.iris).toEqual(full.iris);
+    } finally {
+      rmSync(path, { force: true });
+    }
+  });
+});

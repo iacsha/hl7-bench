@@ -249,6 +249,7 @@ input.md { width: 116px; }
           <button id="scriptrun" type="button" title="Compile this into a scratch class in the engine and run the message through it">Run in engine</button>
           <button id="scriptsave" type="button" title="Write this back to the file. A .bak is kept the first time.">Save class</button>
           <button id="scriptimport" type="button" title="Read this class into the spec form. Replaces the spec; a .bak is kept.">Import into spec</button>
+          <button id="scriptfromspec" type="button" title="Regenerate the class from the spec, into this box. Does not save until you press Save class.">Class from spec</button>
           <label class="hint" for="scriptmethod">method</label>
           <input id="scriptmethod" class="tiny-in" placeholder="OnRequest" spellcheck="false">
           <span class="hint" id="scriptwhere"></span>
@@ -1846,6 +1847,34 @@ $("scriptimport").addEventListener("click", async () => {
   );
   // The form must show what was just written, not the spec it replaced.
   await load();
+});
+
+// Spec -> class. The other half of the loop.
+//
+// It lands in the TEXTAREA, not on disk, because what comes out is NOT the
+// class that went in. The bench emits one shape: a business process that
+// clones the request, calls a DTL and dispatches. A hand-written OnRequest
+// that does its mapping inline is a different shape doing the same job, and
+// overwriting one with the other without looking is how a morning goes.
+//
+// Read it, run it against the message, THEN press Save class.
+$("scriptfromspec").addEventListener("click", async () => {
+  const r = await (await fetch("/script/fromspec", { method: "POST" })).json();
+  if (r.error) { $("scriptout").textContent = r.error; setStatus("spec will not emit", "bad"); return; }
+
+  $("scriptsrc").value = r.source;
+  $("scriptout").textContent = [
+    "Regenerated from the spec, into the box above. NOTHING IS SAVED YET.",
+    "",
+    "This is not the class you imported. The bench emits a process that calls a",
+    "DTL; a hand-written OnRequest usually does the mapping inline. Same result,",
+    "different shape -- and the DTL is a SECOND class you also have to deploy:",
+    "",
+    "  bun emit.ts -o <the DTL>.cls",
+    "",
+    "Run it here first, check the diff, then Save class.",
+  ].join("\n");
+  setStatus("class regenerated from the spec, unsaved", "ok");
 });
 
 $("scriptsave").addEventListener("click", async () => {
