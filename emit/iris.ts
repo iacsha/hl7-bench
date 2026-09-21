@@ -295,7 +295,19 @@ function sourceCode(
     }
 
     case "lookup": {
-      const ref = src(from.path);
+      // The key is a flat path, or a source that has to run first to find the
+      // occurrence carrying it. The nested form emits that source's own
+      // preamble, then looks up the variable it left behind -- so the lookup
+      // does not need to know how the key was found.
+      let pre: string[] | undefined;
+      let ref: string;
+      if (from.from) {
+        const inner = sourceCode(st, from.from as Source, scope);
+        pre = inner.pre;
+        ref = inner.expr!;
+      } else {
+        ref = src(from.path ?? "");
+      }
       const fallback =
         from.unmapped.kind === "blank" ? '""'
         : from.unmapped.kind === "passthrough" ? ref
@@ -303,7 +315,7 @@ function sourceCode(
       // Guard on emptiness so a field the sender left blank does not take the
       // unmapped branch and invent a value.
       const call = `..Lookup(${os(from.table)},${ref},${fallback})`;
-      return { expr: `$SELECT($LENGTH(${ref})>0:${call},1:"")` };
+      return { expr: `$SELECT($LENGTH(${ref})>0:${call},1:"")`, pre };
     }
 
     case "counter":
@@ -536,7 +548,11 @@ function emitRow(st: State, row: Row, scope: Scope, indent: string, out: string[
   // An unmapped code, reported before the assign that swallows it. This is
   // one of exactly two silent failures the class can see for itself: the
   // message is delivered, it is well formed, and the field is wrong.
-  if (level !== "off" && row.from.kind === "lookup") {
+  // Skipped when the key came through a nested source: that source runs in a
+  // <code> block above the assign and leaves its answer in a variable, and
+  // re-running the walk here to build a warning would double the work and
+  // could disagree with the value actually used.
+  if (level !== "off" && row.from.kind === "lookup" && row.from.path) {
     const ref = codeRef(`source.${dtlPath(row.from.path, scope.sourcePrefix, srcGroups(st))}`);
     const t = os(row.from.table);
     // Built with os() on both halves rather than typed as one literal: a

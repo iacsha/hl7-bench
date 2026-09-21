@@ -50,7 +50,7 @@ import { join, resolve, relative, isAbsolute, dirname, basename } from "node:pat
 
 import { Message } from "./hl7";
 import {
-  SOURCE_KINDS, STEP_KINDS, SELECT_KINDS, FOLD_KINDS,
+  SOURCE_KINDS, STEP_KINDS, SELECT_KINDS, FOLD_KINDS, KEY_SOURCE_KINDS,
   emptyTables, validate, type Spec,
 } from "./spec";
 import { rewriteTransform } from "./serialize";
@@ -63,6 +63,7 @@ import { specPath } from "./specpath";
 import { decodeText } from "./input";
 import { runSource, engineLabel } from "./engine-core";
 import { importClass, specModule } from "./import-cls";
+import { parseCsv, toTable } from "./tables";
 import { pathToFileURL } from "node:url";
 
 const DIR = import.meta.dir;
@@ -270,6 +271,7 @@ const server = Bun.serve({
         // when it has no form for one, which is the loud version of the gap.
         sourceKinds: SOURCE_KINDS,
         stepKinds: STEP_KINDS,
+        keySourceKinds: KEY_SOURCE_KINDS,
         // Same reason as the two above. A repeat's select and fold are the only
         // parts of the vocabulary that decide how many segments exist rather
         // than what goes in a field, and they are served, not hardcoded, so the
@@ -283,6 +285,46 @@ const server = Bun.serve({
      * Render every derived view of a spec WITHOUT touching disk or running
      * anything. This is what the page calls while you type.
      */
+    // A spreadsheet becomes a lookup table.
+    //
+    // The same parser `bun tables.ts` uses, so a table built in the page and
+    // one built at the command line cannot disagree about what a quoted cell
+    // containing a comma means. The FILE never reaches the server -- the page
+    // reads it and posts the text -- so nothing is written to disk that the
+    // person did not already have.
+    if (url.pathname === "/table/csv" && req.method === "POST") {
+      const b = await body<{
+        text?: string; name?: string; delim?: string;
+        key?: number; value?: number; header?: boolean; trim?: boolean;
+      }>(req);
+      if (!b?.text) return json({ error: "Nothing to read." }, 400);
+      const name = (b.name ?? "").trim();
+      if (!/^[A-Za-z][A-Za-z0-9_]*$/.test(name)) {
+        return json({ error: `"${name}" is not a table name. Letters, digits and underscore, starting with a letter.` }, 400);
+      }
+      try {
+        const delim = b.delim === "tab" ? "\t" : b.delim === "semicolon" ? ";" : b.delim === "pipe" ? "|" : ",";
+        const csv = parseCsv(b.text, delim);
+        const r = toTable(csv, {
+          key: b.key ?? 1,
+          value: b.value ?? 2,
+          header: b.header ?? true,
+          trim: b.trim ?? true,
+        });
+        // Errors are fatal on purpose. A table half-read is a lookup that
+        // takes the unmapped branch for the codes that did not make it, which
+        // looks exactly like a working lookup.
+        if (r.errors.length > 0) return json({ error: r.errors.join("\n"), read: r.read }, 400);
+        return json({
+          ok: true, name, rows: r.rows,
+          count: Object.keys(r.rows).length,
+          read: r.read, trimmed: r.trimmed, warnings: r.warnings,
+        });
+      } catch (e) {
+        return json({ error: String(e) }, 500);
+      }
+    }
+
     if (url.pathname === "/preview" && req.method === "POST") {
       const b = await body<{ spec?: Spec; message?: string }>(req);
       if (!b?.spec) return json({ error: "No spec in the request." }, 400);

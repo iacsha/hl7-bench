@@ -287,7 +287,8 @@ const SOURCE_FORM = {
   firstOf:    [{ k: "paths", ph: "PID-4, PID-3", list: true, w: "grow", title: "SOURCE paths, in order. The first one with a value wins." }],
   lookup:     [
     { k: "table", ph: "table", w: "md", title: "Which lookup table to translate through. Declared under tables below." },
-    { k: "path", ph: "PID-8", w: "sm", title: "SOURCE path whose value is looked up." },
+    { k: "path", ph: "PID-8", w: "sm", title: "SOURCE path whose value is looked up. Leave empty and use the key source instead when the code is not somewhere a flat path can reach." },
+    { k: "from", keySource: true, title: "Optional. Find the occurrence carrying the code first -- e.g. fromWhere on the NK1 whose NK1-1 is 2 -- then translate what it holds." },
     { k: "unmapped", unmapped: true, title: "What happens to a code the table has no row for. There is no default on purpose." },
   ],
   counter:    [],
@@ -402,6 +403,7 @@ const FOLD_DEFAULT = {
 let spec = null;
 let sourceKinds = Object.keys(SOURCE_FORM);
 let stepKinds = Object.keys(STEP_FORM);
+let KEY_SOURCE_KINDS = ["firstOf", "pickRepeat", "fromFirst", "fromWhere"];
 let selectKinds = Object.keys(SELECT_FORM);
 let foldKinds = Object.keys(FOLD_FORM);
 let messageFile = "sample.hl7";
@@ -673,6 +675,7 @@ function sourceEditor(row, redraw) {
 
   for (const f of form) {
     if (f.unmapped) { wrap.appendChild(unmappedEditor(row.from)); continue; }
+    if (f.keySource) { wrap.appendChild(keySourceEditor(row.from, redraw, f.title)); continue; }
     if (f.list) {
       wrap.appendChild(text(row.from, f.k, {
         ph: f.ph, w: f.w, title: f.title,
@@ -690,6 +693,36 @@ function sourceEditor(row, redraw) {
       continue;
     }
     wrap.appendChild(text(row.from, f.k, f));
+  }
+  return wrap;
+}
+
+/**
+ * The key a lookup translates, when a flat path cannot reach it.
+ *
+ * One level of nesting and no more. A source inside a source inside a source
+ * is a thing nobody can read in a form, and every case so far is the same
+ * shape: find the right occurrence, then translate what is in it.
+ */
+function keySourceEditor(from, redraw, title) {
+  const wrap = el("span", { class: "steps" });
+  const kinds = ["(flat path)", ...KEY_SOURCE_KINDS];
+  const current = from.from ? from.from.kind : "(flat path)";
+
+  wrap.appendChild(select(current, kinds, (k) => {
+    if (k === "(flat path)") { delete from.from; }
+    else {
+      from.from = (SOURCE_DEFAULT[k] ?? (() => ({ kind: k })))();
+      // Two ways to say where the key comes from is one way too many.
+      delete from.path;
+    }
+    markEdited(); redraw(); schedulePreview();
+  }, undefined, title));
+
+  if (!from.from) return wrap;
+  for (const f of SOURCE_FORM[from.from.kind] ?? []) {
+    if (f.unmapped || f.keySource) continue;
+    wrap.appendChild(text(from.from, f.k, f));
   }
   return wrap;
 }
@@ -856,6 +889,63 @@ function renderSpec() {
   tables.appendChild(btn("+ table", "declare a lookup table", () => {
     spec.tables[`Table${Object.keys(spec.tables).length + 1}`] = {};
     markEdited(); redraw(); schedulePreview();
+  }));
+
+  // A spreadsheet is how a code set actually arrives -- as a column of theirs
+  // and a column of yours, in an email. Typing it in is where the typos come
+  // from, and a lookup table with one wrong key takes the unmapped branch for
+  // that code and looks exactly like a working lookup.
+  //
+  // The file is read HERE, in the page, and only its text is posted. Nothing
+  // lands on disk that was not already there.
+  tables.appendChild(btn("+ table from CSV", "read a spreadsheet into a lookup table", () => {
+    const picker = el("input", { type: "file", accept: ".csv,.tsv,.txt", style: "display:none" });
+    document.body.appendChild(picker);
+    picker.addEventListener("change", async () => {
+      const file = picker.files && picker.files[0];
+      picker.remove();
+      if (!file) return;
+
+      const suggested = file.name.replace(/\.[^.]+$/, "").replace(/[^A-Za-z0-9_]/g, "");
+      const name = prompt("Table name", suggested || "Codes");
+      if (!name) return;
+
+      const delim = file.name.toLowerCase().endsWith(".tsv") ? "tab" : "comma";
+      const text = await file.text();
+
+      // The first line, shown back, because "which column is the key" is a
+      // question nobody can answer without seeing the file.
+      const first = text.split(/\r?\n/).find((l) => l.trim() !== "") ?? "";
+      const header = confirm(`First line:\n\n${first.slice(0, 200)}\n\nIs this a header row to skip?`);
+      const key = Number(prompt("Which column holds the code they send? (1-based)", "1"));
+      const value = Number(prompt("Which column holds the value to send on? (1-based)", "2"));
+      if (!key || !value) return;
+
+      const r = await (await fetch("/table/csv", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ text, name, delim, key, value, header, trim: true }),
+      })).json();
+
+      if (r.error) {
+        setStatus(`CSV refused: ${r.error.split("\n")[0]}`, "bad");
+        alert(`Nothing was imported.\n\n${r.error}`);
+        return;
+      }
+
+      const existing = spec.tables[r.name];
+      if (existing && Object.keys(existing).length > 0 &&
+          !confirm(`${r.name} already has ${Object.keys(existing).length} row(s). Replace them?`)) return;
+
+      spec.tables[r.name] = r.rows;
+      markEdited(); redraw(); schedulePreview();
+
+      const notes = [`${r.name}: ${r.count} row(s) from ${r.read} line(s)`];
+      if (r.trimmed) notes.push(`${r.trimmed} cell(s) had surrounding whitespace removed`);
+      for (const w of r.warnings ?? []) notes.push(w);
+      setStatus(notes.join(" | "), "ok");
+    });
+    picker.click();
   }));
   host.appendChild(tables);
 
@@ -1499,6 +1589,7 @@ async function load() {
   defaultOut = res.defaultOut ?? defaultOut;
   sourceKinds = res.sourceKinds ?? sourceKinds;
   stepKinds = res.stepKinds ?? stepKinds;
+  KEY_SOURCE_KINDS = res.keySourceKinds ?? KEY_SOURCE_KINDS;
   selectKinds = res.selectKinds ?? selectKinds;
   foldKinds = res.foldKinds ?? foldKinds;
   $("msgfile").textContent = messageFile;

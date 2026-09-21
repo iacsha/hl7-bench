@@ -96,7 +96,10 @@ function source(from: Source): string {
     case "copy": return `copy(${q(from.path)})`;
     case "literal": return `literal(${q(from.value)})`;
     case "firstOf": return `firstOf(${from.paths.map(q).join(", ")})`;
-    case "lookup": return `lookup(${q(from.table)}, ${q(from.path)}, ${unmapped(from.unmapped)})`;
+    case "lookup":
+      return `lookup(${q(from.table)}, ${
+        from.from ? source(from.from as Source) : q(from.path ?? "")
+      }, ${unmapped(from.unmapped)})`;
     case "counter": return "counter()";
     case "event": return "event()";
     case "pickRepeat": {

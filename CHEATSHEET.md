@@ -44,6 +44,7 @@ the whole design: one spec, six readers.
 | Give me the lookup tables as loadable data | `bun emit.ts tables -o Tables.xml` |
 | ...just one table | `bun emit.ts tables --table Facilities` |
 | Turn this spreadsheet into a lookup table | `bun tables.ts Facilities facilities.csv` |
+| ...or drop it on the form | `+ table from CSV` in `bun gui.ts` |
 | ...as its own importable module | `bun tables.ts Facilities --module facilities.csv > tables.facilities.ts` |
 | ...odd columns / tab delimited | `bun tables.ts Sex --key 2 --value 3 --delim tab codes.txt` |
 | What does the class I already wrote do to this message? | `bun engine.ts messages\real.hl7 --class My.Dtl.Class` |
@@ -125,6 +126,8 @@ This is the decision that actually costs time, so it is worth the table.
 | Fixed for every message this interface sends | block row, `literal()` | `{ target: "MSH-4", from: literal("WEST_LAB") }` |
 | First non-empty of several paths | block row, `firstOf()` | `firstOf("PID-18", "PV1-19")` |
 | A code translation | block row, `lookup()` | `lookup("Facilities", "MSH-4", blank())` |
+| ...whose code is on a particular occurrence | `lookup()` over `fromWhere()` | `lookup("Rel", fromWhere("NK1","NK1-1","2","NK1-3"), blank())` |
+| A value off the occurrence where a path EQUALS something | block row, `fromWhere()` | `fromWhere("NK1", "NK1-1", "2", "NK1-2")` |
 | Different **per destination**, same DTL | `iris.process.stamp` | see below |
 | Two components in one field, and no third | whole-field row + `prefix()` | `{ target: "MSH-9", from: event(), via: [prefix("ADT^")] }` |
 | Genuinely procedural | write a function, not a rule | |

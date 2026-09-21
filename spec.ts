@@ -56,7 +56,25 @@ export type Source =
   /** First non-empty of several source paths. Becomes a nested $SELECT. */
   | { kind: "firstOf"; paths: string[] }
   /** Table translation with a stated unmapped branch. */
-  | { kind: "lookup"; table: string; path: string; unmapped: Unmapped }
+  /**
+   * Table translation with a stated unmapped branch.
+   *
+   * `path` is the ordinary case: a flat path on the incoming message. `from`
+   * supersedes it when the key is not somewhere a flat path can reach -- the
+   * relationship code on the NK1 whose NK1-1 is 2, say, which needs a
+   * `fromWhere` to find before there is anything to look up.
+   *
+   * One level only, and deliberately. A source nested inside a source inside a
+   * source is a thing nobody can read in a form, and every case seen so far is
+   * "find the right occurrence, then translate what is in it".
+   */
+  | {
+      kind: "lookup";
+      table: string;
+      path?: string;
+      from?: KeySource;
+      unmapped: Unmapped;
+    }
   /** The output ordinal of the enclosing repeat. Only valid inside one. */
   | { kind: "counter" }
   /** The target trigger event the gate resolved to. */
@@ -122,6 +140,26 @@ export type Source =
    * invisible until somebody reads a report.
    */
   | { kind: "todo"; why: string };
+
+/**
+ * What a lookup may read its key through.
+ *
+ * The occurrence-finding kinds, and nothing that would recurse. `copy` is
+ * absent because a flat path is what `lookup.path` already is.
+ */
+export type KeySource =
+  | { kind: "firstOf"; paths: string[] }
+  | {
+      kind: "pickRepeat";
+      path: string;
+      whereComponent: number;
+      equals: string;
+      take: number | number[] | "whole";
+    }
+  | { kind: "fromFirst"; segment: string; nonEmpty: string; path: string }
+  | { kind: "fromWhere"; segment: string; where: string; equals: string; read: string };
+
+export const KEY_SOURCE_KINDS = ["firstOf", "pickRepeat", "fromFirst", "fromWhere"] as const;
 
 export const SOURCE_KINDS = [
   "copy", "literal", "firstOf", "lookup", "counter",
@@ -593,8 +631,14 @@ export const counter = (): Source => ({ kind: "counter" });
 export const event = (): Source => ({ kind: "event" });
 export const todo = (why: string): Source => ({ kind: "todo", why });
 
-export const lookup = (table: string, path: string, unmapped: Unmapped): Source =>
-  ({ kind: "lookup", table, path, unmapped });
+export const lookup = (
+  table: string,
+  path: string | KeySource,
+  unmapped: Unmapped,
+): Source =>
+  typeof path === "string"
+    ? { kind: "lookup", table, path, unmapped }
+    : { kind: "lookup", table, from: path, unmapped };
 
 export const pickRepeat = (
   path: string,
@@ -665,7 +709,8 @@ export function describeSource(from: Source): string {
     case "copy": return from.path;
     case "literal": return `"${from.value}"`;
     case "firstOf": return from.paths.join(" or ");
-    case "lookup": return `${from.path} via ${from.table}`;
+    case "lookup":
+      return `${from.from ? describeSource(from.from as Source) : from.path} via ${from.table}`;
     case "counter": return "(output ordinal)";
     case "event": return "(target event)";
     case "pickRepeat": {
@@ -710,7 +755,8 @@ export function sourcePathsOf(from: Source): string[] {
   switch (from.kind) {
     case "copy": return [from.path];
     case "firstOf": return from.paths;
-    case "lookup": return [from.path];
+    case "lookup":
+      return from.from ? sourcePathsOf(from.from as Source) : from.path ? [from.path] : [];
     case "pickRepeat": return [from.path];
     case "fromFirst": return [from.nonEmpty, from.path];
     case "fromWhere": return [from.where, from.read];

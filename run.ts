@@ -133,7 +133,12 @@ function resolveSource(ctx: Ctx, from: Source): { raw: string; todo?: string; no
     }
 
     case "lookup": {
-      const key = readPath(ctx, from.path);
+      // The key either comes from a flat path or through a source that finds
+      // the right occurrence first. Same resolver either way, so a nested
+      // fromWhere behaves exactly as it does on its own row.
+      const key = from.from
+        ? resolveSource(ctx, from.from as Source).raw
+        : readPath(ctx, from.path ?? "");
       // An empty source is not an unmapped code. Sending the unmapped default
       // for a field the sender simply did not populate invents data.
       if (key === "") return { raw: "" };
