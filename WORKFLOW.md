@@ -83,7 +83,7 @@ type at the top, and that `if` grows an else branch nobody tested.
 Keep each one in its own file, in this folder, named `*.local.ts`:
 
 ```powershell
-$env:HL7_BENCH_TRANSFORM = "transform.exa.local.ts"
+$env:HL7_BENCH_TRANSFORM = "transform.site.local.ts"
 ```
 
 Or put that line in `.env` here, which bun loads from the folder you run commands

@@ -20,7 +20,7 @@
  * EMPTY rather than erroring, the transform runs, and a well-formed message
  * comes out the far end with nothing in it.
  *
- * That cost an afternoon on the EXA radiology DFT. The feed omits EVN, which
+ * That cost an afternoon on the site radiology DFT. The feed omits EVN, which
  * 2.5 requires, and puts OBR and OBX after GT1, where DFT_P03 has nowhere to
  * put them. The bench delivered 43 segments, the engine delivered 0, and the
  * whole test suite was green, because nothing in the bench models schema

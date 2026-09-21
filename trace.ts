@@ -20,7 +20,7 @@
 
 import { Message } from "./hl7";
 import { describeSource, emptyTables, sourcePathsOf, type Spec } from "./spec";
-import { assertRunnable, gate, resolve, walk, type Ctx } from "./run";
+import { assertRunnable, gate, resolve, seedSource, walk, type Ctx } from "./run";
 
 // ---------------------------------------------------------------------------
 // Table rendering
@@ -92,6 +92,23 @@ export function trace(spec: Spec, msg: Message, opts: TraceOptions = {}): string
       : `${block.id}${block.group ? ` (${block.group})` : ""}`;
 
     const rows: string[][] = [];
+
+    // A seeded block copies fields nobody enumerated, so the table below cannot
+    // name them. Saying so as the first row is the whole honesty of this
+    // document: the receiving team reads "sent as received, except the rows
+    // under it" rather than a field list that looks complete and is not.
+    if (block.wholeSegment) {
+      const src = seedSource(ctx, block);
+      rows.push([
+        block.id,
+        "(whole segment)",
+        `${block.id} copied whole`,
+        show(src ? src.toString() : ""),
+        "",
+        src ? `${src.fieldCount} field(s) passed through` : "(no source segment)",
+      ]);
+    }
+
     for (const row of block.rows) {
       const r = resolve(ctx, row);
       const label = row.label ?? row.target;

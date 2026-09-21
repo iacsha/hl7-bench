@@ -274,6 +274,51 @@ export const PATTERNS: Pattern[] = [
       if (missing.length) throw new Error(`Required fields empty: ${missing.join(", ")}`);
     },
   },
+
+  // -------------------------------------------------------------------------
+  {
+    id: "P13",
+    name: "Read a segment the schema keeps inside a group",
+    why:
+      "The most expensive quiet bug in this work. A DTL walks the SCHEMA; this " +
+      "bench and every script walk the SEGMENTS. On a message where the schema " +
+      "nests OBX inside ORCgrp, source.{OBX(*)} resolves to ZERO while an array " +
+      "scan finds 143 -- and nothing errors on either side. A well formed message " +
+      "is delivered carrying nothing. The compiler will not help: a sourceDocType " +
+      "naming a category that does not even EXIST still compiles clean. " +
+      "Measured 2026-09-17 on a real 2.5 DFT_P03.",
+    dtl:
+      "ASK THE ENGINE, do not guess. In a terminal in YOUR namespace:\n" +
+      "  zw ^EnsHL7.Schema(\"<category>\",\"MS\",\"<structure>\",\"map\")\n" +
+      "Every line there is a path IRIS will accept. If you see\n" +
+      "  \"ORCgrp().OBXgrp().OBX\" = \"=15,*,4,*,1|2.5:OBX\"\n" +
+      "then OBX is two groups deep and the flat path is wrong:\n" +
+      "  source.{ORCgrp(1).OBXgrp(k1).OBX:5}     NOT  source.{OBX(k1):5}\n" +
+      "  <foreach property='source.{ORCgrp(1).OBXgrp()}' key='k1'>\n" +
+      "The occurrence goes on whatever REPEATS -- the group, not the segment.\n" +
+      "The outer index is an assumption: ORCgrp(1) reads the first group only.\n" +
+      "\n" +
+      "Confirm on one real message before building anything on top of it:\n" +
+      "  do msg.PokeDocType(\"<category>:<structure>\")\n" +
+      "  write +msg.GetValueAt(\"OBX(*)\"),!                     flat\n" +
+      "  write +msg.GetValueAt(\"ORCgrp(1).OBXgrp(*)\"),!        nested\n" +
+      "  write +msg.GetValueAt(\"leftoversegs(*)\"),!            matched nothing\n" +
+      "  write msg.SegCount,!                                  the array scan\n" +
+      "Those must account for each other. Keep the + -- an unresolved path returns\n" +
+      "\"\", which prints like a zero without being one.\n" +
+      "\n" +
+      "In a spec, say it once and every path follows:\n" +
+      "  iris: { sourceGroups: { OBX: \"ORCgrp(1).OBXgrp\", OBR: \"ORCgrp(1).OBRgrp\" } }\n" +
+      "Source and TARGET group separately. A 2.5 DFT nests OBX; a 2.3 MDM does\n" +
+      "not. block.group is the target side and copying one to the other writes a\n" +
+      "transform that resolves nothing on one of them.",
+    run(msg) {
+      // The bench's model is flat on purpose, and that is the whole lesson:
+      // this reads all 143 and IRIS reads 0 from the same bytes. Nothing here
+      // can catch a wrong group name for you -- only the engine can.
+      for (const obx of msg.all("OBX")) obx.set("OBX-11", "F");
+    },
+  },
 ];
 
 // ---------------------------------------------------------------------------

@@ -17,7 +17,7 @@
  * vendor and two accession numbers one `git push` from being public, and the only
  * thing that stopped it was somebody reading the diff first.
  *
- *     HL7_BENCH_TRANSFORM=transform.exa.local.ts
+ *     HL7_BENCH_TRANSFORM=transform.site.local.ts
  *
  * Set it and every reader -- bench, emit, navcheck, schema-sync, trace, reads,
  * and the GUI, which also SAVES there -- uses that file. Leave it unset and
@@ -67,12 +67,12 @@ if (specIsExternal && !existsSync(specPath)) {
  * are relative to the FILE, not to the bench. Move the file to a sibling folder
  * and every one of them stops resolving:
  *
- *     error: Cannot find module './run' from 'C:\work\transform.exa.ts'
+ *     error: Cannot find module './run' from 'C:\work\transform.site.ts'
  *
  * So "outside the folder" is the wrong shape. Keep the spec IN the bench folder
  * and name it `*.local.ts`, which is gitignored:
  *
- *     HL7_BENCH_TRANSFORM=transform.exa.local.ts
+ *     HL7_BENCH_TRANSFORM=transform.site.local.ts
  *
  * That still removes both failures this variable was added for. A zip unpacked
  * over the folder to upgrade the tool carries `transform.ts` and not your file,
@@ -97,7 +97,7 @@ try {
         `A spec imports the vocabulary relatively -- ./spec, ./run, ./hl7 -- so those\n` +
         `resolve against the SPEC FILE, not against the bench. Put the file in the bench\n` +
         `folder and name it *.local.ts, which is gitignored and survives a zip upgrade:\n` +
-        `  HL7_BENCH_TRANSFORM=transform.exa.local.ts`,
+        `  HL7_BENCH_TRANSFORM=transform.site.local.ts`,
     );
   }
   die(`the spec file threw while loading.\n  read           ${specPath}\n  it said        ${detail}`);

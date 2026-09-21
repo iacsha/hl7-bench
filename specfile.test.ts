@@ -111,8 +111,8 @@ describe("which file holds the spec", () => {
   });
 
   test("an absolute path is used as given, and counts as external", () => {
-    const got = resolvePathWith({ HL7_BENCH_TRANSFORM: "/tmp/somewhere/transform.exa.ts" });
-    expect(got.path).toBe("/tmp/somewhere/transform.exa.ts");
+    const got = resolvePathWith({ HL7_BENCH_TRANSFORM: "/tmp/somewhere/transform.site.ts" });
+    expect(got.path).toBe("/tmp/somewhere/transform.site.ts");
     expect(got.external).toBe(true);
   });
 

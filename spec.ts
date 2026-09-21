@@ -226,7 +226,7 @@ export interface SchemaStructure {
 }
 
 export interface CustomSchema {
-  /** Category name, e.g. "2.5_EXA". Must differ from `base`. */
+  /** Category name, e.g. "2.5_SITE". Must differ from `base`. */
   category: string;
   /** Stock category it extends, e.g. "2.5". */
   base: string;
@@ -304,6 +304,36 @@ export interface Block {
    * browser rather than guessing.
    */
   group?: string;
+  /**
+   * Seed this target segment from the SOURCE segment of the same id, whole,
+   * before any row runs. The rows then overwrite fields on top of the copy.
+   *
+   * This is the passthrough ADT shape: "send them the PID they sent us, minus
+   * PID-9, PID-19 and PID-20". In ObjectScript that is one call --
+   * `tTarget.SetValueAt(tSource.GetValueAt("PID"),"PID")` -- and enumerating
+   * the fifty fields it copies is not the same statement. Enumeration is a list
+   * of the fields that existed the day it was written; a field the sender adds
+   * next quarter flows under this and silently does not under that.
+   *
+   * WHAT IT COSTS, SAID PLAINLY
+   *
+   * `bun trace.ts` cannot name fields nobody enumerated. A seeded block prints
+   * one COPIED row for the segment and then the rows that override it, and the
+   * receiving team gets "PID: sent as received, except..." instead of a field
+   * table. That is an honest document and a thinner one. Use a seed where the
+   * agreement really is "pass it through", and enumerate where the agreement is
+   * a mapping -- the difference is what you told the receiver, not what is less
+   * typing.
+   *
+   * SAME ID ONLY. A seed is the identity copy; a cross-segment whole copy would
+   * carry the wrong segment id in the first field and IRIS would deliver it.
+   * `validate()` refuses a repeat whose `over` is not this block's id.
+   *
+   * NOT COMPATIBLE WITH `repeat.fold`. A fold appends a continuation onto the
+   * segment already written, and re-seeding on the continuation would overwrite
+   * the head it is supposed to extend. `validate()` refuses the pair.
+   */
+  wholeSegment?: true;
   repeat?: Repeat;
   rows: Row[];
   note?: string;
@@ -386,6 +416,61 @@ export interface Spec {
      * every test still passes.
      */
     schema?: CustomSchema;
+    /**
+     * Where the SOURCE schema keeps a segment, when it is not at the top level.
+     * Segment id to the group path that contains it:
+     *
+     *   sourceGroups: { OBX: "ORCgrp(1).OBXgrp", OBR: "ORCgrp(1).OBRgrp" }
+     *
+     * This is the source-side twin of `Block.group`, and they are genuinely two
+     * facts. A 2.5 DFT keeps OBX inside ORCgrp while a 2.3 MDM keeps it flat, so
+     * one spec needs the source grouped and the target not. Deriving either from
+     * the other writes a transform that resolves nothing on one side.
+     *
+     * Read these off YOUR namespace's schema, not off the standard:
+     *
+     *   zw ^EnsHL7.Schema("<category>","MS","<structure>","map")
+     *
+     * Every entry there is the path IRIS will accept -- "ORCgrp().OBXgrp().OBX"
+     * becomes "ORCgrp(1).OBXgrp" here, because the outer group is fixed and the
+     * inner one is what repeats. A group name that is wrong resolves to empty
+     * and reports nothing, exactly like a wrong DocType.
+     *
+     * The occurrence index on an outer group is an ASSUMPTION. "ORCgrp(1)" reads
+     * the first group and only the first. That is right for a feed that sends
+     * one, which is most of them, and wrong in silence for a feed that sends
+     * two. Confirm it against a real message before trusting it.
+     *
+     * Ignored by the JavaScript runner, whose message model is flat -- same rule
+     * as `Block.group`. The bench will read a wrongly grouped spec perfectly and
+     * IRIS will read nothing, so this is one of the few things the golden gate
+     * cannot catch for you.
+     */
+    sourceGroups?: Record<string, string>;
+    /**
+     * Schema categories this interface READS but does not ship -- ones the
+     * namespace already provides because another interface brought them.
+     *
+     * Reusing one is usually the right call: no import, no write to a shared
+     * global, no change control, and the receiving service is already stamping
+     * that DocType so nothing has to coerce it. What you give up is control.
+     * `bun schema-sync.ts` cannot help here -- it compares the engine against
+     * THIS spec, and this spec does not define the category -- so the note is
+     * the only baseline anyone will have.
+     *
+     * Put the real definition in the note:
+     *
+     *   externalSchemas: [{
+     *     category: "FromVendor",
+     *     note: "Owned by the charges interface. Captured 2026-09-17 from " +
+     *           "DEV: 2.5:MSH~[~{~2.5:SFT~}~]~[~2.5:EVN~]~... (full string)",
+     *   }]
+     *
+     * Missing is the easy case; it resolves to empty and it is loud once you
+     * look. STALE is the dangerous one: the walk succeeds, every path resolves,
+     * and the message navigates under a definition nobody here chose.
+     */
+    externalSchemas?: { category: string; note: string }[];
     /** "new" builds a fresh target, which is what block order below describes. */
     create?: "new" | "copy";
     /**
@@ -641,7 +726,7 @@ function classNameProblems(name: string | undefined): string[] {
 /** A stock HL7 schema category is a bare version: "2.3", "2.5", "2.3.1". */
 const STOCK_CATEGORY = /^\d+(\.\d+)*$/;
 
-/** The category half of a DocType: "2.5_EXA" out of "2.5_EXA:DFT_P03". */
+/** The category half of a DocType: "2.5_SITE" out of "2.5_SITE:DFT_P03". */
 function categoryOf(docType: string): string {
   return docType.includes(":") ? docType.split(":", 1)[0] : "";
 }
@@ -665,14 +750,81 @@ export function validate(spec: Spec): string[] {
     .map(categoryOf)
     .filter((c) => c !== "" && !STOCK_CATEGORY.test(c));
 
+  const external = new Map((spec.iris.externalSchemas ?? []).map((e) => [e.category, e]));
+
   for (const cat of [...new Set(used)]) {
     if (sch?.category === cat) continue;
+    if (external.has(cat)) continue;
     problems.push(
       `iris: DocType uses schema category "${cat}", which is not a stock HL7 version, ` +
-        `and iris.schema does not declare it. Declare it so \`bun emit.ts schema\` ships it. ` +
+        `and neither iris.schema nor iris.externalSchemas declares it. Ship it with ` +
+        `iris.schema, or record it in iris.externalSchemas if the namespace already has it. ` +
         `An undeclared category is imported by somebody remembering to, and when they do not, ` +
         `every named path reads empty and nothing errors.`,
     );
+  }
+
+  for (const e of spec.iris.externalSchemas ?? []) {
+    if (sch?.category === e.category) {
+      problems.push(
+        `iris.externalSchemas lists "${e.category}", which iris.schema also ships. It is ` +
+          `either yours or theirs; declaring both means an import can overwrite a category ` +
+          `another interface resolves against.`,
+      );
+    }
+    if (!used.includes(e.category)) {
+      problems.push(
+        `iris.externalSchemas lists "${e.category}", which no DocType on this spec names. ` +
+          `A dependency nothing uses reads as a leftover.`,
+      );
+    }
+    if (!e.note.trim()) {
+      problems.push(
+        `iris.externalSchemas.${e.category} has an empty note. The note is the only record ` +
+          `of where the definition came from and what it looked like, and a category you do ` +
+          `not own can be edited without you. Stale passes every check you have.`,
+      );
+    }
+  }
+
+  for (const [seg, path] of Object.entries(spec.iris.sourceGroups ?? {})) {
+    if (!/^[A-Z0-9]{3}$/.test(seg)) {
+      problems.push(
+        `iris.sourceGroups key "${seg}" is not a segment id. Keys are the segment being ` +
+          `placed, e.g. "OBX", and the value is the group path that contains it.`,
+      );
+    }
+    // The segment's own id belongs on the read, not in the group path. Writing
+    // "ORCgrp(1).OBXgrp.OBX" here produces "...OBXgrp.OBX.OBX:5", which
+    // resolves to nothing and reports nothing.
+    if (new RegExp(`(^|\\.)${seg}(\\(|$)`).test(path)) {
+      problems.push(
+        `iris.sourceGroups.${seg} is "${path}", which already names ${seg}. The value is the ` +
+          `group path only; the emitter appends ".${seg}" to it.`,
+      );
+    }
+    if (path === "" || /^\.|\.$/.test(path)) {
+      problems.push(`iris.sourceGroups.${seg} is "${path}", which is not a group path`);
+    }
+    // Every element but the last must carry a fixed occurrence, because only
+    // the innermost group is the one a loop walks. "ORCgrp.OBXgrp" leaves the
+    // outer one unsubscripted and IRIS resolves it to nothing.
+    const parts = path.split(".");
+    for (const outer of parts.slice(0, -1)) {
+      if (!/^\w+\(\d+\)$/.test(outer)) {
+        problems.push(
+          `iris.sourceGroups.${seg} is "${path}", but the outer group "${outer}" carries no ` +
+            `fixed occurrence. Write e.g. "${outer}(1)" -- an unsubscripted outer group ` +
+            `resolves to empty, silently. Confirm the index against a real message.`,
+        );
+      }
+    }
+    if (/\(\)$/.test(parts[parts.length - 1]!)) {
+      problems.push(
+        `iris.sourceGroups.${seg} is "${path}". Leave the innermost group bare ("OBXgrp"); ` +
+          `the emitter adds "()" or the loop variable depending on where it is read.`,
+      );
+    }
   }
 
   if (sch) {
@@ -803,6 +955,55 @@ export function validate(spec: Spec): string[] {
       );
     }
     seen.add(block.id);
+
+    // A seed is the identity copy and nothing else. The three refusals below
+    // are the three ways it can be written to look right and deliver wrong.
+    if (block.wholeSegment) {
+      // The source id has to be this block's id, or the copied text carries the
+      // wrong segment id in its first field and IRIS delivers it as that
+      // segment. Nothing errors -- the message is well formed and mislabelled.
+      if (block.repeat && block.repeat.over !== block.id) {
+        problems.push(
+          `${block.id}: wholeSegment with repeat.over "${block.repeat.over}". A seed is the ` +
+            `identity copy; copying a ${block.repeat.over} whole into a ${block.id} writes ` +
+            `"${block.repeat.over}" into the segment id and delivers it under that name. ` +
+            `Enumerate the fields instead, or make the block target ${block.repeat.over}.`,
+        );
+      }
+      // A fold appends onto the segment already written. Re-seeding on the
+      // continuation replaces the head the continuation exists to extend, so
+      // the delivered report is the LAST line of each paragraph.
+      if (block.repeat?.fold) {
+        problems.push(
+          `${block.id}: wholeSegment with repeat.fold. The fold appends onto the segment ` +
+            `already written and the seed would overwrite it, delivering only the last ` +
+            `continuation of each group. Use one or the other.`,
+        );
+      }
+      // A block that continues an earlier one's numbering has no source
+      // occurrence of its own: the seed would read the FIRST source segment of
+      // that id into occurrence n+1. Both backends agree about it, and both are
+      // wrong in the same way -- the extra segment is a duplicate of the first
+      // one wearing a later set id, which reads as real data.
+      if (block.continuesNumbering) {
+        problems.push(
+          `${block.id}: wholeSegment with continuesNumbering. The extra occurrence has no ` +
+            `source occurrence of its own, so the seed would copy the FIRST source ${block.id} ` +
+            `again under a later set id. Enumerate the fields this one carries instead.`,
+        );
+      }
+      // MSH-2 defines the delimiters and MSH-1 is the field separator. Seeding
+      // MSH carries both across unchanged, which is what you want, but a row
+      // that then assigns MSH-2 re-encodes a message already written with the
+      // old delimiters.
+      if (block.id === "MSH" && block.rows.some((r) => r.target === "MSH-2")) {
+        problems.push(
+          `MSH: wholeSegment seeds MSH-2 from the source, and a row also assigns it. ` +
+            `MSH-2 defines the delimiters the rest of the message is already encoded with; ` +
+            `changing it after the copy re-labels the separators without re-encoding anything.`,
+        );
+      }
+    }
 
     // A select or fold path that names a different segment reads the message
     // rather than the current occurrence, so it returns the same value for

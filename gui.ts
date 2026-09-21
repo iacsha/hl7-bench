@@ -23,6 +23,7 @@
  *   ObjectScript emit/iris.ts, the same function `bun emit.ts` calls
  *   Mapping      trace.ts, the same function `bun trace.ts` calls
  *   Source       serialize.ts, exactly the bytes written to transform.ts
+ *   ObjectScript file   --script only: the class you maintain, run by the engine
  *
  * Four of those six are pure functions of the spec, so they cannot describe an
  * interface the bench does not run. The Output pane deliberately is NOT: it
@@ -58,6 +59,9 @@ import { emitIris, routingCondition } from "./emit/iris";
 import { logAuthoring } from "./log";
 import { discardDraft, draftPath, readDraft, writeDraft } from "./draft";
 import { specPath } from "./specpath";
+import { decodeText } from "./input";
+import { runSource, engineLabel } from "./engine-core";
+import { importClass, specModule } from "./import-cls";
 import { pathToFileURL } from "node:url";
 
 const DIR = import.meta.dir;
@@ -79,6 +83,24 @@ const PAGE = join(DIR, "gui.html");
  */
 const arg = process.argv.slice(2).find((a) => a.endsWith(".hl7"));
 const MESSAGE = arg ? resolve(arg) : join(DIR, "sample.hl7");
+
+/**
+ * An ObjectScript class to edit and run beside the spec.
+ *
+ *     bun gui.ts --script AdtToReceiver.cls messages\real.hl7
+ *
+ * The page's other five panes are pure functions of the spec and cannot
+ * describe an interface the bench does not run. This one is the opposite: it is
+ * the code you maintain in Studio, and the bench only runs it and shows you
+ * what came out. Keeping both on one screen is the point -- the spec's output
+ * and the class's output, over the same message, side by side.
+ *
+ * Nothing here reads the class back into a spec. A `.cls` is still never an
+ * input to the mapping; it is a thing to run.
+ */
+const scriptFlag = process.argv.indexOf("--script");
+const SCRIPT = scriptFlag !== -1 ? process.argv[scriptFlag + 1] : undefined;
+const SCRIPT_PATH = SCRIPT ? resolve(SCRIPT) : undefined;
 
 /**
  * Nothing outside the bench folder gets written, whatever the page asks for.
@@ -451,6 +473,92 @@ const server = Bun.serve({
       }
     }
 
+    // ---- the ObjectScript workbench ------------------------------------
+    //
+    // Only mounted when --script named a file. Without it the page has no tab
+    // for this and these endpoints answer 404, so a GUI started the ordinary
+    // way cannot be talked into reading or writing a class by a crafted POST.
+
+    if (url.pathname === "/script" && SCRIPT_PATH) {
+      if (!existsSync(SCRIPT_PATH)) {
+        return json({ file: SCRIPT, source: "", present: false, engine: engineLabel() });
+      }
+      const d = decodeText(readFileSync(SCRIPT_PATH));
+      return json({
+        file: SCRIPT,
+        source: d.text,
+        present: true,
+        // Said out loud rather than converted in silence: the file on disk is
+        // not what it looks like, and the next person to open it in Studio
+        // needs to know that before they wonder why it changed.
+        encoding: d.note,
+        engine: engineLabel(),
+      });
+    }
+
+    if (url.pathname === "/script/run" && req.method === "POST" && SCRIPT_PATH) {
+      const b = await body<{ source?: string; message?: string; docType?: string; method?: string }>(req);
+      if (!b?.source) return json({ error: "Nothing to run." }, 400);
+      const spec = await loadSpec();
+      const t0 = performance.now();
+      const result = runSource({
+        source: b.source,
+        message: b.message ?? read(MESSAGE),
+        docType: (b.docType || "").trim() || spec.iris.sourceDocType,
+        method: (b.method || "").trim() || undefined,
+      });
+      return json({ ...result, ms: Math.round(performance.now() - t0) });
+    }
+
+    // Read the class into the SPEC, once. The spec is the source of truth
+    // afterwards and `bun emit.ts process` writes the class back; importing
+    // again, after either side has been edited, is how the two quietly stop
+    // agreeing. The response says how many lines were not understood, because
+    // a spec that looks complete and is not is worse than no spec.
+    if (url.pathname === "/script/import" && req.method === "POST" && SCRIPT_PATH) {
+      const b = await body<{ source?: string }>(req);
+      if (!b?.source) return json({ error: "Nothing to import." }, 400);
+      try {
+        const report = importClass(b.source);
+        const problems = validate(report.spec);
+        const text = specModule(report.spec, SCRIPT!, report.unread.length);
+
+        // The spec being replaced may be a morning's work. One backup per
+        // session, the same rule the spec editor already follows.
+        if (existsSync(TRANSFORM) && !existsSync(BACKUP)) copyFileSync(TRANSFORM, BACKUP);
+        writeFileSync(TRANSFORM, text, "utf8");
+
+        return json({
+          ok: true,
+          file: basename(TRANSFORM),
+          notes: report.notes,
+          unread: report.unread,
+          problems,
+          blocks: report.spec.blocks.length,
+          rows: report.spec.blocks.reduce((n, x) => n + x.rows.length, 0),
+        });
+      } catch (e) {
+        return json({ error: String(e) }, 500);
+      }
+    }
+
+    if (url.pathname === "/script/save" && req.method === "POST" && SCRIPT_PATH) {
+      const b = await body<{ source?: string }>(req);
+      if (b?.source === undefined) return json({ error: "Nothing to save." }, 400);
+      try {
+        // Back up once per session, for the same reason the spec does: this
+        // overwrites a file somebody may have spent a morning on.
+        const bak = `${SCRIPT_PATH}.bak`;
+        if (existsSync(SCRIPT_PATH) && !existsSync(bak)) {
+          writeFileSync(bak, readFileSync(SCRIPT_PATH));
+        }
+        writeFileSync(SCRIPT_PATH, b.source, "utf8");
+        return json({ ok: true, file: SCRIPT, bytes: Buffer.byteLength(b.source) });
+      } catch (e) {
+        return json({ error: String(e) }, 500);
+      }
+    }
+
     return new Response("Not found", { status: 404 });
   },
 });
@@ -459,6 +567,7 @@ const url = `http://127.0.0.1:${server.port}`;
 console.log(`hl7-bench GUI  ->  ${url}`);
 console.log(`editing        ->  ${TRANSFORM}`);
 console.log(`message        ->  ${MESSAGE}`);
+if (SCRIPT_PATH) console.log(`ObjectScript   ->  ${SCRIPT_PATH}   (${engineLabel()})`);
 console.log(`\n  The page edits the SPEC, not the code. Saving rewrites the spec literal`);
 console.log(`  in transform.ts and leaves everything around it alone. Comments INSIDE`);
 console.log(`  that literal are lost; put the reasoning in note/description/outOfScope,`);
@@ -479,5 +588,21 @@ console.log("  outlived transform.ts.");
 if (!process.argv.includes("--no-open")) {
   // `start` is a cmd builtin, hence the cmd /c. The empty "" is the window
   // title argument, without which a quoted URL is swallowed as the title.
-  Bun.spawn(["cmd", "/c", "start", "", url], { stdout: "ignore", stderr: "ignore" });
+  //
+  // Per platform, because Bun.spawn on a command that is not there THROWS
+  // rather than failing quietly, and the throw is uncaught at top level: the
+  // server that was already listening two lines above dies with
+  // `Executable not found in $PATH: "cmd"`, which reads like the GUI refusing
+  // to start rather than like the browser refusing to open. On a headless box
+  // there is no browser to open at all, so not opening one is the answer and
+  // not a degraded mode.
+  const opener =
+    process.platform === "win32" ? ["cmd", "/c", "start", "", url]
+    : process.platform === "darwin" ? ["open", url]
+    : ["xdg-open", url];
+  try {
+    Bun.spawn(opener, { stdout: "ignore", stderr: "ignore" });
+  } catch {
+    console.log(`\n  No browser opened. Go to ${url} yourself.`);
+  }
 }

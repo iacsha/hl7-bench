@@ -38,6 +38,7 @@ the whole design: one spec, six readers.
 | ...just the A01 ones | `bun check.ts a01` |
 | Let me edit the spec in a form instead of typing | `bun gui.ts` (http://127.0.0.1:7317) |
 | ...against a real message, not sample.hl7 | `bun gui.ts messages\yours.hl7` |
+| Edit and run my existing class in the page | `bun gui.ts --script MyProcess.cls messages\yours.hl7` |
 | Give me the DTL | `bun emit.ts -o My.cls` |
 | Give me the business process | `bun emit.ts process -o MyProcess.cls` |
 | Give me the lookup tables as loadable data | `bun emit.ts tables -o Tables.xml` |
@@ -45,6 +46,11 @@ the whole design: one spec, six readers.
 | Turn this spreadsheet into a lookup table | `bun tables.ts Facilities facilities.csv` |
 | ...as its own importable module | `bun tables.ts Facilities --module facilities.csv > tables.facilities.ts` |
 | ...odd columns / tab delimited | `bun tables.ts Sex --key 2 --value 3 --delim tab codes.txt` |
+| What does the class I already wrote do to this message? | `bun engine.ts messages\real.hl7 --class My.Dtl.Class` |
+| ...it is a business process, not a DTL | `bun engine.ts messages\real.hl7 --script MyProcess.cls` |
+| ...and does my spec agree with it? | add `--diff` |
+| Run my hand-written class against every golden | `bun engine.ts --check --script MyProcess.cls` |
+| ...just the ADT ones | `bun engine.ts --check adt --script MyProcess.cls` |
 | The mapping document for the receiver | `bun trace.ts messages\real.hl7` |
 | ...as a file to send them | `bun trace.ts messages\real.hl7 -o mapping-document.txt` |
 | Which source paths came back empty? | `bun reads.ts messages\real.hl7` |
@@ -58,7 +64,7 @@ the whole design: one spec, six readers.
 | ...one of them | `bun patterns.ts P7` |
 | ...one of them against my message | `bun patterns.ts P7 my.hl7` |
 | Is the bench itself still sound? | `bun test` |
-| Keep my interface out of git and out of an upgrade's way | `HL7_BENCH_TRANSFORM=transform.exa.local.ts` |
+| Keep my interface out of git and out of an upgrade's way | `HL7_BENCH_TRANSFORM=transform.site.local.ts` |
 | Stop a push from publishing a real interface | `git config core.hooksPath hooks` (once per clone) |
 | navcheck says "could not reach IRIS" | read what it printed; it names the cause |
 | ...and it printed `Username:` | set `IRIS_USER` and `IRIS_PASSWORD` in `.env` |

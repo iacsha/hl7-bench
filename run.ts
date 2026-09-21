@@ -245,6 +245,35 @@ export function blankSegment(id: string, d: Delims): Segment {
     : new Segment(id, [id], d);
 }
 
+/**
+ * The segment a `wholeSegment` block seeds from, or undefined.
+ *
+ * For a repeat that is the occurrence currently being delivered, so the second
+ * NK1 seeds from the second source NK1 and not from the first. For a plain
+ * block it is the first source segment with that id.
+ *
+ * Undefined is a real answer: a spec can seed PV2 from a message that carries
+ * no PV2. The caller writes an empty segment in that case, which is what the
+ * DTL does too -- `source.{PV2}` on an absent segment is "" and the assign
+ * creates the segment anyway.
+ */
+export function seedSource(ctx: Ctx, block: Block): Segment | undefined {
+  return ctx.current ?? ctx.msg.seg(block.id);
+}
+
+/**
+ * The target segment a block starts from: a copy of the source when the block
+ * seeds, an empty segment otherwise.
+ *
+ * `clone()` rather than a rebuild through `getField`, because MSH numbers its
+ * fields one off from its own array and a rebuild from outside gets MSH wrong.
+ */
+export function startSegment(ctx: Ctx, block: Block): Segment {
+  if (!block.wholeSegment) return blankSegment(block.id, ctx.msg.delims);
+  const src = seedSource(ctx, block);
+  return src ? src.clone() : blankSegment(block.id, ctx.msg.delims);
+}
+
 /** Which source occurrences a repeat block delivers, after skip and max. */
 /**
  * Order two source values for `select`. Numeric when both sides are numeric,
@@ -470,7 +499,14 @@ export function runSpec(spec: Spec, msg: Message): RunResult {
   const out: Segment[] = [];
 
   walk(spec, msg, event, (block, ctx) => {
-    const seg = blankSegment(block.id, msg.delims);
+    const seg = startSegment(ctx, block);
+    // A seed that found nothing is the silent one. The block still delivers a
+    // segment, the rows still assign into it, and the fields nobody enumerated
+    // are simply absent -- which reads exactly like a sender that stopped
+    // populating them.
+    if (block.wholeSegment && !seedSource(ctx, block)) {
+      result.notes.push(`${block.id}: seeded whole, but the source carries no ${block.id}`);
+    }
     fill(ctx, block, seg, result);
     out.push(seg);
   });

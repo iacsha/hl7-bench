@@ -48,8 +48,17 @@ describe("where the password comes from", () => {
     expect(got.pw).toBe("fromcmd");
   });
 
+  // Written per platform because the thing under test IS the platform shell:
+  // `resolvePassword` runs `cmd /c` on Windows and `sh -c` everywhere else.
+  // `printf` is not a cmd builtin, so the POSIX spelling produced no output at
+  // all there -- the product then correctly reported "produced no password"
+  // and this test read that as a mapping failure. The first-line rule was the
+  // one thing it was meant to cover and was the one thing left uncovered.
+  const TWO_LINES =
+    process.platform === "win32" ? "echo secret&echo noise" : "printf 'secret\\nnoise\\n'";
+
   test("only the first line is taken, so a chatty script does not send its banner", () => {
-    const got = resolveWith({ IRIS_PASSWORD_CMD: "printf 'secret\\nnoise\\n'" });
+    const got = resolveWith({ IRIS_PASSWORD_CMD: TWO_LINES });
     expect(got.pw).toBe("secret");
   });
 

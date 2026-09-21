@@ -44,11 +44,23 @@ import { fingerprint } from "../fingerprint";
  * bench uses a dash: reading them side by side, a path you got wrong is
  * visible rather than plausible.
  */
-export function dtlPath(path: string, prefix = ""): string {
+export function dtlPath(
+  path: string,
+  prefix = "",
+  groups: Record<string, string> = {},
+): string {
   const m = /^([A-Z0-9]{3})-(.+)$/.exec(path.trim());
   if (!m) throw new Error(`Not an HL7 path: "${path}". Expected e.g. PID-5.1`);
   const [, seg, rest] = m;
-  if (!prefix) return `{${seg}:${rest}}`;
+
+  // Where this segment lives when nothing else is in scope. Top level unless
+  // `iris.sourceGroups` says the schema keeps it inside a group.
+  const home = (): string => {
+    const g = groups[seg];
+    return g ? `{${g}.${seg}:${rest}}` : `{${seg}:${rest}}`;
+  };
+
+  if (!prefix) return home();
 
   // Inside a loop the prefix is either a group occurrence, "INSURANCEgrp(k1)",
   // or the repeating segment itself, "IN1(k1)". In the second case the segment
@@ -61,12 +73,66 @@ export function dtlPath(path: string, prefix = ""): string {
     // A DIFFERENT segment read from inside that loop is not nested in it -- it
     // is elsewhere in the message, and `{OBX(k1).OBR:4.1}` resolves to nothing.
     // `run.ts` reads it off the message for exactly this case, so this escapes
-    // the loop to agree with it. A group prefix falls through below, because
-    // there the segment really is inside the group.
-    return `{${seg}:${rest}}`;
+    // the loop to agree with it -- to the segment's own home, which is the top
+    // level unless sourceGroups places it somewhere else.
+    return home();
+  }
+
+  // A group prefix. It belongs to the segment the loop walks, so a read of a
+  // DIFFERENT segment has to escape it the same way the bare-segment branch
+  // does. `{ORCgrp(1).OBXgrp(k1).OBR:4.1}` resolves to nothing and says so
+  // never -- the OBR is in ORCgrp, but it is in OBRgrp, not OBXgrp.
+  //
+  // Only a spec that describes its source layout gets that judgement. With no
+  // `sourceGroups` at all there is nothing to escape TO: the emitter has no
+  // idea where the segment lives, and nesting is what it has always done.
+  if (Object.keys(groups).length > 0 && stripOccurrence(prefix) !== groups[seg]) {
+    return home();
   }
 
   return `{${prefix}.${seg}:${rest}}`;
+}
+
+/**
+ * The DTL reference for a WHOLE segment: "{PID}", "{NK1(n1)}", "{IN1grp(1).IN1}".
+ *
+ * `dtlPath` cannot express this -- every path it takes carries a field number,
+ * because every other thing the vocabulary assigns is a field. A reference with
+ * no ":n" on it resolves to the segment's own text, which is what
+ * `GetValueAt("PID")` returns in ObjectScript and what the assign below copies.
+ *
+ * The prefix rules are `dtlPath`'s, minus the escape branches: a seed is the
+ * identity copy, so the segment being addressed is always the one the loop is
+ * walking and there is never a different segment to escape to.
+ */
+export function dtlSegment(
+  id: string,
+  prefix = "",
+  groups: Record<string, string> = {},
+): string {
+  if (!prefix) {
+    const g = groups[id];
+    return g ? `{${g}.${id}}` : `{${id}}`;
+  }
+  // A bare segment prefix, "NK1(k1)": the id is already in it, and repeating it
+  // gives {NK1(k1).NK1}, which resolves to nothing and does it quietly.
+  const p = /^([A-Z0-9]{3})\((\w+)\)$/.exec(prefix);
+  if (p) {
+    if (p[1] === id) return `{${id}(${p[2]})}`;
+    return dtlSegment(id, "", groups);
+  }
+  // A group prefix that is not where this spec says the segment lives. Same
+  // judgement `dtlPath` makes, and for the same reason: nesting it anyway
+  // produces a reference that resolves to nothing and reports that never.
+  if (Object.keys(groups).length > 0 && stripOccurrence(prefix) !== groups[id]) {
+    return dtlSegment(id, "", groups);
+  }
+  return `{${prefix}.${id}}`;
+}
+
+/** "ORCgrp(1).OBXgrp(k1)" becomes "ORCgrp(1).OBXgrp". */
+function stripOccurrence(prefix: string): string {
+  return prefix.replace(/\([^)]*\)$/, "");
 }
 
 /** Escape for an XML attribute delimited by single quotes. */
@@ -176,6 +242,18 @@ interface Scope {
 
 const TOP: Scope = { sourcePrefix: "", targetPrefix: "" };
 
+/**
+ * Where the SOURCE schema keeps each segment, when it is not at the top level.
+ *
+ * Target-side grouping is `block.group` and is a different fact: a source can
+ * be nested where the target is flat, which is the ordinary case when the two
+ * DocTypes are different HL7 versions. Reading one off the other produces a
+ * transform that resolves nothing on one side and says nothing about it.
+ */
+function srcGroups(st: State): Record<string, string> {
+  return st.spec.iris.sourceGroups ?? {};
+}
+
 /** Emitter state that has to be unique across the whole class. */
 interface State {
   spec: Spec;
@@ -199,7 +277,8 @@ function sourceCode(
   from: Source,
   scope: Scope,
 ): { expr: string | null; pre?: string[] } {
-  const src = (p: string) => `source.${dtlPath(p, scope.sourcePrefix)}`;
+  const groups = srcGroups(st);
+  const src = (p: string) => `source.${dtlPath(p, scope.sourcePrefix, groups)}`;
 
   switch (from.kind) {
     case "copy":
@@ -236,7 +315,7 @@ function sourceCode(
       // be stamped. One $SELECT keeps this class correct for every trigger the
       // rule lets through, and empty for anything it should not have.
       const g = st.spec.gate;
-      const ref = `source.${dtlPath(g.path)}`;
+      const ref = `source.${dtlPath(g.path, "", groups)}`;
       const arms = Object.entries(g.permit).map(([tr, ev]) => `${ref}=${os(tr)}:${os(ev)}`);
       return { expr: `$SELECT(${arms.join(",")},1:"")` };
     }
@@ -252,7 +331,7 @@ function sourceCode(
       // codeRef, not the braced form: every use below lands inside <code>.
       const at = (idx: string, comp?: number) =>
         codeRef(
-          `source.${dtlPath(`${id}-${f}(${idx})${comp === undefined ? "" : "." + comp}`, scope.sourcePrefix)}`,
+          `source.${dtlPath(`${id}-${f}(${idx})${comp === undefined ? "" : "." + comp}`, scope.sourcePrefix, groups)}`,
         );
       return {
         expr: v,
@@ -279,8 +358,19 @@ function sourceCode(
       const v = `p${st.temp++}`;
       const seg = from.segment;
       const rest = (p: string) => p.slice(seg.length + 1);
-      const count = codeRef(`source.{${seg}(*)}`);
-      const ref = (p: string) => codeRef(`source.{${seg}(i${v}):${rest(p)}}`);
+      // The occurrence number goes on whatever actually repeats. At the top
+      // level that is the segment; inside a group it is the GROUP, and the
+      // segment is a single member of each occurrence. `{OBX(3):5}` on a
+      // grouped OBX resolves to nothing, silently, which is the failure this
+      // whole source kind exists to avoid.
+      const g = groups[seg];
+      const count = codeRef(g ? `source.{${g}(*)}` : `source.{${seg}(*)}`);
+      const ref = (p: string) =>
+        codeRef(
+          g
+            ? `source.{${g}(i${v}).${seg}:${rest(p)}}`
+            : `source.{${seg}(i${v}):${rest(p)}}`,
+        );
       return {
         expr: v,
         pre: [
@@ -358,6 +448,26 @@ function code(indent: string, body: string): string[] {
   return [`${indent}<code>`, `${indent}  <![CDATA[ ${body} ]]>`, `${indent}</code>`];
 }
 
+/**
+ * The seed assign for a `wholeSegment` block, emitted above that block's rows.
+ *
+ * One `<assign>` of segment to segment. In the compiled class it is
+ * `target.SetValueAt(source.GetValueAt("PID"),"PID")`, the same call a
+ * hand-written business process makes, so the bench and the engine copy the
+ * same bytes. The rows that follow overwrite fields on top of it, which is why
+ * this has to come first and why nothing here reads the rows.
+ */
+function emitSeed(st: State, block: Block, scope: Scope, indent: string, out: string[]): void {
+  if (!block.wholeSegment) return;
+  const from = `source.${dtlSegment(block.id, scope.sourcePrefix, srcGroups(st))}`;
+  const to = `target.${dtlSegment(block.id, scope.targetPrefix)}`;
+  out.push(
+    `${indent}<!-- ${text(block.id)}: copied WHOLE from the source, then overwritten below. -->`,
+    `${indent}<!--      Fields not listed below are passed through unexamined. -->`,
+    `${indent}<assign value='${attr(from)}' property='${attr(to)}' action='set' />`,
+  );
+}
+
 function emitRow(st: State, row: Row, scope: Scope, indent: string, out: string[]): void {
   if (row.note) out.push(`${indent}<!-- ${text(row.note)} -->`);
 
@@ -383,7 +493,7 @@ function emitRow(st: State, row: Row, scope: Scope, indent: string, out: string[
   // one of exactly two silent failures the class can see for itself: the
   // message is delivered, it is well formed, and the field is wrong.
   if (level !== "off" && row.from.kind === "lookup") {
-    const ref = codeRef(`source.${dtlPath(row.from.path, scope.sourcePrefix)}`);
+    const ref = codeRef(`source.${dtlPath(row.from.path, scope.sourcePrefix, srcGroups(st))}`);
     const t = os(row.from.table);
     // Built with os() on both halves rather than typed as one literal: a
     // table name or a label is free text out of the spec, and one quote in it
@@ -428,12 +538,18 @@ function emitRepeat(st: State, block: Block, index: number, out: string[]): void
   const k = `k${index + 1}`;
   const n = `n${index + 1}`;
   const grp = block.group;
+  // Source and target group separately. `block.group` describes the TARGET, and
+  // defaulting the source to it is right only when both DocTypes nest the same
+  // way. They routinely do not -- a 2.5 source keeps OBX in ORCgrp while a 2.3
+  // target keeps it flat -- so `iris.sourceGroups` wins for the source side
+  // when it has an answer, and nothing changes for a spec that does not set it.
+  const sgrp = srcGroups(st)[r.over] ?? grp;
 
   // Without a group the segment repeats directly and the occurrence number
   // goes on the segment itself. With a group, it goes on the group.
-  const srcRef = grp ? `source.{${grp}()}` : `source.{${r.over}()}`;
+  const srcRef = sgrp ? `source.{${sgrp}()}` : `source.{${r.over}()}`;
   const scope: Scope = {
-    sourcePrefix: grp ? `${grp}(${k})` : `${r.over}(${k})`,
+    sourcePrefix: sgrp ? `${sgrp}(${k})` : `${r.over}(${k})`,
     targetPrefix: grp ? `${grp}(${n})` : `${block.id}(${n})`,
     counterVar: n,
   };
@@ -451,14 +567,14 @@ function emitRepeat(st: State, block: Block, index: number, out: string[]): void
 
   const guards: string[] = [];
   if (r.skipWhenEmpty) {
-    guards.push(`$LENGTH(source.${dtlPath(r.skipWhenEmpty, scope.sourcePrefix)})>0`);
+    guards.push(`$LENGTH(source.${dtlPath(r.skipWhenEmpty, scope.sourcePrefix, srcGroups(st))})>0`);
   }
 
   // select, between skipWhenEmpty and max, because that is the order the stages
   // run in and the order decides the result.
   if (r.select) {
     const sel = r.select;
-    const here = `source.${dtlPath(sel.path, scope.sourcePrefix)}`;
+    const here = `source.${dtlPath(sel.path, scope.sourcePrefix, srcGroups(st))}`;
     if (sel.kind === "equals") {
       guards.push(`${here}=${os(sel.value)}`);
     } else {
@@ -469,8 +585,8 @@ function emitRepeat(st: State, block: Block, index: number, out: string[]): void
       const mx = `max${index + 1}`;
       const v = `v${index + 1}`;
       const km = `${k}m`;
-      const scanPrefix = grp ? `${grp}(${km})` : `${r.over}(${km})`;
-      const read = codeRef(`source.${dtlPath(sel.path, scanPrefix)}`);
+      const scanPrefix = sgrp ? `${sgrp}(${km})` : `${r.over}(${km})`;
+      const read = codeRef(`source.${dtlPath(sel.path, scanPrefix, srcGroups(st))}`);
       out.push(
         `  <!-- ${text(block.id)}: first pass finds the highest ${text(sel.path)}. -->`,
         `  <!--      Empty ranks lowest, so a message that carries none keeps them all. -->`,
@@ -506,7 +622,7 @@ function emitRepeat(st: State, block: Block, index: number, out: string[]): void
     // value, which is why validate() refuses `via` on a row that carries the
     // folded field, and refuses `max` on a repeat that folds.
     const fold = r.fold;
-    const here = `source.${dtlPath(fold.path, scope.sourcePrefix)}`;
+    const here = `source.${dtlPath(fold.path, scope.sourcePrefix, srcGroups(st))}`;
     const isCont = `(${n}>0)&&($EXTRACT(${here},1)=" ")`;
     const carriers = block.rows.filter(
       (row) => row.from.kind === "copy" && row.from.path === fold.path,
@@ -546,6 +662,7 @@ function emitRepeat(st: State, block: Block, index: number, out: string[]): void
       `${bodyIndent}  <![CDATA[ set ${n} = ${n} + 1 ]]>`,
       `${bodyIndent}</code>`,
     );
+    emitSeed(st, block, scope, bodyIndent, body);
     for (const row of block.rows) emitRow(st, row, scope, bodyIndent, body);
   }
 
@@ -739,6 +856,7 @@ export function emitIris(spec: Spec): string {
       : block.group
         ? { sourcePrefix: `${block.group}(1)`, targetPrefix: `${block.group}(1)` }
         : TOP;
+    emitSeed(st, block, scope, "  ", out);
     for (const row of block.rows) emitRow(st, row, scope, "  ", out);
   }
 

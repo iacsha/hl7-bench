@@ -111,6 +111,14 @@ textarea, .out, .mono {
 .diag.bad { color: var(--bad); }
 .diag.quiet { color: var(--muted); }
 
+/* ---- the ObjectScript workbench ---- */
+#tab-script { display: none; flex-direction: column; gap: 6px; min-height: 0; }
+#tab-script.on { display: flex; }
+.scriptbar { display: flex; align-items: center; gap: 8px; flex: 0 0 auto; }
+.tiny-in { width: 110px; background: var(--bg); color: var(--text); border: 1px solid var(--border); border-radius: 3px; padding: 2px 6px; font: inherit; }
+#scriptsrc { flex: 1 1 60%; min-height: 0; resize: vertical; background: var(--bg); color: var(--text); border: 1px solid var(--border); border-radius: 3px; padding: 8px; font: inherit; white-space: pre; overflow: auto; }
+#scriptout { flex: 0 1 40%; min-height: 0; overflow: auto; margin: 0; }
+
 /* ---- tabs ---- */
 .tabs { display: flex; gap: 2px; flex: 0 0 auto; background: var(--panel); border-bottom: 1px solid var(--border); padding: 0 6px; }
 .tabs button {
@@ -226,6 +234,7 @@ input.md { width: 116px; }
         <button data-tab="mapping">Mapping</button>
         <button data-tab="inventory">Inventory</button>
         <button data-tab="source">transform.ts</button>
+        <button data-tab="script" id="scripttab" hidden>ObjectScript file</button>
         <button id="copytab" class="copy" title="Copy this tab. Ctrl+C does the same when nothing is selected.">copy</button>
       </div>
       <div class="tabpane on" id="tab-output">
@@ -235,6 +244,18 @@ input.md { width: 116px; }
       <div class="tabpane" id="tab-mapping"><pre class="mono" id="mapping"></pre></div>
       <div class="tabpane" id="tab-inventory"><pre class="mono" id="inventory"></pre></div>
       <div class="tabpane" id="tab-source"><pre class="mono" id="source"></pre></div>
+      <div class="tabpane" id="tab-script">
+        <div class="scriptbar">
+          <button id="scriptrun" type="button" title="Compile this into a scratch class in the engine and run the message through it">Run in engine</button>
+          <button id="scriptsave" type="button" title="Write this back to the file. A .bak is kept the first time.">Save class</button>
+          <button id="scriptimport" type="button" title="Read this class into the spec form. Replaces the spec; a .bak is kept.">Import into spec</button>
+          <label class="hint" for="scriptmethod">method</label>
+          <input id="scriptmethod" class="tiny-in" placeholder="OnRequest" spellcheck="false">
+          <span class="hint" id="scriptwhere"></span>
+        </div>
+        <textarea id="scriptsrc" spellcheck="false" placeholder="Start the GUI with --script My.cls to load a class here."></textarea>
+        <pre class="mono" id="scriptout"></pre>
+      </div>
     </section>
   </div>
 </main>
@@ -499,7 +520,7 @@ function schemaEditor(redraw) {
   const sch = spec.iris.schema;
 
   if (!sch) {
-    box.appendChild(el("div", { class: "note", text: "None. Stock schemas only. Add one ONLY if a DocType above names a category IRIS does not ship, e.g. 2.5_EXA:DFT_P03 \u2014 without it every named path in the generated DTL resolves to empty and nothing errors." }));
+    box.appendChild(el("div", { class: "note", text: "None. Stock schemas only. Add one ONLY if a DocType above names a category IRIS does not ship, e.g. 2.5_SITE:DFT_P03 \u2014 without it every named path in the generated DTL resolves to empty and nothing errors." }));
     box.appendChild(btn("Add a schema category", "declare a custom category this spec depends on", () => {
       spec.iris.schema = { category: "", base: "", structures: [] };
       markEdited(); redraw(); schedulePreview();
@@ -508,7 +529,7 @@ function schemaEditor(redraw) {
   }
 
   box.appendChild(el("div", { class: "note", text: "A DEPENDENCY of this transform. Emit with `bun emit.ts schema`, load with `bun schema-sync.ts --import`, and confirm the engine still matches with `bun schema-sync.ts`. A category that exists but is STALE passes navcheck: the message navigates, under the wrong definition." }));
-  box.appendChild(el("label", { class: "f" }, [el("span", { text: "category" }), text(sch, "category", { w: "md", ph: "2.5_EXA" })]));
+  box.appendChild(el("label", { class: "f" }, [el("span", { text: "category" }), text(sch, "category", { w: "md", ph: "2.5_SITE" })]));
   box.appendChild(el("label", { class: "f" }, [el("span", { text: "base" }), text(sch, "base", { w: "sm", ph: "2.5" })]));
   box.appendChild(el("label", { class: "f" }, [el("span", { text: "description" }), text(sch, "description", { w: "grow", optional: true, ph: "the feed as it is really sent" })]));
 
@@ -991,6 +1012,33 @@ function sliceAt(raw, delim, offset) {
  * indexes that are always 1 is noise in the one place noise gets copied
  * straight into a spec.
  */
+/**
+ * A field's pieces, each with the character offset it starts at INSIDE the
+ * field, plus the separators between them.
+ *
+ * The offset is the whole point. `hl7Path` already knows how to turn a position
+ * inside a field into "MSH-9.3" -- it was only ever called with `undefined`, so
+ * the pane could name a field and never a component. Handing each piece its own
+ * offset lets the existing path logic label it, rather than a second
+ * implementation of the same arithmetic drifting from the first.
+ *
+ * Repetition first, then components within each repetition, which is the order
+ * `hl7Path` unwinds them in.
+ */
+function leavesOf(value, delims) {
+  const out = [];
+  let off = 0;
+  value.split(delims.rep).forEach((rep, ri) => {
+    if (ri > 0) { out.push({ sep: delims.rep }); off += 1; }
+    rep.split(delims.comp).forEach((comp, ci) => {
+      if (ci > 0) { out.push({ sep: delims.comp }); off += 1; }
+      out.push({ text: comp, offset: off });
+      off += comp.length;
+    });
+  });
+  return out;
+}
+
 function hl7Path(line, delims, fieldIndex, charInField) {
   const parts = line.split(delims.field);
   const id = parts[0];
@@ -1148,7 +1196,38 @@ function renderDiff(before, after) {
       // in hand, and a mousemove handler that reparses the message per pixel
       // is the kind of thing that makes a pane feel broken.
       span.dataset.pos = hl7Path(line, delims, i, undefined) + where;
-      span.textContent = value;
+
+      // Components get their own spans, so hovering "ADT_A01" in
+      // "ADT^A28^ADT_A01" says MSH-9.3 rather than MSH-9. The field span stays
+      // and keeps carrying the field-level path, so the separators between the
+      // pieces -- and a field with nothing to split -- answer as they did.
+      //
+      // MSH-1 and MSH-2 are never split: MSH-1 is the field separator and has
+      // no slot, and MSH-2 is the field that DEFINES the delimiters, so
+      // splitting it by them returns "^". `hl7Path` refuses the same two.
+      const isMsh = id === "MSH";
+      const num = isMsh ? i + 1 : i;
+      const splittable = i > 0 && !(isMsh && num <= 2);
+      const leaves = splittable ? leavesOf(value, delims) : [];
+
+      if (leaves.filter((l) => l.text !== undefined).length > 1) {
+        for (const leaf of leaves) {
+          if (leaf.sep !== undefined) {
+            const s = document.createElement("span");
+            s.className = "sep";
+            s.textContent = leaf.sep;
+            span.appendChild(s);
+            continue;
+          }
+          const c = document.createElement("span");
+          c.className = "fld";
+          c.dataset.pos = hl7Path(line, delims, i, leaf.offset) + where;
+          c.textContent = leaf.text;
+          span.appendChild(c);
+        }
+      } else {
+        span.textContent = value;
+      }
       row.appendChild(span);
     });
     frag.appendChild(row);
@@ -1627,6 +1706,163 @@ $("savecls").addEventListener("click", async () => {
   if (res.error) setStatus(res.error, "bad");
   else setStatus(`saved ${res.bytes} bytes to ${res.file}`, "ok");
 });
+
+// ---------------------------------------------------------------------------
+// The ObjectScript workbench
+//
+// The other panes are printed FROM the spec and cannot describe an interface
+// the bench does not run. This one is the other way round: it holds the class
+// you maintain in Studio, and the engine runs it. Nothing here reads a class
+// back into a spec -- a .cls is a thing to run, never an input to the mapping.
+//
+// Mounted only when the server was started with --script. Without it the tab
+// stays hidden and /script answers 404, so the page cannot be talked into
+// reading or writing a class it was not pointed at.
+// ---------------------------------------------------------------------------
+
+let scriptFile = null;
+
+async function loadScript() {
+  let res;
+  try { res = await fetch("/script"); } catch { return; }
+  if (!res.ok) return;                       // started without --script
+  const s = await res.json();
+  scriptFile = s.file;
+  $("scripttab").hidden = false;
+  $("scripttab").textContent = s.file.split(/[\\/]/).pop();
+  $("scriptsrc").value = s.source;
+  $("scriptwhere").textContent =
+    `${s.file}  ->  ${s.engine}` + (s.encoding ? `   (was ${s.encoding}; decoded)` : "") +
+    (s.present ? "" : "   (file not there yet)");
+}
+
+async function runScript() {
+  const src = $("scriptsrc").value;
+  if (!src.trim()) { $("scriptout").textContent = "Nothing to run."; return; }
+  $("scriptout").textContent = "running in the engine...";
+  let r;
+  try {
+    r = await (await fetch("/script/run", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        source: src,
+        // The message PANE, not the file on disk. Editing the message and
+        // re-running without saving is the whole reason this is here.
+        message: $("message").value,
+        method: $("scriptmethod").value,
+      }),
+    })).json();
+  } catch (e) {
+    $("scriptout").textContent = String(e);
+    return;
+  }
+
+  const head = [];
+  if (r.found) head.push(`read ${scriptFile} as ${r.found}`);
+  if (r.removed && r.removed.length) {
+    head.push(``, `${r.removed.length} line(s) removed before compiling:`);
+    for (const x of r.removed) head.push(`  ${x}`);
+  }
+  if (r.error) {
+    head.push(``, r.error);
+    $("scriptout").textContent = head.join("\n");
+    return;
+  }
+  if (r.segments === null) {
+    head.push(``, "The code produced no target message.");
+    head.push("For a gate that filters this event, that is the correct answer.");
+    $("scriptout").textContent = head.join("\n");
+    return;
+  }
+
+  // The spec's own output for the same message, so the two are on one screen.
+  // That comparison is the thing this pane exists for: the class is what runs
+  // in production, the spec is what the mapping document describes, and a
+  // difference between them is a difference nobody else would have shown you.
+  const specOut = ($("output").textContent || "").split("\n").map((l) => l.trimEnd()).filter(Boolean);
+  const bad = [];
+  const n = Math.max(specOut.length, r.segments.length);
+  for (let i = 0; i < n; i++) {
+    const a = specOut[i] ?? "(no segment)";
+    const b = r.segments[i] ?? "(no segment)";
+    if (a !== b) bad.push(`  ${i + 1}\n    spec   ${a}\n    class  ${b}`);
+  }
+
+  head.push(``, ...r.segments, ``, `engine ${r.engine}   ${r.ms} ms   ${r.segments.length} segment(s)`);
+  if (r.status && r.status.trim()) head.push(`status ${r.status}`);
+  head.push(``, bad.length === 0
+    ? `DIFF vs spec: identical, ${r.segments.length} segment(s)`
+    : `DIFF vs spec: ${bad.length} of ${n} segment(s) differ\n` + bad.join("\n"));
+
+  $("scriptout").textContent = head.join("\n");
+}
+
+$("scriptrun").addEventListener("click", runScript);
+
+// Read the class into the spec form, once.
+//
+// After this the SPEC is the artifact: the form edits it, every other pane is
+// printed from it, and `bun emit.ts process` writes the class back. Importing a
+// second time, after either side has moved, is how two sources of truth appear
+// for one set of decisions -- which is the thing this bench is built to stop.
+$("scriptimport").addEventListener("click", async () => {
+  if (!confirm(
+    "Read this class into the spec?\n\n" +
+    "It REPLACES the spec the form is editing (a .bak is kept).\n" +
+    "From then on the spec is the source and emit writes the class back."
+  )) return;
+
+  const r = await (await fetch("/script/import", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ source: $("scriptsrc").value }),
+  })).json();
+
+  if (r.error) { setStatus(r.error, "bad"); return; }
+
+  const out = [`read into ${r.file}: ${r.blocks} block(s), ${r.rows} row(s)`, ``];
+  for (const n of r.notes) out.push(`  ${n}`);
+  if (r.unread.length) {
+    out.push(``, `${r.unread.length} LINE(S) NOT UNDERSTOOD -- these decisions are NOT in the spec:`);
+    for (const u of r.unread) out.push(`  line ${u.line}: ${u.text}`);
+    out.push(``, `Read them before trusting the form. Each one is something the class`);
+    out.push(`does and the spec does not, and nothing downstream can tell.`);
+  } else {
+    out.push(``, `Every line was understood. Check it against the original anyway --`);
+    out.push(`an importer agrees with itself.`);
+  }
+  if (r.problems && r.problems.length) {
+    out.push(``, `The imported spec does not validate yet:`);
+    for (const p of r.problems) out.push(`  - ${p}`);
+  }
+  $("scriptout").textContent = out.join("\n");
+
+  setStatus(
+    r.unread.length ? `imported with ${r.unread.length} line(s) unread` : "imported cleanly",
+    r.unread.length ? "bad" : "ok",
+  );
+  // The form must show what was just written, not the spec it replaced.
+  await load();
+});
+
+$("scriptsave").addEventListener("click", async () => {
+  const r = await (await fetch("/script/save", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ source: $("scriptsrc").value }),
+  })).json();
+  if (r.error) setStatus(r.error, "bad");
+  else setStatus(`saved ${r.bytes} bytes to ${r.file}`, "ok");
+});
+
+// Ctrl+Enter runs, because the loop here is edit-run-edit and reaching for the
+// button every time is what makes a workbench feel like a form.
+$("scriptsrc").addEventListener("keydown", (e) => {
+  if ((e.ctrlKey || e.metaKey) && e.key === "Enter") { e.preventDefault(); runScript(); }
+});
+
+loadScript();
 
 for (const b of $("tabs").querySelectorAll("button[data-tab]")) {
   b.addEventListener("click", () => {

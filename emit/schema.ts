@@ -9,8 +9,8 @@
  * So the category is an artifact this spec SHIPS, next to the class and the
  * lookup tables, rather than a step in somebody's head.
  *
- *   bun emit.ts schema > exa-schema.xml
- *   do ##class(EnsLib.HL7.SchemaXML).Import("/lab/exa-schema.xml", .cat)
+ *   bun emit.ts schema > site-schema.xml
+ *   do ##class(EnsLib.HL7.SchemaXML).Import("/lab/site-schema.xml", .cat)
  *
  * In a production the category is then named in the HL7 Business Service's
  * MessageSchemaCategory setting. Nothing in a message names it -- MSH-12 is the

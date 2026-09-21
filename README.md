@@ -659,7 +659,7 @@ failure report cannot quote it back.
 
 ### `HL7_BENCH_TRANSFORM` -- keep the interface out of the tool folder
 
-    HL7_BENCH_TRANSFORM=transform.exa.local.ts
+    HL7_BENCH_TRANSFORM=transform.site.local.ts
 
 Unset, the spec is `transform.ts` here and nothing changes. Set, every reader
 follows it: `bench.ts`, `check.ts`, `emit.ts`, `navcheck.ts`, `schema-sync.ts`,

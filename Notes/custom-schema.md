@@ -18,9 +18,9 @@ On a conforming message those agree. On one the schema does not describe they do
 not, and the structure walk stops at the first violation. Everything past it is
 unreachable by name, and it resolves to EMPTY rather than erroring.
 
-Measured on the EXA radiology DFT:
+Measured on the site radiology DFT:
 
-| | stock `2.5:DFT_P03` | custom `2.5_EXA:DFT_P03` |
+| | stock `2.5:DFT_P03` | custom `2.5_SITE:DFT_P03` |
 |---|---|---|
 | `{OBX()}` | 0 | 143 |
 | `{OBR:4.1}` | (empty) | `CHESTPORT` |
@@ -50,7 +50,7 @@ Derive it from the stock definition rather than typing one:
 zwrite ^EnsHL7.Schema("2.5","MS","DFT_P03")
 ```
 
-Then edit only what the feed forces. For EXA that was two things:
+Then edit only what the feed forces. For that feed it was two things:
 
 - `EVN` made optional. Stock 2.5 requires it; this sender omits it, which breaks
   the walk at position 3.
@@ -61,14 +61,14 @@ Neither edit invents a segment. Both say where this feed really puts ones the
 standard already knows about.
 
 ```xml
-<Category name="2.5_EXA" base="2.5" description="EXA radiology DFT P03, as sent">
+<Category name="2.5_SITE" base="2.5" description="site radiology DFT P03, as sent">
   <MessageType name="DFT_P03" structure="DFT_P03"/>
   <MessageStructure name="DFT_P03" definition="MSH~[~{~2.5:SFT~}~]~[~2.5:EVN~]~..."/>
 </Category>
 ```
 
 ```objectscript
-do ##class(EnsLib.HL7.SchemaXML).Import("/lab/exa-schema.xml", .cat)
+do ##class(EnsLib.HL7.SchemaXML).Import("/lab/site-schema.xml", .cat)
 ```
 
 Two things that will waste an hour otherwise:
@@ -96,9 +96,9 @@ living in somebody's memory:
 
 ```ts
 iris: {
-  sourceDocType: "2.5_EXA:DFT_P03",
+  sourceDocType: "2.5_SITE:DFT_P03",
   schema: {
-    category: "2.5_EXA",
+    category: "2.5_SITE",
     base: "2.5",
     structures: [{ name: "DFT_P03", definition: "...", note: "what changed and why" }],
   },
@@ -115,7 +115,7 @@ namespace), refuses a declared category no DocType uses, and refuses the compact
 
 ```
 bun schema-sync.ts --derive DFT_P03 --base 2.5   read the stock definition off the instance
-bun emit.ts schema > exa-schema.xml              the import document
+bun emit.ts schema > site-schema.xml              the import document
 bun schema-sync.ts --import                      load it into the engine
 bun schema-sync.ts                               are they still the same?
 ```

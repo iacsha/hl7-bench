@@ -342,3 +342,96 @@ describe("a path read from inside a repeat, naming another segment", () => {
     expect(dtlPath("IN1-4", "INSURANCEgrp(k1)")).toBe("{INSURANCEgrp(k1).IN1:4}");
   });
 });
+
+describe("iris.sourceGroups places a source segment the schema keeps in a group", () => {
+  // Measured on a real 2.5 DFT_P03: ^EnsHL7.Schema(cat,"MS","DFT_P03","map")
+  // gives "ORCgrp().OBXgrp().OBX", so a flat {OBX(*)} resolves to ZERO on a
+  // message carrying 143 of them. Nothing errors either side of that.
+  const GROUPS = { OBX: "ORCgrp(1).OBXgrp", OBR: "ORCgrp(1).OBRgrp" };
+
+  test("a top-level read lands inside the group", () => {
+    expect(dtlPath("OBR-32.6", "", GROUPS)).toBe("{ORCgrp(1).OBRgrp.OBR:32.6}");
+  });
+
+  test("a segment with no entry is still top level", () => {
+    expect(dtlPath("PID-3", "", GROUPS)).toBe("{PID:3}");
+  });
+
+  test("the loop's own segment keeps the loop occurrence", () => {
+    expect(dtlPath("OBX-5", "ORCgrp(1).OBXgrp(k1)", GROUPS)).toBe(
+      "{ORCgrp(1).OBXgrp(k1).OBX:5}",
+    );
+  });
+
+  test("another segment escapes the loop to ITS group, not to the top level", () => {
+    // The OBR is inside ORCgrp too, but it is in OBRgrp, not OBXgrp.
+    // "{ORCgrp(1).OBXgrp(k1).OBR:4.1}" resolves to nothing and says so never.
+    expect(dtlPath("OBR-4.1", "ORCgrp(1).OBXgrp(k1)", GROUPS)).toBe(
+      "{ORCgrp(1).OBRgrp.OBR:4.1}",
+    );
+  });
+
+  test("an ungrouped segment read from inside a group still escapes to the top", () => {
+    expect(dtlPath("PID-3", "ORCgrp(1).OBXgrp(k1)", GROUPS)).toBe("{PID:3}");
+  });
+
+  test("fromFirst puts the occurrence on the GROUP, not on the segment", () => {
+    // {OBX(3):14} on a grouped OBX resolves to nothing. The group is what
+    // repeats; the segment is one member of each occurrence.
+    const cls = emitIris(
+      base({
+        iris: {
+          sourceDocType: "2.5:DFT_P03",
+          targetDocType: "2.3:MDM_T02",
+          log: "off",
+          sourceGroups: GROUPS,
+        },
+        blocks: [{ id: "TXA", rows: [{ target: "TXA-4", from: fromFirst("OBX", "OBX-14", "OBX-14") }] }],
+      }),
+    );
+    const body = cdata(cls).join("\n");
+    expect(body).toContain(`GetValueAt("ORCgrp(1).OBXgrp(*)")`);
+    expect(body).toContain(`GetValueAt("ORCgrp(1).OBXgrp("_ip1_").OBX:14")`);
+    expect(body).not.toContain(`GetValueAt("OBX(*)")`);
+  });
+
+  test("a repeat walks the group while the target stays flat", () => {
+    // The whole reason source and target group separately: a 2.5 source keeps
+    // OBX in ORCgrp, a 2.3 MDM_T02 keeps it at the top level.
+    const cls = emitIris(
+      base({
+        iris: {
+          sourceDocType: "2.5:DFT_P03",
+          targetDocType: "2.3:MDM_T02",
+          log: "off",
+          sourceGroups: GROUPS,
+        },
+        blocks: [
+          {
+            id: "OBX",
+            repeat: { over: "OBX" },
+            rows: [{ target: "OBX-5", from: copy("OBX-5") }],
+          },
+        ],
+      }),
+    );
+    expect(cls).toContain(`<foreach property='source.{ORCgrp(1).OBXgrp()}' key='k1' >`);
+    expect(cls).toContain(`source.{ORCgrp(1).OBXgrp(k1).OBX:5}`);
+    expect(cls).toContain(`property='target.{OBX(n1):5}'`);
+    expect(cls).not.toContain(`target.{ORCgrp`);
+  });
+
+  test("a spec that sets none of this reads exactly as it did before", () => {
+    // Back-compat is the point: every spec written before sourceGroups existed
+    // has to emit the same paths. A group prefix with nothing declared keeps
+    // nesting, because the emitter has no better answer available.
+    expect(dtlPath("PID-3", "", {})).toBe("{PID:3}");
+    expect(dtlPath("OBR-4.1", "OBX(k1)", {})).toBe("{OBR:4.1}");
+    expect(dtlPath("IN1-4", "INSURANCEgrp(k1)", {})).toBe("{INSURANCEgrp(k1).IN1:4}");
+
+    const cls = emitIris(
+      base({ blocks: [{ id: "PID", rows: [{ target: "PID-3", from: copy("PID-3") }] }] }),
+    );
+    expect(cls).toContain(`<assign value='source.{PID:3}' property='target.{PID:3}' action='set' />`);
+  });
+});

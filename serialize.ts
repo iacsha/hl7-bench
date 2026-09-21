@@ -224,6 +224,10 @@ export function specToSource(spec: Spec): string {
     out.push(`      id: ${q(block.id)},`);
     if (block.group) out.push(`      group: ${q(block.group)},`);
     if (block.continuesNumbering) out.push(`      continuesNumbering: true,`);
+    // Written back or a GUI save silently un-seeds the block: the form round
+    // trip would drop the flag, the emitted class would stop copying the
+    // segment, and every field nobody enumerated would quietly stop flowing.
+    if (block.wholeSegment) out.push(`      wholeSegment: true,`);
     if (block.note) out.push(`      note: ${q(block.note)},`);
     if (block.repeat) {
       const r = block.repeat;

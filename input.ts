@@ -33,6 +33,47 @@
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
+/**
+ * Bytes to text, whatever the editor that wrote them decided.
+ *
+ * PowerShell 5.1's `>` writes UTF-16LE. Studio and Notepad will both hand you a
+ * UTF-8 BOM. Read as plain utf8, the first is text with a NUL between every
+ * character -- not text with a problem, text that matches NO pattern at all --
+ * and the second has an invisible character sitting in front of the first line,
+ * so every `^` anchor misses it.
+ *
+ * Neither failure announces itself. A tool reads the file, finds nothing it
+ * recognises, and reports something true about the wrong thing. So the decoding
+ * happens once, here, and `note` says when the file was not what it looked
+ * like, because converting somebody's input silently is its own way to be
+ * wrong.
+ */
+export function decodeText(bytes: Uint8Array): { text: string; note?: string } {
+  const b = Buffer.from(bytes);
+
+  if (b.length >= 2 && b[0] === 0xff && b[1] === 0xfe) {
+    return { text: b.subarray(2).toString("utf16le"), note: "UTF-16LE (PowerShell's > writes this)" };
+  }
+  if (b.length >= 2 && b[0] === 0xfe && b[1] === 0xff) {
+    return { text: b.subarray(2).swap16().toString("utf16le"), note: "UTF-16BE" };
+  }
+  if (b.length >= 3 && b[0] === 0xef && b[1] === 0xbb && b[2] === 0xbf) {
+    return { text: b.subarray(3).toString("utf8"), note: "UTF-8 with a BOM" };
+  }
+  // No BOM, but every other byte is NUL: UTF-16LE that lost its mark, which is
+  // what a redirect into an existing file produces. ASCII text never looks like
+  // this, and the sample is capped so a large binary does not cost a scan.
+  const look = Math.min(b.length, 64);
+  if (look >= 4) {
+    let nulls = 0;
+    for (let i = 1; i < look; i += 2) if (b[i] === 0) nulls++;
+    if (nulls === Math.floor((look - 1) / 2)) {
+      return { text: b.toString("utf16le"), note: "UTF-16LE with no BOM" };
+    }
+  }
+  return { text: b.toString("utf8") };
+}
+
 export type MessageInput = {
   raw: string;
   /** What to record in the log: the path, "stdin", or "sample.hl7". */
@@ -40,7 +81,12 @@ export type MessageInput = {
 };
 
 /** Flags whose VALUE is a filename and must not be read as the input. */
-const VALUE_FLAGS = new Set(["-o", "--out", "--doctype", "--key", "--value", "--delim", "--from"]);
+const VALUE_FLAGS = new Set([
+  "-o", "--out", "--doctype", "--key", "--value", "--delim", "--from",
+  // engine.ts. `--script somebody.hl7` is a legal thing to write, and without
+  // this the body file would be read as the message and the message ignored.
+  "--class", "--script",
+]);
 
 /** What each tool will accept as a named input file. */
 const HL7 = [".hl7"];
@@ -115,7 +161,9 @@ async function read(
       );
       process.exit(1);
     }
-    return { raw: readFileSync(named, "utf8"), source: named };
+    const d = decodeText(readFileSync(named));
+    if (d.note) process.stderr.write(`${toolName}: ${named} is ${d.note}; decoded it\n`);
+    return { raw: d.text, source: named };
   }
 
   // A bare run on a terminal would otherwise block on input that is never
@@ -125,7 +173,7 @@ async function read(
 
   const fallback = join(import.meta.dir, "sample.hl7");
   if (sampleFallback && existsSync(fallback)) {
-    return { raw: readFileSync(fallback, "utf8"), source: "sample.hl7" };
+    return { raw: decodeText(readFileSync(fallback)).text, source: "sample.hl7" };
   }
 
   const example = exts[0] === ".hl7" ? "messages\\yours.hl7" : "codes.csv";

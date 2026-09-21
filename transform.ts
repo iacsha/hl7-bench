@@ -25,7 +25,7 @@
  * their name, their vendor, their accession numbers and the reasoning behind
  * every row, and this file is tracked. Put it outside the folder and name it:
  *
- *     HL7_BENCH_TRANSFORM=C:\work\exa\transform.exa.ts
+ *     HL7_BENCH_TRANSFORM=C:\work\site\transform.site.ts
  *
  * Every reader follows that variable, the GUI saves there, and a zip unpacked
  * over this folder to upgrade the tool can no longer overwrite your interface.
