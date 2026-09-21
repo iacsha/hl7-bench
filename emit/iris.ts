@@ -389,6 +389,39 @@ function sourceCode(
       };
     }
 
+    case "fromWhere": {
+      // The same walk as fromFirst, asking a different question. The
+      // occurrence number goes on whatever repeats -- the group when the
+      // schema nests this segment, the segment itself otherwise.
+      const v = `w${st.temp++}`;
+      const seg = from.segment;
+      const rest = (p: string) => p.slice(seg.length + 1);
+      const g = groups[seg];
+      const count = codeRef(g ? `source.{${g}(*)}` : `source.{${seg}(*)}`);
+      const ref = (p: string) =>
+        codeRef(
+          g
+            ? `source.{${g}(i${v}).${seg}:${rest(p)}}`
+            : `source.{${seg}(i${v}):${rest(p)}}`,
+        );
+      return {
+        expr: v,
+        pre: [
+          `<code>`,
+          `  <![CDATA[`,
+          `  set ${v} = ""`,
+          `  for i${v}=1:1:${count} {`,
+          `    if ${ref(from.where)} = ${os(from.equals)} {`,
+          `      set ${v} = ${ref(from.read)}`,
+          `      quit`,
+          `    }`,
+          `  }`,
+          `  ]]>`,
+          `</code>`,
+        ],
+      };
+    }
+
     case "todo":
       return { expr: null };
   }

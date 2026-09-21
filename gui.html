@@ -303,6 +303,12 @@ const SOURCE_FORM = {
     { k: "nonEmpty", ph: "NK1-2", w: "sm", title: "The occurrence is chosen when THIS path has a value." },
     { k: "path", ph: "NK1-2", w: "sm", title: "The path READ from the occurrence that was chosen." },
   ],
+  fromWhere:  [
+    { k: "segment", ph: "NK1", w: "sm", title: "Which repeating SOURCE segment to walk." },
+    { k: "where", ph: "NK1-1", w: "sm", title: "The path TESTED on each occurrence, e.g. NK1-1 for the set id." },
+    { k: "equals", ph: "2", w: "sm", title: "The value that path must equal. First match wins." },
+    { k: "read", ph: "NK1-2", w: "sm", title: "The path READ from the occurrence that matched." },
+  ],
   todo:       [{ k: "why", ph: "why this is not expressible yet", w: "grow", title: "Delivers empty and shows as TODO in the trace and the class. Visible on purpose." }],
 };
 
@@ -316,6 +322,7 @@ const SOURCE_HELP = {
   event: "The TARGET trigger event the gate resolved to, e.g. A28 for an inbound A01.",
   pickRepeat: "Scan a field's repetitions for the one whose component matches, then take from it. For doctor fields, where position is not stable.",
   fromFirst: "The first occurrence of a repeating segment that carries a value.",
+  fromWhere: "The occurrence of a repeating segment whose path EQUALS a value, e.g. the NK1 whose NK1-1 is 2. pickRepeat is the sibling for ~ repetitions inside one field.",
   todo: "Not expressible yet. Delivers empty and says so everywhere.",
 };
 
@@ -338,6 +345,7 @@ const SOURCE_DEFAULT = {
   event: () => ({ kind: "event" }),
   pickRepeat: () => ({ kind: "pickRepeat", path: "", whereComponent: 1, equals: "", take: "whole" }),
   fromFirst: () => ({ kind: "fromFirst", segment: "", nonEmpty: "", path: "" }),
+  fromWhere: () => ({ kind: "fromWhere", segment: "", where: "", equals: "", read: "" }),
   todo: () => ({ kind: "todo", why: "" }),
 };
 

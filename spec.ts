@@ -95,6 +95,25 @@ export type Source =
    */
   | { kind: "fromFirst"; segment: string; nonEmpty: string; path: string }
   /**
+   * The occurrence of a repeating segment whose `where` path EQUALS `equals`,
+   * read at `read`.
+   *
+   * `fromFirst` tests for a value being present; this tests for it being a
+   * particular value, which is a different question and could not be asked.
+   * "The NK1 whose NK1-1 is 2" is the shape that prompted it: set ids are how
+   * a sender distinguishes relatives, and neither counting occurrences nor
+   * testing for non-emptiness finds the right one.
+   *
+   * `pickRepeat` is the sibling for the other axis -- it scans the `~`
+   * repetitions WITHIN one field, where this walks occurrences of a SEGMENT.
+   * Reaching for the wrong one reads nothing and reports nothing.
+   *
+   * First match wins. A sender that puts the same set id on two segments has a
+   * problem this cannot solve, and picking the later one silently would hide
+   * it.
+   */
+  | { kind: "fromWhere"; segment: string; where: string; equals: string; read: string }
+  /**
    * Not expressible yet. Delivers empty, traces as TODO, emits a TODO comment
    * and no assign.
    *
@@ -106,7 +125,7 @@ export type Source =
 
 export const SOURCE_KINDS = [
   "copy", "literal", "firstOf", "lookup", "counter",
-  "event", "pickRepeat", "fromFirst", "todo",
+  "event", "pickRepeat", "fromFirst", "fromWhere", "todo",
 ] as const;
 
 // ---------------------------------------------------------------------------
@@ -587,6 +606,13 @@ export const pickRepeat = (
 export const fromFirst = (segment: string, nonEmpty: string, path: string): Source =>
   ({ kind: "fromFirst", segment, nonEmpty, path });
 
+export const fromWhere = (
+  segment: string,
+  where: string,
+  equals: string,
+  read: string,
+): Source => ({ kind: "fromWhere", segment, where, equals, read });
+
 export const blank = (): Unmapped => ({ kind: "blank" });
 export const passthrough = (): Unmapped => ({ kind: "passthrough" });
 export const constant = (value: string): Unmapped => ({ kind: "constant", value });
@@ -650,6 +676,7 @@ export function describeSource(from: Source): string {
       return `${from.path} where .${from.whereComponent}=${from.equals}${take}`;
     }
     case "fromFirst": return `first ${from.segment} with ${from.nonEmpty}`;
+    case "fromWhere": return `${from.segment} where ${from.where}=${from.equals}, read ${from.read}`;
     case "todo": return "(TODO)";
   }
 }
@@ -686,6 +713,7 @@ export function sourcePathsOf(from: Source): string[] {
     case "lookup": return [from.path];
     case "pickRepeat": return [from.path];
     case "fromFirst": return [from.nonEmpty, from.path];
+    case "fromWhere": return [from.where, from.read];
     case "literal":
     case "counter":
     case "event":
@@ -1068,6 +1096,25 @@ export function validate(spec: Spec): string[] {
             `the DTL cannot, and would append continuations of a capped occurrence onto the ` +
             `last one it kept. Use one or the other.`,
         );
+      }
+    }
+
+    // The same trap as select and fold, and it was not checked. A
+    // skipWhenEmpty naming another segment is read off the CURRENT occurrence
+    // of `over`, where it resolves to nothing on every one -- so either every
+    // occurrence is skipped or none is, and the delivered message is plausible
+    // either way. Usually a leftover from a copied block.
+    if (rep?.skipWhenEmpty) {
+      try {
+        if (segmentOf(rep.skipWhenEmpty) !== rep.over) {
+          problems.push(
+            `${block.id}: repeat.skipWhenEmpty is "${rep.skipWhenEmpty}", which is not a ${rep.over} ` +
+              `path. It is read off the current ${rep.over}, so it resolves to nothing on every ` +
+              `occurrence -- skipping all of them or none, with no error either way.`,
+          );
+        }
+      } catch (e) {
+        problems.push(`${block.id}: repeat.skipWhenEmpty: ${(e as Error).message}`);
       }
     }
 

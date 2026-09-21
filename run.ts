@@ -181,6 +181,17 @@ function resolveSource(ctx: Ctx, from: Source): { raw: string; todo?: string; no
       return { raw: "" };
     }
 
+    case "fromWhere": {
+      for (const seg of ctx.msg.all(from.segment)) {
+        if (seg.get(from.where) !== from.equals) continue;
+        return { raw: seg.get(from.read) };
+      }
+      // Not found is empty, and a `required` row is how you find out. Throwing
+      // would refuse a message the interface handles perfectly well when the
+      // relative simply is not there.
+      return { raw: "" };
+    }
+
     case "todo":
       return { raw: "", todo: from.why };
   }

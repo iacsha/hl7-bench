@@ -3,7 +3,7 @@ import { Message } from "./hl7";
 import {
   SOURCE_KINDS, STEP_KINDS, SELECT_KINDS, FOLD_KINDS,
   validate, emptyTables, describeSource, describeSelect, describeFold,
-  copy, literal, firstOf, lookup, counter, event, pickRepeat, fromFirst, todo,
+  copy, literal, firstOf, lookup, counter, event, pickRepeat, fromFirst, fromWhere, todo,
   blank, passthrough, constant,
   date8, truncate, upper, stripDelims, stripChars, defaultTo, prefix, stamp,
   highest, equals, continuation,
@@ -848,6 +848,7 @@ describe("every vocabulary kind is handled by every backend", () => {
     event: event(),
     pickRepeat: pickRepeat("PV1-7", 7, "NPI", 1),
     fromFirst: fromFirst("NK1", "NK1-2", "NK1-2.1"),
+    fromWhere: fromWhere("NK1", "NK1-1", "2", "NK1-2.1"),
     todo: todo("not settled yet"),
   };
 
