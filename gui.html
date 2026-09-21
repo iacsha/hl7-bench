@@ -704,6 +704,30 @@ function sourceEditor(row, redraw) {
  * is a thing nobody can read in a form, and every case so far is the same
  * shape: find the right occurrence, then translate what is in it.
  */
+/**
+ * Write one field of iris.process, creating or removing the block as needed.
+ *
+ * A process with a class and no sendTo emits `SendRequestAsync` with no
+ * target, which fails at RUN time rather than at compile time -- so an
+ * half-filled block is worse than none, and emptying both boxes removes it.
+ */
+function setProcess(key, value) {
+  const v = (value ?? "").trim();
+  if (!spec.iris.process) {
+    if (v === "") return;
+    spec.iris.process = { className: "", sendTo: "" };
+  }
+  if (v === "") delete spec.iris.process[key];
+  else spec.iris.process[key] = v;
+
+  const p = spec.iris.process;
+  if (!p.className && !p.sendTo) delete spec.iris.process;
+  else { p.className = p.className ?? ""; p.sendTo = p.sendTo ?? ""; }
+
+  markEdited();
+  schedulePreview();
+}
+
 function keySourceEditor(from, redraw, title) {
   const wrap = el("span", { class: "steps" });
   const kinds = ["(flat path)", ...KEY_SOURCE_KINDS];
@@ -835,7 +859,10 @@ function renderSpec() {
   host.appendChild(el("fieldset", {}, [
     el("legend", { text: "IRIS" }),
     el("div", { class: "note", text: "A wrong DocType fails closed: paths stop resolving, the output is empty, and nothing in the log says why. Confirm both against the schema browser in the live namespace." }),
-    el("label", { class: "f" }, [el("span", { text: "class" }), text(spec.iris, "className", { w: "grow", optional: true, ph: "Org.Feed.DTL.AdtToDownstream" })]),
+    el("label", { class: "f" }, [el("span", { text: "DTL class" }), text(spec.iris, "className", {
+      w: "grow", optional: true, ph: "Org.Feed.DTL.AdtToDownstream",
+      title: "The generated TRANSFORM class. Two classes come out of a spec and this is the first; the process below is the second, and they must not share a name.",
+    })]),
     el("label", { class: "f" }, [el("span", { text: "source DocType" }), text(spec.iris, "sourceDocType", { w: "md", ph: "2.3:ADT_A01" })]),
     el("label", { class: "f" }, [el("span", { text: "target DocType" }), text(spec.iris, "targetDocType", { w: "md", ph: "2.3.1:ADT_A05" })]),
     el("label", { class: "f" }, [
@@ -845,6 +872,42 @@ function renderSpec() {
     el("label", { class: "f" }, [
       el("span", { text: "log" }),
       select(spec.iris.log ?? "warn", ["off", "warn", "trace"], (v) => { spec.iris.log = v; markEdited(); schedulePreview(); }),
+    ]),
+
+    // The business process. Optional, and the form had no way to say it at
+    // all -- so a spec authored entirely here could never emit one, and
+    // "Class from spec" answered with an error naming a key nothing on screen
+    // could set.
+    //
+    // sendTo is the one fact in a whole spec that cannot be derived from the
+    // mapping. It is the config item name as the production spells it.
+    el("div", { class: "note", text: "A business process is optional. Fill both boxes to emit one; leave them empty and only the DTL is generated. sendTo is the config item name as the production spells it, and it is the one fact here that cannot be worked out from the mapping." }),
+    el("label", { class: "f" }, [
+      el("span", { text: "process class" }),
+      text({ get v() { return spec.iris.process?.className ?? ""; } }, "v", {
+        w: "grow", ph: "Org.Feed.Process.AdtToDownstream",
+        title: "The generated BUSINESS PROCESS. Must differ from the DTL class above: compiling both under one name replaces the transform, and the rule then fails at run time about a transform that is right there in the portal.",
+        get: () => spec.iris.process?.className ?? "",
+        set: (_o, val) => setProcess("className", val),
+      }),
+    ]),
+    el("label", { class: "f" }, [
+      el("span", { text: "sendTo" }),
+      text({}, "sendTo", {
+        w: "md", ph: "ToDownstream.ADT.TCP",
+        title: "The config item the process dispatches to, spelled as the production spells it. ErrBusinessDispatchNameNotRegistered means this matches no enabled item.",
+        get: () => spec.iris.process?.sendTo ?? "",
+        set: (_o, val) => setProcess("sendTo", val),
+      }),
+    ]),
+    el("label", { class: "f" }, [
+      el("span", { text: "process note" }),
+      text({}, "comment", {
+        w: "grow", optional: true, ph: "why this process exists",
+        title: "Carried into the generated class header.",
+        get: () => spec.iris.process?.comment ?? "",
+        set: (_o, val) => setProcess("comment", val),
+      }),
     ]),
     el("div", { class: "note", text: "What the generated class writes to the IRIS Event Log, not what this bench writes here. warn: one warning on an unmapped lookup code and on a required field that came out empty. trace: that plus a $$TRACE per assigned field, visible in Visual Trace. A sender that routinely emits an unmapped code writes one warning PER MESSAGE until the table is fixed." }),
   ]));
