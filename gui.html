@@ -277,21 +277,56 @@ const $ = (id) => document.getElementById(id);
 // forgotten here shows up in the page as a visible gap rather than as an option
 // that silently does nothing. Same reason `todo()` exists in the vocabulary.
 
+// Every box says what it is on hover. The `title` matters most where two
+// boxes on one line hold paths pointing opposite ways -- a `copy` row has a
+// TARGET on the left and a SOURCE here, and getting them backwards reads an
+// empty path and writes it over a field that was already right.
 const SOURCE_FORM = {
-  copy:       [{ k: "path", ph: "PID-3", w: "md" }],
-  literal:    [{ k: "value", ph: "constant", w: "md" }],
-  firstOf:    [{ k: "paths", ph: "PID-4, PID-3", list: true, w: "grow" }],
-  lookup:     [{ k: "table", ph: "table", w: "md" }, { k: "path", ph: "PID-8", w: "sm" }, { k: "unmapped", unmapped: true }],
+  copy:       [{ k: "path", ph: "PID-3", w: "md", title: "SOURCE path -- the field READ from the incoming message." }],
+  literal:    [{ k: "value", ph: "constant", w: "md", title: "Written verbatim on every message. Leave empty to clear the target field." }],
+  firstOf:    [{ k: "paths", ph: "PID-4, PID-3", list: true, w: "grow", title: "SOURCE paths, in order. The first one with a value wins." }],
+  lookup:     [
+    { k: "table", ph: "table", w: "md", title: "Which lookup table to translate through. Declared under tables below." },
+    { k: "path", ph: "PID-8", w: "sm", title: "SOURCE path whose value is looked up." },
+    { k: "unmapped", unmapped: true, title: "What happens to a code the table has no row for. There is no default on purpose." },
+  ],
   counter:    [],
   event:      [],
   pickRepeat: [
-    { k: "path", ph: "PV1-7", w: "sm" },
-    { k: "whereComponent", ph: "13", num: true, w: "sm" },
-    { k: "equals", ph: "NPI", w: "sm" },
-    { k: "take", ph: "whole | 1 | 1,2,3", take: true, w: "md" },
+    { k: "path", ph: "PV1-7", w: "sm", title: "SOURCE field whose repetitions are scanned." },
+    { k: "whereComponent", ph: "13", num: true, w: "sm", title: "Which COMPONENT of each repetition to test, e.g. 13 for the id type." },
+    { k: "equals", ph: "NPI", w: "sm", title: "The value that component must equal for the repetition to be chosen." },
+    { k: "take", ph: "whole | 1 | 1,2,3", take: true, w: "md", title: "What to take from the chosen repetition: whole, one component number, or several joined back together." },
   ],
-  fromFirst:  [{ k: "segment", ph: "NK1", w: "sm" }, { k: "nonEmpty", ph: "NK1-2", w: "sm" }, { k: "path", ph: "NK1-2", w: "sm" }],
-  todo:       [{ k: "why", ph: "why this is not expressible yet", w: "grow" }],
+  fromFirst:  [
+    { k: "segment", ph: "NK1", w: "sm", title: "Which repeating SOURCE segment to walk." },
+    { k: "nonEmpty", ph: "NK1-2", w: "sm", title: "The occurrence is chosen when THIS path has a value." },
+    { k: "path", ph: "NK1-2", w: "sm", title: "The path READ from the occurrence that was chosen." },
+  ],
+  todo:       [{ k: "why", ph: "why this is not expressible yet", w: "grow", title: "Delivers empty and shows as TODO in the trace and the class. Visible on purpose." }],
+};
+
+/** One line per source kind, shown on the kind dropdown itself. */
+const SOURCE_HELP = {
+  copy: "Copy a source path straight across.",
+  literal: "Stamp a fixed value on every message.",
+  firstOf: "First non-empty of several source paths.",
+  lookup: "Translate a code through a table, with a stated unmapped branch.",
+  counter: "The output ordinal of the enclosing repeat. Only valid inside one.",
+  event: "The TARGET trigger event the gate resolved to, e.g. A28 for an inbound A01.",
+  pickRepeat: "Scan a field's repetitions for the one whose component matches, then take from it. For doctor fields, where position is not stable.",
+  fromFirst: "The first occurrence of a repeating segment that carries a value.",
+  todo: "Not expressible yet. Delivers empty and says so everywhere.",
+};
+
+const STEP_HELP = {
+  date8: "Keep the first 8 characters. An HL7 datetime down to a date.",
+  truncate: "Keep the first n characters.",
+  upper: "Upper-case the value.",
+  stripDelims: "Remove characters that would be read as delimiters.",
+  stripChars: "Remove every character listed, e.g. the dashes in an SSN.",
+  defaultTo: "Substitute this value when the source came back empty.",
+  prefix: "Put fixed text in front of the value. Writing a whole composite field, e.g. ADT^ before the event.",
 };
 
 const SOURCE_DEFAULT = {
@@ -437,8 +472,9 @@ function text(obj, key, opts = {}) {
   return input;
 }
 
-function check(obj, key, label) {
+function check(obj, key, label, title) {
   const box = el("input", { type: "checkbox" });
+  if (title) box.title = title;
   box.checked = !!obj[key];
   box.addEventListener("change", () => {
     if (box.checked) obj[key] = true;
@@ -446,13 +482,14 @@ function check(obj, key, label) {
     markEdited();
     schedulePreview();
   });
-  return el("label", { class: "f", style: "flex:0 0 auto;margin:0" }, [
+  return el("label", { class: "f", style: "flex:0 0 auto;margin:0", title: title ?? "" }, [
     box, el("span", { text: label, style: "flex:0 0 auto" }),
   ]);
 }
 
-function select(value, options, onchange, cls) {
+function select(value, options, onchange, cls, title) {
   const s = el("select", { class: cls ?? "" });
+  if (title) s.title = title;
   for (const o of options) {
     const opt = el("option", { value: o, text: o });
     if (o === value) opt.selected = true;
@@ -612,7 +649,7 @@ function sourceEditor(row, redraw) {
     markEdited();
     redraw();
     schedulePreview();
-  }));
+  }, undefined, `Where this field's value comes from. ${SOURCE_HELP[row.from.kind] ?? ""}`));
 
   const form = SOURCE_FORM[row.from.kind];
   if (!form) {
@@ -630,7 +667,7 @@ function sourceEditor(row, redraw) {
     if (f.unmapped) { wrap.appendChild(unmappedEditor(row.from)); continue; }
     if (f.list) {
       wrap.appendChild(text(row.from, f.k, {
-        ph: f.ph, w: f.w,
+        ph: f.ph, w: f.w, title: f.title,
         get: (o) => (o[f.k] ?? []).join(", "),
         set: (o, v) => { o[f.k] = v.split(",").map((s) => s.trim()).filter(Boolean); },
       }));
@@ -638,7 +675,7 @@ function sourceEditor(row, redraw) {
     }
     if (f.take) {
       wrap.appendChild(text(row.from, f.k, {
-        ph: f.ph, w: f.w,
+        ph: f.ph, w: f.w, title: f.title,
         get: (o) => showTake(o[f.k]),
         set: (o, v) => { o[f.k] = parseTake(v); },
       }));
@@ -651,12 +688,15 @@ function sourceEditor(row, redraw) {
 
 function stepsEditor(row, redraw) {
   const wrap = el("span", { class: "steps" });
-  wrap.appendChild(el("span", { class: "tag", text: "via" }));
+  wrap.appendChild(el("span", {
+    class: "tag", text: "via",
+    title: "Steps run left to right on the value the source produced, before it is written to the target.",
+  }));
   (row.via ?? []).forEach((step, i) => {
     wrap.appendChild(select(step.kind, stepKinds, (k) => {
       row.via[i] = (STEP_DEFAULT[k] ?? (() => ({ kind: k })))();
       markEdited(); redraw(); schedulePreview();
-    }));
+    }, undefined, `Runs on the value AFTER the source resolves. ${STEP_HELP[step.kind] ?? ""}`));
     for (const f of STEP_FORM[step.kind] ?? []) wrap.appendChild(text(step, f.k, f));
     wrap.appendChild(btn("x", "remove this step", () => {
       row.via.splice(i, 1);
@@ -819,8 +859,10 @@ function renderSpec() {
 
   spec.blocks.forEach((block, bi) => {
     const head = el("div", { class: "bh" }, [
-      text(block, "id", { w: "sm", ph: "PID" }),
-      text(block, "group", { w: "md", optional: true, ph: "IRIS group, e.g. INSURANCEgrp" }),
+      text(block, "id", { w: "sm", ph: "PID",
+        title: "TARGET segment id. Block order IS the delivered segment order." }),
+      text(block, "group", { w: "md", optional: true, ph: "IRIS group, e.g. INSURANCEgrp",
+        title: "Where the TARGET schema keeps this segment. Wrong or missing, the DTL writes nowhere and says nothing. Read it off the schema browser, do not guess." }),
       btn("up", "move this segment earlier", () => {
         if (bi === 0) return;
         spec.blocks.splice(bi - 1, 0, spec.blocks.splice(bi, 1)[0]);
@@ -839,7 +881,8 @@ function renderSpec() {
     const bodyEl = el("div", { class: "bb" });
     bodyEl.appendChild(el("label", { class: "f" }, [
       el("span", { text: "note" }),
-      text(block, "note", { w: "grow", optional: true, ph: "why this segment looks the way it does" }),
+      text(block, "note", { w: "grow", optional: true, ph: "why this segment looks the way it does",
+        title: "Carried into the mapping document and the generated class." }),
     ]));
 
     const repeatBox = el("input", { type: "checkbox" });
@@ -850,12 +893,15 @@ function renderSpec() {
       markEdited(); redraw(); schedulePreview();
     });
     const repeatRow = el("div", { class: "row" }, [
-      repeatBox, el("span", { class: "tag", text: "repeats over" }),
+      repeatBox, el("span", { class: "tag", text: "repeats over",
+        title: "Turn one target segment into many, one per occurrence of a repeating SOURCE segment." }),
     ]);
     if (block.repeat) {
-      repeatRow.appendChild(text(block.repeat, "over", { w: "sm", ph: "IN1" }));
+      repeatRow.appendChild(text(block.repeat, "over", { w: "sm", ph: "IN1",
+        title: "The repeating SOURCE segment to walk." }));
       repeatRow.appendChild(el("span", { class: "tag", text: "skip when empty" }));
-      repeatRow.appendChild(text(block.repeat, "skipWhenEmpty", { w: "sm", optional: true, ph: "IN1-4" }));
+      repeatRow.appendChild(text(block.repeat, "skipWhenEmpty", { w: "sm", optional: true, ph: "IN1-4",
+        title: "Skip a source occurrence when this path is empty. Set ids still number by OUTPUT ordinal, so a skip leaves no hole." }));
       // Laid out in the order the stages run -- skip, select, fold, max -- because
       // the order decides the result and reading it left to right should say so.
       repeatRow.appendChild(el("span", { class: "tag", text: "select" }));
@@ -865,18 +911,33 @@ function renderSpec() {
       repeatRow.appendChild(
         clauseEditor(block.repeat, "fold", foldKinds, FOLD_FORM, FOLD_DEFAULT, redraw));
       repeatRow.appendChild(el("span", { class: "tag", text: "max" }));
-      repeatRow.appendChild(text(block.repeat, "max", { w: "sm", num: true, ph: "3" }));
+      repeatRow.appendChild(text(block.repeat, "max", { w: "sm", num: true, ph: "3",
+        title: "Deliver at most this many. Counted AFTER any fold. A drop here is silent in the delivered message, so the run reports it." }));
     }
     bodyEl.appendChild(repeatRow);
 
     block.rows.forEach((row, ri) => {
       bodyEl.appendChild(el("div", { class: "fieldrow" }, [
-        text(row, "target", { w: "sm", ph: "PID-3" }),
-        text(row, "label", { w: "md", optional: true, ph: "name in the document" }),
-        check(row, "required", "req"),
+        // "target" and the source path are two boxes on one line, and nothing
+        // on screen said which was which. Reversing them reads a path that is
+        // usually empty and writes it over a field the seed had filled, so the
+        // symptom is a field going MISSING rather than a field being wrong.
+        text(row, "target", {
+          w: "sm", ph: "PID-3",
+          title: "TARGET -- the path this row WRITES on the outgoing message. The source is the box to the right of the kind.",
+        }),
+        text(row, "label", {
+          w: "md", optional: true, ph: "name in the document",
+          title: "What the receiving team calls this field. Printed in the mapping document instead of the path.",
+        }),
+        check(row, "required", "req",
+          "Empty here is worth stopping for: it lands in the trace's MISSING list and logs a warning at run time."),
         sourceEditor(row, redraw),
         stepsEditor(row, redraw),
-        text(row, "note", { w: "grow", optional: true, ph: "note, printed in the trace and in the DTL" }),
+        text(row, "note", {
+          w: "grow", optional: true, ph: "note, printed in the trace and in the DTL",
+          title: "Why this row exists. Carried into the mapping document and into the generated class, so the reasoning travels with the code.",
+        }),
         btn("up", "move this field earlier", () => {
           if (ri === 0) return;
           block.rows.splice(ri - 1, 0, block.rows.splice(ri, 1)[0]);
