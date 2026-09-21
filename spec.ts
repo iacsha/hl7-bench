@@ -45,6 +45,9 @@ export type Unmapped =
   | { kind: "passthrough" }
   | { kind: "constant"; value: string };
 
+/** Every unmapped branch, so a serializer can name them without a second list. */
+export const UNMAPPED_KINDS = ["blank", "passthrough", "constant"] as const;
+
 export type Source =
   /** Copy a source path straight across. */
   | { kind: "copy"; path: string }

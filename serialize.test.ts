@@ -21,7 +21,7 @@ import {
   blank, passthrough, constant,
   date8, truncate, upper, stripDelims, stripChars, defaultTo,
   highest, equals, continuation,
-  type Spec,
+  type Spec, SOURCE_KINDS, UNMAPPED_KINDS, STEP_KINDS, SELECT_KINDS, FOLD_KINDS,
 } from "./spec";
 import { runSpec } from "./run";
 import {
@@ -393,5 +393,44 @@ describe("finding the end of the spec literal", () => {
 
   test("an unclosed object reports failure instead of a plausible index", () => {
     expect(endOfObject("x = { a: 1", 4)).toBe(-1);
+  });
+});
+
+// ---------------------------------------------------------------------------
+
+describe("the import line names every kind", () => {
+  // The bug this exists to stop: `constructorsUsed` used to filter against a
+  // hand-written list of names. A kind missing from it was dropped in silence
+  // -- the spec serialized with a constructor the import line did not name, so
+  // the file the GUI had JUST WRITTEN failed to load with "prefix is not
+  // defined". That reads as a corrupt save, not as a missing import, and
+  // nothing pointed at the list.
+  //
+  // Asserting against the exported kind lists means a new kind is covered the
+  // moment it is declared, with nothing to remember.
+  test("every declared kind is orderable, so none can be filtered away", () => {
+    const declared = [
+      ...SOURCE_KINDS, ...UNMAPPED_KINDS, ...STEP_KINDS, ...SELECT_KINDS, ...FOLD_KINDS,
+    ];
+    for (const kind of declared) {
+      const spec: Spec = {
+        name: "Order",
+        gate: { path: "MSH-9.2", permit: { A01: "A01" } },
+        iris: { className: "X.Dtl", sourceDocType: "2.3:ADT_A01", targetDocType: "2.3:ADT_A01" },
+        blocks: [{ id: "PID", rows: [{ target: "PID-3", from: { kind: "copy", path: "PID-3" } }] }],
+      };
+      // Force the kind into the used set the way a real spec would, then check
+      // it survives the ordering rather than being filtered out of existence.
+      const used = constructorsUsed({
+        ...spec,
+        blocks: [
+          {
+            id: "PID",
+            rows: [{ target: "PID-3", from: { kind: "copy", path: "PID-3" }, via: [{ kind } as never] }],
+          },
+        ],
+      });
+      expect(used).toContain(kind);
+    }
   });
 });

@@ -27,6 +27,9 @@
  */
 
 import type { Fold, Row, Select, Source, Spec, Step, Unmapped } from "./spec";
+import {
+  SOURCE_KINDS, UNMAPPED_KINDS, STEP_KINDS, SELECT_KINDS, FOLD_KINDS,
+} from "./spec";
 
 // ---------------------------------------------------------------------------
 // Value printing
@@ -63,13 +66,20 @@ export function constructorsUsed(spec: Spec): string[] {
   }
   // Declared order rather than insertion order: the import line should not
   // churn in a diff because you happened to add a row at the top.
+  //
+  // Built FROM the exported kind lists, never typed out again. This used to be
+  // a hand-written array, and a kind missing from it was dropped silently: the
+  // spec serialized with a constructor the import line did not name, so the
+  // next load died with "prefix is not defined" -- in a file the GUI had just
+  // written, which reads as a corrupt save rather than as a missing import.
   const order = [
-    "copy", "literal", "firstOf", "lookup", "counter", "event",
-    "pickRepeat", "fromFirst", "todo",
-    "blank", "passthrough", "constant",
-    "date8", "truncate", "upper", "stripDelims", "stripChars", "defaultTo",
-    "highest", "equals", "continuation",
-  ];
+    ...SOURCE_KINDS,
+    ...UNMAPPED_KINDS,
+    ...STEP_KINDS,
+    ...SELECT_KINDS,
+    ...FOLD_KINDS,
+  ] as readonly string[];
+
   return order.filter((n) => used.has(n));
 }
 

@@ -418,6 +418,15 @@ function stepCode(expr: string, step: Step): string {
     case "prefix":
       return `${os(step.text)}_${expr}`;
   }
+  // Unreachable while the file matches spec.ts. It is here for when it does
+  // NOT -- a half-copied update leaves a `via` kind this switch has never
+  // heard of, the function returns undefined, and the failure surfaces three
+  // frames later as "undefined is not an object (evaluating 's.replace')" in
+  // the pane that was trying to escape it. Name the kind instead.
+  throw new Error(
+    `emit/iris.ts does not handle the "${(step as { kind: string }).kind}" step. ` +
+      `This file is older than the spec.ts beside it -- copy them together.`,
+  );
 }
 
 // ---------------------------------------------------------------------------
