@@ -5,7 +5,7 @@ import {
   validate, emptyTables, describeSource, describeSelect, describeFold,
   copy, literal, firstOf, lookup, counter, event, pickRepeat, fromFirst, todo,
   blank, passthrough, constant,
-  date8, truncate, upper, stripDelims, stripChars, defaultTo, stamp,
+  date8, truncate, upper, stripDelims, stripChars, defaultTo, prefix, stamp,
   highest, equals, continuation,
   type Spec, type Source, type Step, type Select, type Fold, type Repeat,
 } from "./spec";
@@ -858,6 +858,7 @@ describe("every vocabulary kind is handled by every backend", () => {
     stripDelims: stripDelims(),
     stripChars: stripChars("- "),
     defaultTo: defaultTo("X"),
+    prefix: prefix("ADT^"),
   };
 
   test("the sample table covers every declared kind", () => {

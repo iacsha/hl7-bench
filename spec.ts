@@ -125,10 +125,28 @@ export type Step =
    */
   | { kind: "stripChars"; chars: string }
   /** Substitute a value when the input is empty. */
-  | { kind: "defaultTo"; value: string };
+  | { kind: "defaultTo"; value: string }
+  /**
+   * Put fixed text in front of the value.
+   *
+   * Written for the composite field a row cannot otherwise build. A target of
+   * `MSH-9` with `event()` delivers "A28"; the receiver wants "ADT^A28", and
+   * there is no other way to say that -- assigning MSH-9.1 and MSH-9.2 as two
+   * rows leaves whatever the seed put in MSH-9.3, and blanking THAT leaves a
+   * trailing "^" because emptying a component does not shorten the field.
+   * Writing the whole field at once is the only form that produces exactly two
+   * components, and this is how the first one gets there.
+   *
+   * THE DELIMITER IS YOURS TO GET RIGHT. Text here is written verbatim: a "^"
+   * in it is a component separator only because almost every message declares
+   * "^" in MSH-2. A feed that declares something else would need the text
+   * changed, and neither backend will notice. `stripDelims` exists for the
+   * opposite problem and is the one to reach for when the text is data.
+   */
+  | { kind: "prefix"; text: string };
 
 export const STEP_KINDS = [
-  "date8", "truncate", "upper", "stripDelims", "stripChars", "defaultTo",
+  "date8", "truncate", "upper", "stripDelims", "stripChars", "defaultTo", "prefix",
 ] as const;
 
 // ---------------------------------------------------------------------------
@@ -579,6 +597,7 @@ export const upper = (): Step => ({ kind: "upper" });
 export const stripDelims = (): Step => ({ kind: "stripDelims" });
 export const stripChars = (chars: string): Step => ({ kind: "stripChars", chars });
 export const defaultTo = (value: string): Step => ({ kind: "defaultTo", value });
+export const prefix = (text: string): Step => ({ kind: "prefix", text });
 
 export const highest = (path: string): Select => ({ kind: "highest", path });
 // Named for its kind, not for how it reads in a spec. `constructorsUsed` in

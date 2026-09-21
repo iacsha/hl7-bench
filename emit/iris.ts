@@ -415,6 +415,8 @@ function stepCode(expr: string, step: Step): string {
       return `$TRANSLATE(${expr},${os(step.chars)})`;
     case "defaultTo":
       return `$SELECT($LENGTH(${expr})>0:${expr},1:${os(step.value)})`;
+    case "prefix":
+      return `${os(step.text)}_${expr}`;
   }
 }
 

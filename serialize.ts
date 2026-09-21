@@ -130,6 +130,7 @@ function step(s: Step): string {
     case "stripDelims": return "stripDelims()";
     case "stripChars": return `stripChars(${q(s.chars)})`;
     case "defaultTo": return `defaultTo(${q(s.value)})`;
+    case "prefix": return `prefix(${q(s.text)})`;
   }
 }
 

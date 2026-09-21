@@ -310,6 +310,7 @@ const STEP_FORM = {
   truncate: [{ k: "n", ph: "8", num: true, w: "sm" }],
   stripChars: [{ k: "chars", ph: "- ", w: "sm" }],
   defaultTo: [{ k: "value", ph: "U", w: "sm" }],
+  prefix: [{ k: "text", ph: "ADT^", w: "sm" }],
 };
 
 const STEP_DEFAULT = {
@@ -319,6 +320,7 @@ const STEP_DEFAULT = {
   truncate: () => ({ kind: "truncate", n: 8 }),
   stripChars: () => ({ kind: "stripChars", chars: "" }),
   defaultTo: () => ({ kind: "defaultTo", value: "" }),
+  prefix: () => ({ kind: "prefix", text: "" }),
 };
 
 // A repeat's select and fold. Unlike a source, which every row must have, both

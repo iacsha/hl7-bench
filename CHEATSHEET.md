@@ -126,6 +126,7 @@ This is the decision that actually costs time, so it is worth the table.
 | First non-empty of several paths | block row, `firstOf()` | `firstOf("PID-18", "PV1-19")` |
 | A code translation | block row, `lookup()` | `lookup("Facilities", "MSH-4", blank())` |
 | Different **per destination**, same DTL | `iris.process.stamp` | see below |
+| Two components in one field, and no third | whole-field row + `prefix()` | `{ target: "MSH-9", from: event(), via: [prefix("ADT^")] }` |
 | Genuinely procedural | write a function, not a rule | |
 
 Everything in the first four rows shows up in `bun trace.ts` and is covered by
@@ -164,6 +165,16 @@ The generated block sets `IsMutable` before it writes, and you want that: a
 transformed or saved message refuses `SetValueAt` at **run time**, per message,
 with `<Ens>ErrGeneral: Cannot modify immutable message`. It compiles fine
 without it, which is how it eats a morning.
+
+**"They want ADT^A28, not ADT^A28^ADT_A01."** Emptying MSH-9.3 leaves a
+trailing `^`, because clearing a component does not shorten the field -- the
+bench and IRIS both deliver `ADT^A28^`. Write the WHOLE field instead:
+
+```ts
+{ target: "MSH-9", from: event(), via: [prefix("ADT^")] }
+```
+
+That assigns two components and no third. Measured on both backends.
 
 **"A field is empty and nobody knows why."** `bun trace.ts` prints the source
 path, the raw value, every step and the final value, per field. Read the row.

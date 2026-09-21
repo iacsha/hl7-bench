@@ -211,6 +211,8 @@ function applyStep(value: string, step: Step, delims: Delims): { value: string; 
         value: value === "" ? step.value : value,
         label: `default "${step.value}"`,
       };
+    case "prefix":
+      return { value: step.text + value, label: `prefix "${step.text}"` };
   }
 }
 
