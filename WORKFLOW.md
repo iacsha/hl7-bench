@@ -231,6 +231,75 @@ It compares, for every path the spec reads, what the schema resolves against wha
 an array scan finds, and exits non-zero on a mismatch. `in message` and `via
 schema` should match on every row.
 
+### When you cannot reach IRIS from the box you build on
+
+`navcheck` and `schema-sync` both open a connection. Plenty of sites do not have
+one to open: a namespace reached over a terminal session, where `irisdb.exe -s`
+opens a LOCAL instance and nothing else. That is not a reason to skip the check,
+because the failure it catches is one nobody sees until production.
+
+```powershell
+bun schemacheck.ts --commands              # the zw lines for THIS spec's doctypes
+bun schemacheck.ts messages\schema.zw      # check the spec against what you pasted back
+```
+
+It reads a `zw ^EnsHL7.Schema(...)` dump instead of an instance, so it costs one
+paste, needs no credential, and the dump can sit in the workspace where the check
+runs on every change. Banner lines, a `DEV-NS>` prompt, CRLF and several
+structures concatenated are all fine. A `^EnsHL7.Schema` line it cannot read is
+**counted and printed** rather than skipped -- an answer computed from a dump that
+lost lines is not an answer.
+
+It fails the build on: a segment read with no occurrence index that the schema
+says repeats (the GT1 bug -- `GetValueAt("GT1")` on a repeating segment returns
+EMPTY, the seed finds nothing, the segment never arrives, and `bun check.ts`
+stays green because the bench's message model is flat); **a repeating GROUP read
+with no occurrence index**, which is the same bug one level up and was invisible
+to everything until it was measured --
+
+```
+GRP_NO_OCC |[]                                GetValueAt("IN1grp.IN1")
+GRP_OCC    |[IN1|1|PLAN1|PAY1|PAYER NAME]     GetValueAt("IN1grp(1).IN1")
+```
+
+-- a `group` or an `iris.sourceGroups` entry that disagrees with the schema; and
+a segment the structure does not define at all, which is also how a wrong DocType
+announces itself. A `repeat` over a segment the schema says appears once is a
+warning, because a defensive repeat runs once and costs nothing.
+
+The group case reaches you through a row that reads a grouped segment from
+outside any loop over it -- `source.{IN1grp.IN1:2}`. A block that repeats over
+the segment, or a `wholeSegment` seed, both come out indexed already and stay
+quiet.
+
+This is the gate that replaced `emit.ts`'s BARE SEGMENT PATHS warning. The
+warning is still printed; it is a prompt you can skim past, and this is not.
+
+### And when you develop on one instance and deploy to another
+
+Standing up a local IRIS to build against is the right move when the target
+namespace is unreachable. The local box is a valid stand-in for exactly as long
+as its schema matches the target's, and nothing tells you the morning that stops
+being true -- the build stays green and the deploy stops working.
+
+```powershell
+bun schemacheck.ts --diff schema-target.txt schema-local.txt
+```
+
+Two dumps, no spec. It reports, per structure, the segments one instance has and
+the other does not, and the segments whose repeat or group shape differs. It
+exits non-zero on any difference, so it belongs in the pre-deploy step and not in
+a checklist somebody reads. A structure present in one file and absent from the
+other is reported as a difference, not as a reason to stop.
+
+Take both dumps the same way -- `bun schemacheck.ts --commands` prints the lines
+-- and keep them in the workspace, so the comparison is one command and not a
+morning of squinting at two terminal windows.
+
+Either mode refuses to call a run a pass when a `^EnsHL7.Schema` line could not
+be read. A difference hiding in a line neither dump was read from looks exactly
+like no difference at all.
+
 A mismatch is fixed with a custom schema category, not with a change to the
 transform and not with index walking in generated code. Derive it rather than
 typing it:

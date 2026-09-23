@@ -58,6 +58,10 @@ the whole design: one spec, six readers.
 | ...and fail the run if any did | `bun reads.ts --strict messages\real.hl7` |
 | Does this message navigate the way the engine will read it? | `bun navcheck.ts messages\real.hl7` |
 | ...under a doctype other than the spec's | `bun navcheck.ts messages\real.hl7 --doctype 2.5:DFT_P03` |
+| Does the spec agree with the schema? (no IRIS connection needed) | `bun schemacheck.ts schema.zw` |
+| ...it says BARE SEGMENT or BARE GROUP PATHS | a repeating `GT1` / `IN1grp` read with no `(1)` returns EMPTY |
+| ...what do I paste into the terminal to get that dump? | `bun schemacheck.ts --commands` |
+| Has the target namespace drifted from the one I build on? | `bun schemacheck.ts --diff schema-target.txt schema-local.txt` |
 | Does the engine's custom schema still match the spec? | `bun schema-sync.ts` |
 | Read the stock definition off the instance to derive one | `bun schema-sync.ts --derive DFT_P03 --base 2.5` |
 | Load the spec's schema into the engine | `bun emit.ts schema -o s.xml` then `bun schema-sync.ts --import` |
@@ -67,6 +71,8 @@ the whole design: one spec, six readers.
 | Is the bench itself still sound? | `bun test` |
 | Keep my interface out of git and out of an upgrade's way | `HL7_BENCH_TRANSFORM=transform.site.local.ts` |
 | Stop a push from publishing a real interface | `git config core.hooksPath hooks` (once per clone) |
+| I cannot reach IRIS from this box at all | `bun schemacheck.ts` -- it reads a paste, not a connection |
+| I develop on a local instance and deploy to another one | `bun schemacheck.ts --diff` before each deploy |
 | navcheck says "could not reach IRIS" | read what it printed; it names the cause |
 | ...and it printed `Username:` | set `IRIS_USER` and `IRIS_PASSWORD` in `.env` |
 | Keep the password out of `.env` | `.\Tools\Set-IrisPassword.ps1` once, then `IRIS_PASSWORD_CMD` |
