@@ -66,6 +66,7 @@ import { Message } from "./hl7";
 import { spec } from "./specfile";
 import { readMessage, outArg, deliverText, decodeText } from "./input";
 import { NAMESPACE, REMOTE, runIris, engineLabel } from "./iris-session";
+import { classMethodsOf, type Carried } from "./scratch";
 
 const argv = process.argv.slice(2);
 
@@ -204,7 +205,7 @@ function prepareBody(raw: string, firstLine = 1): { body: string; removed: strin
  * include, and a body copied out of a real OnRequest is full of them. The class
  * is never registered in a production and never dispatches anything.
  */
-function scratchClass(body: string, docType: string): string {
+function scratchClass(body: string, docType: string, carried = ""): string {
   return [
     `Include Ensemble`,
     ``,
@@ -234,6 +235,9 @@ function scratchClass(body: string, docType: string): string {
     body,
     `}`,
     ``,
+    // The class's own ClassMethods, so a body that calls `..ValueAt` finds it.
+    // See scratch.ts.
+    ...(carried ? [carried, ``] : []),
     `Storage Default`,
     `{`,
     `<Type>%Storage.Persistent</Type>`,
@@ -351,7 +355,17 @@ function buildScratch(): string[] {
     process.stderr.write(`\n`);
   }
 
-  const literal = scratchClass(prepared.body, docType)
+  let carried: Carried;
+  try {
+    carried = classMethodsOf(bodyRaw, methodName);
+  } catch (e) {
+    die(2, `${scriptFile}: ${e instanceof Error ? e.message : String(e)}`);
+  }
+  if (carried.names.length > 0) {
+    process.stderr.write(`  carried along from the class: ${carried.names.join(", ")}\n`);
+  }
+
+  const literal = scratchClass(prepared.body, docType, carried.text)
     .split(/\r?\n/)
     .map((l) => `do sf.WriteLine(${osLiteral(l)})`)
     .join("\n");
