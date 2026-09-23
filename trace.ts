@@ -21,6 +21,7 @@
 import { Message } from "./hl7";
 import { describeSource, emptyTables, sourcePathsOf, type Spec } from "./spec";
 import { assertRunnable, gate, resolve, seedSource, walk, type Ctx } from "./run";
+import { toCsv, toXlsx, type Sheet } from "./sheet";
 
 // ---------------------------------------------------------------------------
 // Table rendering
@@ -161,6 +162,101 @@ export function trace(spec: Spec, msg: Message, opts: TraceOptions = {}): string
 }
 
 // ---------------------------------------------------------------------------
+// The same document as a grid
+// ---------------------------------------------------------------------------
+
+/**
+ * The trace as sheets, for `--csv` and `--xlsx`.
+ *
+ * The text trace puts the block in a HEADING and the fields under it, which
+ * reads well and sorts not at all. A reviewer opening a spreadsheet wants one
+ * flat table: block as a column, one row per decision, so they can filter to
+ * the suppressions or sort by target without being taught anything.
+ *
+ * Both renderers call `resolve()` for every row, so what a row DOES has one
+ * definition and only the layout differs. `inventory()` already coexists with
+ * `trace()` on the same terms.
+ */
+export function grid(spec: Spec, msg: Message, opts: TraceOptions = {}): Sheet[] {
+  assertRunnable(spec);
+  const { trigger, event } = gate(spec, msg);
+  const showEmpty = opts.showEmpty ?? true;
+
+  const header = [
+    "Block", "Occurrence", "Group", "Target", "Required",
+    "Name", "Source", "Raw", "Steps", "Final", "Note",
+  ];
+  const rows: string[][] = [header];
+  const notes: string[] = [];
+  const missing: string[] = [];
+
+  const seen = new Map<string, number>();
+  const totals = new Map<string, number>();
+  walk(spec, msg, event, (block) => {
+    totals.set(block.id, (totals.get(block.id) ?? 0) + 1);
+  });
+
+  walk(spec, msg, event, (block, ctx: Ctx) => {
+    const n = (seen.get(block.id) ?? 0) + 1;
+    seen.set(block.id, n);
+    const total = totals.get(block.id) ?? 1;
+    // "1 of 3" only where there is more than one; a lone segment reading
+    // "1 of 1" invites the question of where the other one went.
+    const occurrence = total > 1 || block.repeat ? `${n} of ${total}` : "";
+
+    if (block.wholeSegment) {
+      const src = seedSource(ctx, block);
+      rows.push([
+        block.id, occurrence, block.group ?? "", "(whole segment)", "",
+        "", `${block.id} copied whole`, show(src ? src.toString() : ""), "",
+        src ? `${src.fieldCount} field(s) passed through` : "(no source segment)",
+        block.note ?? "",
+      ]);
+    }
+
+    for (const row of block.rows) {
+      const r = resolve(ctx, row);
+      const label = row.label ?? row.target;
+      if (row.required && r.value === "" && !r.todo) missing.push(label);
+      if (r.todo) notes.push(`TODO ${label}: ${r.todo}`);
+      if (r.note) notes.push(r.note);
+      if (row.note) notes.push(`${label}: ${row.note}`);
+      if (!showEmpty && r.value === "" && !r.todo) continue;
+
+      rows.push([
+        block.id, occurrence, block.group ?? "", row.target, row.required ? "yes" : "",
+        row.label ?? "", r.todo ? "(TODO)" : describeSource(row.from),
+        show(r.raw), r.steps.join(", "), r.todo ? "" : show(r.value),
+        row.note ?? "",
+      ]);
+    }
+  });
+
+  // Everything that is not a mapped field goes on its own sheet rather than
+  // above the header, where it would break the filter and the sort.
+  const about: string[][] = [
+    ["Item", "Value"],
+    ["Spec", spec.name],
+    ["Gate", `${spec.gate.path} "${trigger}" delivers as ${event}`],
+  ];
+  for (const req of spec.gate.require ?? []) {
+    about.push(["Gate requires", `${req.path} must be "${req.equals}", or the message is refused`]);
+  }
+  if (spec.description) about.push(["Description", spec.description]);
+  if (missing.length > 0) about.push(["Missing required", missing.join(", ")]);
+  for (const name of emptyTables(spec)) {
+    notes.push(`table ${name} has no rows, so every lookup against it takes the unmapped branch`);
+  }
+  for (const note of [...new Set(notes)]) about.push(["Note", note]);
+  for (const s of spec.outOfScope ?? []) about.push(["Out of scope", s]);
+
+  return [
+    { name: "Mapping", rows },
+    { name: "About", rows: about },
+  ];
+}
+
+// ---------------------------------------------------------------------------
 // The source inventory
 // ---------------------------------------------------------------------------
 
@@ -231,6 +327,34 @@ if (import.meta.main) {
   const { logEvent } = await import("./log");
 
   const m = new Message(raw);
+
+  // A spreadsheet for the people who review this, text for the people who
+  // diff it. Same walk, same resolution, two renderers.
+  const wantXlsx = process.argv.includes("--xlsx");
+  const wantCsv = process.argv.includes("--csv");
+  if (wantXlsx || wantCsv) {
+    if (wantXlsx && wantCsv) {
+      process.stderr.write("trace: --csv and --xlsx are two files. Ask for one.\n");
+      process.exit(2);
+    }
+    const sheets = grid(spec, m);
+    const target = outFile ?? (wantXlsx ? "mapping-document.xlsx" : "mapping-document.csv");
+    if (wantXlsx) {
+      await Bun.write(target, toXlsx(sheets));
+    } else {
+      // One sheet only. A CSV has no tabs, and silently dropping the About
+      // sheet would lose the gate, the out-of-scope list and the notes.
+      await Bun.write(target, toCsv(sheets[0]!.rows));
+      process.stderr.write(
+        "trace: CSV carries the Mapping sheet only -- the About sheet (gate, notes,\n" +
+          "       out of scope) needs --xlsx. Excel also rewrites a CSV as it opens it:\n" +
+          '       "01" becomes 1 and "19680101" becomes a date. Use --xlsx for review.\n',
+      );
+    }
+    process.stderr.write(`wrote ${target}\n`);
+    process.exit(0);
+  }
+
   const doc = trace(spec, m);
   const inv = inventory(spec, m);
 
