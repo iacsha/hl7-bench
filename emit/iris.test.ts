@@ -18,8 +18,8 @@
 
 import { expect, test, describe } from "bun:test";
 
-import { copy, fromFirst, literal, lookup, pickRepeat, blank, type Spec } from "../spec";
-import { emitIris, dtlPath } from "./iris";
+import { copy, event, fromFirst, literal, lookup, pickRepeat, blank, type Spec } from "../spec";
+import { emitIris, dtlPath, newBareRefs } from "./iris";
 
 const base = (over: Partial<Spec> = {}): Spec => ({
   name: "Iris Emit Test",
@@ -433,5 +433,175 @@ describe("iris.sourceGroups places a source segment the schema keeps in a group"
       base({ blocks: [{ id: "PID", rows: [{ target: "PID-3", from: copy("PID-3") }] }] }),
     );
     expect(cls).toContain(`<assign value='source.{PID:3}' property='target.{PID:3}' action='set' />`);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Bare segment paths -- the assumption the bench cannot check, made visible.
+//
+// This is the failure that reached production. A `wholeSegment` GT1 block with
+// no `repeat` emits bare "GT1" paths, and in IRIS GetValueAt("GT1") on a
+// segment the schema marks as repeating returns EMPTY. Measured on a live
+// instance:
+//
+//   SRC_GT1_bare|[]
+//   SRC_GT1_idx |[GT1|1||TEST^NOK||1 PT ADDR^^PT CITY^TN^4]
+//
+// The seed came back empty, the absent-seed guard correctly delivered no
+// segment, and GT1 plus three mapped fields vanished without a word. `bun
+// check.ts` stayed green the whole time, because `run.ts` has a flat message
+// model and finds GT1 by name whatever the schema says about repeats.
+//
+// The bench does not read your schema, so it cannot know which segments
+// repeat. What it can do is name the ones it ASSUMED do not.
+// ---------------------------------------------------------------------------
+
+/** The segment ids one emit reported as addressed with no occurrence index. */
+function bareOf(spec: Spec): string[] {
+  const seen = newBareRefs();
+  emitIris(spec, seen);
+  return [...seen.segments].sort();
+}
+
+/** The GROUP names one emit reported as addressed with no occurrence index. */
+function bareGroupsOf(spec: Spec): string[] {
+  const seen = newBareRefs();
+  emitIris(spec, seen);
+  return [...seen.groups].sort();
+}
+
+// A group with no occurrence index is the same bug one level up, and until
+// this was added it was collected by NOTHING: `{IN1grp.IN1:2}` does not match
+// the bare-SEGMENT pattern either, so the read was invisible to both.
+//
+// Measured on IRIS for Health, 2.3:ADT_A01, one IN1 inside IN1grp:
+//   GRP_NO_OCC |[]                             GetValueAt("IN1grp.IN1")
+//   GRP_OCC    |[IN1|1|PLAN1|PAY1|PAYER NAME]  GetValueAt("IN1grp(1).IN1")
+describe("bare group paths are reported", () => {
+  const grouped = (blocks: Spec["blocks"]): Spec =>
+    base({
+      blocks,
+      iris: {
+        sourceDocType: "2.3:ADT_A01",
+        targetDocType: "2.3:ADT_A01",
+        sourceGroups: { IN1: "IN1grp" },
+      },
+    });
+
+  test("a row reading a grouped segment from outside a loop over it is named", () => {
+    const spec = grouped([{ id: "PID", rows: [{ target: "PID-3", from: copy("IN1-2") }] }]);
+    expect(bareGroupsOf(spec)).toEqual(["IN1grp"]);
+    // And it is NOT in the segment list, which is why one set could not do.
+    expect(bareOf(spec)).not.toContain("IN1");
+    expect(emitIris(spec)).toContain("source.{IN1grp.IN1:2}");
+  });
+
+  test("a wholeSegment seed inside a group is not bare -- the emitter pins (1)", () => {
+    const spec = grouped([{ id: "IN1", group: "IN1grp", wholeSegment: true, rows: [] }]);
+    expect(emitIris(spec)).toContain("source.{IN1grp(1).IN1}");
+    expect(bareGroupsOf(spec)).toEqual([]);
+  });
+
+  test("a repeat over a grouped segment walks the group occurrence, so it is not bare", () => {
+    const spec = grouped([
+      { id: "IN1", group: "IN1grp", wholeSegment: true, repeat: { over: "IN1" }, rows: [] },
+    ]);
+    expect(bareGroupsOf(spec)).toEqual([]);
+  });
+
+  test("a spec with no sourceGroups has no groups to be bare about", () => {
+    expect(
+      bareGroupsOf(base({ blocks: [{ id: "PID", rows: [{ target: "PID-3", from: copy("IN1-2") }] }] })),
+    ).toEqual([]);
+  });
+});
+
+describe("bare segment paths are reported", () => {
+  test("a wholeSegment block with no repeat is named -- the GT1 case", () => {
+    expect(
+      bareOf(base({ blocks: [{ id: "GT1", wholeSegment: true, rows: [] }] })),
+    ).toContain("GT1");
+  });
+
+  test("the same block WITH a repeat is not, because the path carries an occurrence", () => {
+    const bare = bareOf(
+      base({
+        blocks: [
+          { id: "GT1", wholeSegment: true, repeat: { over: "GT1" }, rows: [] },
+        ],
+      }),
+    );
+    expect(bare).not.toContain("GT1");
+  });
+
+  test("a segment the spec places in a source group is not bare either", () => {
+    const spec = base({
+      blocks: [{ id: "IN1", wholeSegment: true, rows: [] }],
+    });
+    spec.iris.sourceGroups = { IN1: "IN1grp" };
+    expect(bareOf(spec)).not.toContain("IN1");
+  });
+
+  test("an ordinary field read off a non-repeating block is named", () => {
+    expect(
+      bareOf(base({ blocks: [{ id: "PID", rows: [{ target: "PID-3", from: copy("PID-3") }] }] })),
+    ).toContain("PID");
+  });
+
+  test("a read from INSIDE a repeat is not, since the loop supplies the occurrence", () => {
+    const bare = bareOf(
+      base({
+        blocks: [
+          {
+            id: "NK1",
+            repeat: { over: "NK1" },
+            rows: [{ target: "NK1-2", from: copy("NK1-2") }],
+          },
+        ],
+      }),
+    );
+    expect(bare).not.toContain("NK1");
+  });
+
+  // pickRepeat puts its occurrence on the FIELD, not the segment, so the
+  // segment is still addressed bare and still reads empty on a repeating GT1.
+  test("pickRepeat still leaves the SEGMENT bare, and says so", () => {
+    expect(
+      bareOf(
+        base({
+          blocks: [
+            {
+              id: "PV1",
+              rows: [
+                { target: "PV1-7", from: pickRepeat("PV1-7", 13, "NPI", 1) },
+              ],
+            },
+          ],
+        }),
+      ),
+    ).toContain("PV1");
+  });
+
+  // fromFirst walks occurrences itself, so every read it emits carries one.
+  test("fromFirst is not reported, because it addresses every occurrence", () => {
+    const bare = bareOf(
+      base({
+        blocks: [
+          {
+            id: "PID",
+            rows: [
+              { target: "PID-3", from: fromFirst("NK1", "NK1-2", "NK1-2") },
+            ],
+          },
+        ],
+      }),
+    );
+    expect(bare).not.toContain("NK1");
+  });
+
+  test("the gate path is reported too -- it is a read like any other", () => {
+    expect(
+      bareOf(base({ blocks: [{ id: "MSH", rows: [{ target: "MSH-9.2", from: event() }] }] })),
+    ).toContain("MSH");
   });
 });

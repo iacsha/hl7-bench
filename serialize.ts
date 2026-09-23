@@ -253,6 +253,14 @@ export function specToSource(spec: Spec): string {
     out.push(`      className: ${q(proc.className)},`);
     out.push(`      sendTo: ${q(proc.sendTo)},`);
     if (proc.comment) out.push(`      comment: ${q(proc.comment)},`);
+    // Written back for the same reason the three keys above are. A dropped
+    // `transform` silently reverts an inline interface to one that calls a DTL
+    // the receiving team refused to deploy -- the class still compiles, and it
+    // dies at run time naming a transform nobody agreed to ship. "dtl" is the
+    // default, so only the non-default is worth a line in the file.
+    if (proc.transform && proc.transform !== "dtl") {
+      out.push(`      transform: ${q(proc.transform)},`);
+    }
     if (proc.stamp?.length) {
       out.push("      stamp: [");
       for (const st of proc.stamp) {

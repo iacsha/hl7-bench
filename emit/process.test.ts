@@ -14,7 +14,7 @@
 import { expect, test, describe } from "bun:test";
 
 import { emitProcess } from "./process";
-import { type Spec } from "../spec";
+import { blank, literal, lookup, type Spec } from "../spec";
 
 const base = (over: Partial<Spec["iris"]> = {}, gate?: Spec["gate"]): Spec => ({
   name: "Process Emit Test",
@@ -52,9 +52,19 @@ describe("header", () => {
     expect(cls).toContain("NOT proven on the bench");
   });
 
-  test("names which shop pattern it models rather than implying it is the pattern", () => {
-    expect(cls).toContain("one shop's shape");
-    expect(cls).toContain("routing engine");
+  // This prose is the essay `iris.comments` exists to cut: it is about this
+  // TOOL's opinion of process shapes, not about the interface, and the
+  // receiving site maintains the class. It still has to be RIGHT where it is
+  // still printed, so the assertion moved to a spec that asks for it rather
+  // than being deleted or loosened to pass at both levels.
+  test("at full, names which shop pattern it models rather than implying it is the pattern", () => {
+    const full = emitProcess(base({ comments: "full" }));
+    expect(full).toContain("one shop's shape");
+    expect(full).toContain("routing engine");
+  });
+
+  test("at brief, the shop-pattern essay is gone", () => {
+    expect(cls).not.toContain("one shop's shape");
   });
 
   test("carries the same fingerprint the DTL carries", () => {
@@ -241,5 +251,151 @@ describe("stamps", () => {
   test("no braced path sneaks in through a stamp", () => {
     const cls = withStamp([{ path: "MSH-4", value: "A", why: "one" }]);
     expect(cls).not.toMatch(/\{[A-Z0-9]{3}[:(]/);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// iris.process.transform: "inline"
+//
+// The self-contained shape. A receiving team that will not deploy a DTL is a
+// real constraint, and the interface has to fit in the one class they accept.
+//
+// Two things are protected here. The first is the same one the top of this
+// file names: ObjectScript that compiles, which for this backend means no
+// braced path anywhere in a Method body. The second is that the class is
+// actually SELF-CONTAINED -- a process that still calls a DTL while claiming
+// to be inline compiles perfectly and dies at run time naming a transform
+// nobody agreed to ship.
+// ---------------------------------------------------------------------------
+
+describe("the inline mapping", () => {
+  const inlineSpec = (blocks: Spec["blocks"] = []): Spec => {
+    const spec = base();
+    spec.iris.process!.transform = "inline";
+    spec.blocks = blocks;
+    return spec;
+  };
+
+  const seeded = (): Spec =>
+    inlineSpec([
+      { id: "PID", wholeSegment: true, rows: [{ target: "PID-19", from: literal("") }] },
+      { id: "NK1", wholeSegment: true, repeat: { over: "NK1", skipWhenEmpty: "NK1-2" }, rows: [] },
+    ]);
+
+  /** The class from `Method OnRequest` down, which is where braces are fatal. */
+  const body = (spec: Spec): string => {
+    const cls = emitProcess(spec);
+    const at = cls.indexOf("Method OnRequest");
+    expect(at).toBeGreaterThan(-1);
+    return cls.slice(at);
+  };
+
+  test("calls no transform class, which is the whole point", () => {
+    expect(body(seeded())).not.toContain(".Transform(");
+  });
+
+  test("the default is still dtl, so an existing spec is untouched", () => {
+    const spec = seeded();
+    delete spec.iris.process!.transform;
+    expect(body(spec)).toContain(".Transform(tSource, .tTarget)");
+  });
+
+  test("transform: dtl said out loud is the same class as saying nothing", () => {
+    const explicit = seeded();
+    explicit.iris.process!.transform = "dtl";
+    const implicit = seeded();
+    delete implicit.iris.process!.transform;
+    // Not the whole class: the fingerprint covers the spec, and these two
+    // specs differ by a key. The BODY is what has to be identical.
+    expect(body(explicit)).toBe(body(implicit));
+  });
+
+  // The failure this backend exists to avoid making. A brace is a DTL compiler
+  // feature; in a Method body it is "invalid name" at compile time, and it
+  // reads as a perfectly ordinary path right up until then.
+  test("no braced path reaches the Method body", () => {
+    expect(body(seeded())).not.toMatch(/\{[A-Z0-9]{3}[:(]/);
+  });
+
+  test("a whole-segment block becomes one SetValueAt of segment to segment", () => {
+    expect(body(seeded())).toContain(`..ValueAt(tSource,"PID")`);
+    expect(body(seeded())).toContain(`tTarget.SetValueAt(tSeed, "PID")`);
+  });
+
+  // GetValueAt on a path whose segment is absent THROWS, and an unhandled
+  // throw kills the business process. A message with no PV2 is ordinary.
+  test("every read is guarded, so an absent optional segment cannot throw", () => {
+    const b = body(seeded());
+    expect(b).toContain("ClassMethod ValueAt(");
+    expect(b).toContain("try {");
+    expect(b).toContain("} catch {");
+    // No bare read of the inbound document survives anywhere in the body.
+    expect(b).not.toMatch(/tSource\.GetValueAt\(/);
+    expect(b).not.toMatch(/pRequest\.GetValueAt\(/);
+  });
+
+  test("the guarded read is not emitted when nothing calls it", () => {
+    const spec = seeded();
+    delete spec.iris.process!.transform;
+    expect(emitProcess(spec)).not.toContain("ClassMethod ValueAt(");
+  });
+
+  // An absent repeating segment reads as "" and + makes that 0, so the loop
+  // runs no times. Without the +, "" as a FOR bound is a different failure.
+  test("a repeat counts occurrences once, numerically, before looping", () => {
+    const b = body(seeded());
+    expect(b).toContain(`set cnt1 = +..ValueAt(tSource, "NK1(*)")`);
+    expect(b).toContain("for k1=1:1:cnt1 {");
+  });
+
+  test("a repeat numbers the target by output ordinal, not by source repeat", () => {
+    const b = body(seeded());
+    expect(b).toContain(`..ValueAt(tSource,"NK1("_k1_")")`);
+    expect(b).toContain(`tTarget.SetValueAt(tSeed, "NK1("_n1_")")`);
+  });
+
+  test("the target is built and told its DocType, or nothing resolves", () => {
+    const b = body(seeded());
+    expect(b).toContain("##class(EnsLib.HL7.Message).%New()");
+    expect(b).toContain(`PokeDocType("2.3:ADT_A01")`);
+    // Immutable is set before the mapping WRITES, not only before the stamps:
+    // inline fills the target itself, so the stamps block is far too late.
+    // Measured against a real write statement rather than the word, which also
+    // appears in the comment explaining why the line is there.
+    expect(b.indexOf("set tTarget.IsMutable = 1"))
+      .toBeLessThan(b.indexOf("set tWriteSC = tTarget.SetValueAt("));
+  });
+
+  test("a lookup calls the function set, because ..Lookup is a DTL method", () => {
+    const spec = inlineSpec([
+      { id: "PID", rows: [{ target: "PID-8", from: lookup("Sex", "PID-8", blank()) }] },
+    ]);
+    spec.tables = { Sex: { M: "1" } };
+    const b = body(spec);
+    expect(b).toContain("##class(Ens.Util.FunctionSet).Lookup(");
+    // `..Lookup` exists on Ens.DataTransformDTL and nowhere else, so it must
+    // not survive into a business process.
+    expect(b).not.toMatch(/[^.]\.\.Lookup\(/);
+  });
+
+  test("the header says self-contained rather than naming a DTL it does not call", () => {
+    const cls = emitProcess(seeded());
+    expect(cls).toContain("SELF-CONTAINED");
+    expect(cls).not.toContain("/// Calls: Site.Interface.DTL.Thing");
+  });
+
+  test("it still says TEMPLATE, because nothing here has been executed either", () => {
+    expect(emitProcess(seeded())).toContain("NOT proven on the bench");
+  });
+
+  test("the gate, the clone, the stamp block and the dispatch all survive", () => {
+    const spec = seeded();
+    spec.iris.process!.stamp = [{ path: "MSH-4", value: "W", why: "receiver routes on it" }];
+    const b = body(spec);
+    expect(b).toContain(`set tEvent = ..ValueAt(pRequest, "MSH:9.2")`);
+    expect(b).toContain("set tSource = pRequest.%ConstructClone(1)");
+    expect(b).toContain("set tTarget.IsMutable = 1");
+    expect(b).toContain(`do tTarget.SetValueAt("W", "MSH:4")`);
+    expect(b).toContain(`..SendRequestAsync("ToTarget.ADT.TCP", tTarget, 0)`);
   });
 });

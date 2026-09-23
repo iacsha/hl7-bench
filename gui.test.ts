@@ -18,6 +18,7 @@
 
 import { expect, test, describe } from "bun:test";
 import { readFileSync } from "node:fs";
+import { validate, type Spec } from "./spec";
 
 const html = readFileSync(new URL("./gui.html", import.meta.url), "utf8");
 
@@ -151,5 +152,162 @@ describe("the occurrence tail", () => {
 
   test("a line index past the end has no position", () => {
     expect(helpers.positionLabel(msg, 99, 0)).toBe("");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The form has to be able to SAY every key the serializer writes.
+//
+// The GUI rewrites the whole spec literal on save. A key with no control on
+// screen is a key the file loses on the first save from the form -- the same
+// silent loss `serialize.ts` documents for sourceGroups and process, arriving
+// from the other direction. A dropped `transform` turns a self-contained
+// interface back into one that calls a DTL the receiving team refused.
+// ---------------------------------------------------------------------------
+
+describe("iris.process.transform has a control", () => {
+  const js = moduleSource();
+
+  test("the form offers both places the mapping can live", () => {
+    expect(js).toContain(`["dtl", "inline"]`);
+  });
+
+  test("the control writes through setProcess, so the key reaches the spec", () => {
+    expect(js).toContain(`setProcess("transform"`);
+  });
+
+  test("it reads the current value back, so a saved inline spec shows as inline", () => {
+    expect(js).toContain("spec.iris.process?.transform");
+  });
+
+  // "dtl" is the default and is stored as absence. setProcess deletes a field
+  // given "", which is what keeps an untouched spec byte-identical.
+  test("choosing dtl clears the key rather than writing the default in", () => {
+    expect(js).toMatch(/setProcess\("transform",\s*v === "dtl" \? "" : v\)/);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// setProcess, RUN rather than pattern-matched.
+//
+// The tests above prove the control exists and is wired. They cannot prove what
+// it does, and what it did was delete the block -- flag included -- whenever
+// className and sendTo were both empty. Choosing "inline" first, which is the
+// order a person actually fills a form in, discarded the choice in silence.
+//
+// So this lifts the real function out of the page and calls it. The three
+// globals it touches are stubbed; `spec` is the thing under test.
+// ---------------------------------------------------------------------------
+
+/** `setProcess` bound to a fresh spec, plus that spec to assert against. */
+function setProcessOn(iris: Record<string, unknown> = {}) {
+  const spec = { iris: { ...iris } } as { iris: Record<string, any> };
+  const src = [
+    "let edited = false;",
+    "function markEdited() { edited = true; }",
+    "function schedulePreview() {}",
+    declaration(moduleSource(), "setProcess"),
+  ].join("\n\n");
+  const fn = new Function("spec", `${src}; return setProcess;`)(spec) as (
+    k: string,
+    v: string,
+  ) => void;
+  return { spec, setProcess: fn };
+}
+
+describe("setProcess keeps what the user chose", () => {
+  test("choosing inline before filling the boxes does not discard the choice", () => {
+    // The exact sequence that cost three rounds: pick the mapping first.
+    const { spec, setProcess } = setProcessOn();
+    setProcess("transform", "inline");
+
+    expect(spec.iris.process).toBeDefined();
+    expect(spec.iris.process.transform).toBe("inline");
+    // The block is kept half-filled ON PURPOSE, so validate() can name what is
+    // missing. Empty strings rather than absent keys, so serialize writes them.
+    expect(spec.iris.process.className).toBe("");
+    expect(spec.iris.process.sendTo).toBe("");
+  });
+
+  test("the block survives emptying both name boxes while a transform is set", () => {
+    const { spec, setProcess } = setProcessOn({
+      process: { className: "A.B", sendTo: "X", transform: "inline" },
+    });
+    setProcess("className", "");
+    setProcess("sendTo", "");
+
+    expect(spec.iris.process).toBeDefined();
+    expect(spec.iris.process.transform).toBe("inline");
+  });
+
+  test("a process note is a choice too, and survives on its own", () => {
+    const { spec, setProcess } = setProcessOn();
+    setProcess("comment", "why this exists");
+
+    expect(spec.iris.process).toBeDefined();
+    expect(spec.iris.process.comment).toBe("why this exists");
+  });
+
+  test("a stamp keeps the block even with nothing else in it", () => {
+    const { spec, setProcess } = setProcessOn({
+      process: { className: "A.B", sendTo: "X", stamp: [{ path: "MSH-6", value: "Z", why: "w" }] },
+    });
+    setProcess("className", "");
+    setProcess("sendTo", "");
+
+    expect(spec.iris.process).toBeDefined();
+    expect(spec.iris.process.stamp).toHaveLength(1);
+  });
+
+  // The other half of the contract. A block holding nothing at all is still
+  // removed, or every spec opened in the GUI grows an empty process block on
+  // the first save and stops being byte-identical through a round trip.
+  test("a block with nothing in it is still removed", () => {
+    const { spec, setProcess } = setProcessOn({
+      process: { className: "A.B", sendTo: "X" },
+    });
+    setProcess("className", "");
+    setProcess("sendTo", "");
+
+    expect(spec.iris.process).toBeUndefined();
+  });
+
+  test("choosing dtl after inline lets the empty block go", () => {
+    const { spec, setProcess } = setProcessOn();
+    setProcess("transform", "inline");
+    setProcess("transform", "");
+
+    expect(spec.iris.process).toBeUndefined();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// validate() has to say what setProcess now lets through.
+//
+// Keeping a half-filled block is only an improvement if something downstream
+// complains about it. Silently keeping it would be the same failure wearing a
+// different hat.
+// ---------------------------------------------------------------------------
+
+describe("a half-filled process block is refused by name", () => {
+  const half = (over: Record<string, unknown>): Spec => ({
+    name: "Half Filled",
+    gate: { path: "MSH-9.2", permit: { A01: "A01" } },
+    iris: {
+      sourceDocType: "2.3:ADT_A01",
+      targetDocType: "2.3:ADT_A01",
+      process: { className: "", sendTo: "", ...over } as Spec["iris"]["process"],
+    },
+    blocks: [{ id: "PID", wholeSegment: true, rows: [] }],
+  });
+
+  test("the empty class name is named, not described as illegal", () => {
+    const problems = validate(half({ transform: "inline" }));
+    expect(problems.some((p) => /iris\.process\.className is empty/.test(p))).toBe(true);
+  });
+
+  test("the empty sendTo is named too", () => {
+    const problems = validate(half({ transform: "inline" }));
+    expect(problems.some((p) => /iris\.process\.sendTo is empty/.test(p))).toBe(true);
   });
 });

@@ -517,14 +517,25 @@ export function runSpec(spec: Spec, msg: Message): RunResult {
   const out: Segment[] = [];
 
   walk(spec, msg, event, (block, ctx) => {
-    const seg = startSegment(ctx, block);
-    // A seed that found nothing is the silent one. The block still delivers a
-    // segment, the rows still assign into it, and the fields nobody enumerated
-    // are simply absent -- which reads exactly like a sender that stopped
-    // populating them.
-    if (block.wholeSegment && !seedSource(ctx, block)) {
-      result.notes.push(`${block.id}: seeded whole, but the source carries no ${block.id}`);
+    // A wholeSegment block whose seed finds nothing delivers NO segment.
+    //
+    // Measured on both backends rather than reasoned about. The bench used to
+    // deliver a bare "PV2" and IRIS, given the same spec, delivered a segment
+    // with no id at all -- `SetValueAt("", "PV2")` creates one, and it prints
+    // as a blank line in the message. Neither is right, and they were not even
+    // wrong in the same way, which is worse: the golden gate would have called
+    // it agreement.
+    //
+    // The sender did not send it, so neither do we. The rows go with it: they
+    // exist to overwrite fields on top of a copy, and there is no copy.
+    //
+    // Only the plain block needs this. A repeat already does it by
+    // construction -- no source occurrence means no iteration and no segment.
+    if (block.wholeSegment && !block.repeat && !seedSource(ctx, block)) {
+      result.notes.push(`${block.id}: source carries no ${block.id}, segment not delivered`);
+      return;
     }
+    const seg = startSegment(ctx, block);
     fill(ctx, block, seg, result);
     out.push(seg);
   });

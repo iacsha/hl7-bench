@@ -33,7 +33,7 @@
 
 import { writeFileSync } from "node:fs";
 import { spec } from "./specfile";
-import { emitIris, routingCondition } from "./emit/iris";
+import { emitIris, newBareRefs, routingCondition } from "./emit/iris";
 import { emitProcess } from "./emit/process";
 import { buildLookup } from "./emit/lookup";
 import { emitSchema } from "./emit/schema";
@@ -246,9 +246,13 @@ if (artifact === "tables") {
 
 // ---------------------------------------------------------------------------
 
+// Segment ids the emitter addressed with no occurrence index. Filled by the
+// emit call below; reported after the artifact, with the other diagnostics.
+const bare = newBareRefs();
+
 let out: string;
 try {
-  out = artifact === "process" ? emitProcess(spec) : emitIris(spec);
+  out = artifact === "process" ? emitProcess(spec, bare) : emitIris(spec, bare);
 } catch (e) {
   process.stderr.write(`${(e as Error).message}\n`);
   process.exit(2);
@@ -303,4 +307,63 @@ if (empties.length > 0) {
   for (const name of empties) {
     process.stderr.write(`  - ${name}: returns the unmapped branch for EVERY message\n`);
   }
+}
+
+// ---------------------------------------------------------------------------
+// Bare segment paths -- the assumption this tool cannot check for you.
+//
+// This bench does not read your schema, so it cannot know which segments
+// repeat. What it CAN do is say which ones it assumed do NOT, which is the
+// difference between a ten-second check and the failure below.
+//
+// A wholeSegment GT1 block with no repeat emits bare "GT1" paths. In IRIS,
+// GetValueAt("GT1") on a segment the schema marks as repeating --
+// ^EnsHL7.Schema(2.3,"MS","ADT_A01","map","GT1()") -- returns EMPTY. Measured
+// on a live instance:
+//
+//   SRC_GT1_bare|[]
+//   SRC_GT1_idx |[GT1|1||TEST^NOK||1 PT ADDR^^PT CITY^TN^4]
+//
+// The seed came back empty, the absent-seed guard correctly delivered no
+// segment, and the interface dropped GT1 and three mapped fields in production
+// without a word. `bun check.ts` was green throughout, because `run.ts` has a
+// flat message model and finds GT1 by name whatever the schema says.
+// ---------------------------------------------------------------------------
+if (bare.segments.size > 0) {
+  const names = [...bare.segments].sort();
+  process.stderr.write(
+    `\nBARE SEGMENT PATHS (${names.length}), read with NO occurrence index:\n` +
+      `  ${names.join(", ")}\n` +
+      `  Confirm each of these does NOT repeat in YOUR schema. A repeating segment\n` +
+      `  read as "GT1" rather than "GT1(1)" returns EMPTY in IRIS, so the mapping\n` +
+      `  silently delivers nothing for it -- and the golden gate stays green,\n` +
+      `  because the bench's message model is flat and finds a segment by name.\n` +
+      `    zw ^EnsHL7.Schema("<category>","MS","<structure>","map")\n` +
+      `  A "GT1()" entry there means it repeats. Give the block a repeat over that\n` +
+      `  segment, or set iris.sourceGroups if the schema nests it in a group.\n`,
+  );
+}
+
+// The same assumption one level up. `GetValueAt("IN1grp.IN1")` returns EMPTY on
+// an instance whose schema marks the GROUP repeating -- "IN1grp()" -- where
+// `GetValueAt("IN1grp(1).IN1")` returns the segment. Measured on IRIS for
+// Health, 2.3:ADT_A01, one IN1 inside IN1grp:
+//
+//   GRP_NO_OCC |[]
+//   GRP_OCC    |[IN1|1|PLAN1|PAY1|PAYER NAME]
+//
+// Separate from the segment list above because the fix is a different one.
+if (bare.groups.size > 0) {
+  const names = [...bare.groups].sort();
+  process.stderr.write(
+    `\nBARE GROUP PATHS (${names.length}), read with NO occurrence index:\n` +
+      `  ${names.join(", ")}\n` +
+      `  Confirm each of these does NOT repeat in YOUR schema. A repeating group read\n` +
+      `  as "IN1grp.IN1" rather than "IN1grp(1).IN1" returns EMPTY, with the same\n` +
+      `  silence as the segment case above.\n` +
+      `    zw ^EnsHL7.Schema("<category>","MS","<structure>","map")\n` +
+      `  An "IN1grp()" entry there means the group repeats. Give the block a repeat\n` +
+      `  over the segment inside it, or pin the occurrence in iris.sourceGroups.\n` +
+      `  \`bun schemacheck.ts <dump>\` answers this from the dump instead of asking you.\n`,
+  );
 }

@@ -26,6 +26,7 @@ transform.local.ts
 transform.*.local.ts
 mapping.*.ts
 PORT-TO-IRIS.md
+LOCAL-LAB.md
 
 # Emitted ObjectScript. It is derived from whatever transform.ts holds, so a
 # class emitted from a real interface carries that interface's class name, its

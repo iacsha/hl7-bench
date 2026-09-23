@@ -12,6 +12,7 @@ import {
 import { runSpec } from "./run";
 import { trace, inventory } from "./trace";
 import { emitIris, dtlPath, routingCondition } from "./emit/iris";
+import { emitProcess } from "./emit/process";
 
 // ---------------------------------------------------------------------------
 // Fixtures
@@ -878,6 +879,35 @@ describe("every vocabulary kind is handled by every backend", () => {
       }],
     });
 
+  /**
+   * The same spec, emitted as a SELF-CONTAINED business process rather than a
+   * DTL. `iris.process.transform: "inline"` writes the mapping into OnRequest
+   * as plain ObjectScript and calls no transform class, which is a third
+   * backend and is held to every kind exactly like the other two.
+   */
+  const inlineSpecFor = (from: Source, via?: Step[]): Spec => {
+    const spec = specFor(from, via);
+    spec.iris.process = {
+      className: "Bench.TestProcess",
+      sendTo: "ToTarget.ADT.TCP",
+      transform: "inline",
+    };
+    return spec;
+  };
+
+  /**
+   * A brace in a Method body is a DTL compiler feature and a SYNTAX ERROR in
+   * plain ObjectScript, and it is the specific way this backend can be wrong
+   * while looking right: `{IN1:4}` reads as a path to a person and as an
+   * invalid name to the compiler. Checked on the class BODY, because the
+   * header legitimately prints the routing rule condition in DTL syntax.
+   */
+  const methodBody = (cls: string): string => {
+    const at = cls.indexOf("Method OnRequest");
+    expect(at).toBeGreaterThan(-1);
+    return cls.slice(at);
+  };
+
   for (const kind of SOURCE_KINDS) {
     test(`run.ts handles ${kind}`, () => {
       const r = runOn(specFor(SAMPLES[kind]));
@@ -895,13 +925,37 @@ describe("every vocabulary kind is handled by every backend", () => {
       expect(t).toContain("IN1-4");
       expect(describeSource(SAMPLES[kind])).not.toBe("");
     });
+
+    test(`emit/process.ts inline handles ${kind}`, () => {
+      const body = methodBody(emitProcess(inlineSpecFor(SAMPLES[kind])));
+      // The write is the proof the kind reached the class at all. todo() is
+      // the one kind that deliberately writes nothing, and it has to SAY so
+      // rather than vanish -- a generator that quietly drops what it cannot
+      // express is worse than no generator.
+      if (kind === "todo") expect(body).toContain("TODO IN1-4");
+      else expect(body).toContain("tTarget.SetValueAt(");
+    });
+
+    test(`the inline ${kind} body has no DTL brace in it`, () => {
+      // The failure this exists for: {IN1:4} is a path in a DTL attribute and
+      // an "invalid name" to the ObjectScript compiler. It reads as correct.
+      expect(methodBody(emitProcess(inlineSpecFor(SAMPLES[kind])))).not.toMatch(/\{[A-Z0-9]{3}[:(]/);
+    });
   }
 
   for (const kind of STEP_KINDS) {
-    test(`both backends handle the ${kind} step`, () => {
+    test(`every backend handles the ${kind} step`, () => {
       const spec = specFor(copy("IN1-2"), [STEP_SAMPLES[kind]]);
       expect(() => runOn(spec)).not.toThrow();
       expect(() => emitIris(spec)).not.toThrow();
+
+      const inline = inlineSpecFor(copy("IN1-2"), [STEP_SAMPLES[kind]]);
+      expect(() => emitProcess(inline)).not.toThrow();
+      // A step the inline backend silently dropped would still emit a write,
+      // so the write is not the assertion. The code the step produces is.
+      const body = methodBody(emitProcess(inline));
+      expect(body).not.toBe(methodBody(emitProcess(inlineSpecFor(copy("IN1-2")))));
+      expect(body).not.toMatch(/\{[A-Z0-9]{3}[:(]/);
     });
   }
 
@@ -945,6 +999,17 @@ describe("every vocabulary kind is handled by every backend", () => {
       }],
     });
 
+  /** The same, emitted as the self-contained process rather than the DTL. */
+  const inlineRepeatFor = (extra: Partial<Repeat>): string => {
+    const spec = repeatFor(extra);
+    spec.iris.process = {
+      className: "Bench.TestProcess",
+      sendTo: "ToTarget.ADT.TCP",
+      transform: "inline",
+    };
+    return methodBody(emitProcess(spec));
+  };
+
   for (const kind of SELECT_KINDS) {
     test(`run.ts handles select ${kind}`, () => {
       expect(() => runOn(repeatFor({ select: SELECT_SAMPLES[kind] }))).not.toThrow();
@@ -957,6 +1022,14 @@ describe("every vocabulary kind is handled by every backend", () => {
       // and ships a DTL that delivers every occurrence.
       expect(generated(repeatFor({ select: SELECT_SAMPLES[kind] })))
         .not.toBe(generated(repeatFor({})));
+    });
+
+    test(`emit/process.ts inline handles select ${kind}`, () => {
+      // Same bar the DTL is held to: an emitter that silently drops select
+      // passes every other test here and ships a class that delivers every
+      // occurrence. No fingerprint to strip -- the body carries none.
+      expect(inlineRepeatFor({ select: SELECT_SAMPLES[kind] }))
+        .not.toBe(inlineRepeatFor({}));
     });
 
     test(`describeSelect handles ${kind}`, () => {
@@ -972,6 +1045,11 @@ describe("every vocabulary kind is handled by every backend", () => {
     test(`emit/iris.ts handles fold ${kind}`, () => {
       expect(generated(repeatFor({ fold: FOLD_SAMPLES[kind] })))
         .not.toBe(generated(repeatFor({})));
+    });
+
+    test(`emit/process.ts inline handles fold ${kind}`, () => {
+      expect(inlineRepeatFor({ fold: FOLD_SAMPLES[kind] }))
+        .not.toBe(inlineRepeatFor({}));
     });
 
     test(`describeFold handles ${kind}`, () => {
@@ -1333,5 +1411,144 @@ describe("validate: iris.process.stamp", () => {
 
   test("stamping a path no block touches is fine", () => {
     expect(withStamp([stamp("MSH-4", "X", "why")])).toEqual([]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+
+describe("validate: iris.process.transform", () => {
+  const withTransform = (transform?: unknown, over: Partial<Spec> = {}) =>
+    validate({
+      ...base(),
+      ...over,
+      iris: {
+        ...base().iris,
+        ...(over.iris ?? {}),
+        process: {
+          className: "Site.Interface.Process.Adt",
+          sendTo: "ToTarget.ADT.TCP",
+          ...(transform === undefined ? {} : { transform: transform as "dtl" | "inline" }),
+        },
+      },
+    });
+
+  test("no transform key at all is silent, because dtl is the default", () => {
+    expect(withTransform()).toEqual([]);
+  });
+
+  test("both legal values are silent", () => {
+    expect(withTransform("dtl")).toEqual([]);
+    expect(withTransform("inline")).toEqual([]);
+  });
+
+  // The refusal that matters most. "dtl" is the default, so a typo does not
+  // fail -- it silently emits a process that calls a transform class the
+  // receiving team refused to deploy. The class compiles. It dies at run time.
+  test("a typo is refused rather than falling back to dtl", () => {
+    const out = withTransform("Inline").join(" ");
+    expect(out).toContain("iris.process.transform");
+    expect(out).toContain("Inline");
+    expect(out).toContain("dtl, inline");
+  });
+
+  // Inline builds the target itself, so PokeDocType is the only thing telling
+  // SetValueAt where a path goes. Empty resolves nothing, silently, and there
+  // is no DTL in the portal to inspect.
+  test("inline with no targetDocType is refused", () => {
+    const out = withTransform("inline", {
+      iris: { ...base().iris, targetDocType: "" },
+    } as Partial<Spec>).join(" ");
+    expect(out).toContain("targetDocType is empty");
+  });
+
+  test("dtl with no targetDocType is not refused by this rule", () => {
+    const out = withTransform("dtl", {
+      iris: { ...base().iris, targetDocType: "" },
+    } as Partial<Spec>).join(" ");
+    expect(out).not.toContain("transform is \"inline\"");
+  });
+
+  // Inline emits ONE artifact and it is the whole interface. A todo() row is
+  // a field the receiver never gets, rather than a TODO comment beside an
+  // assign in a DTL somebody opens next.
+  test("inline with an undecided row is refused and names the field", () => {
+    const out = withTransform("inline", {
+      blocks: [{ id: "PID", rows: [{ target: "PID-3", from: todo("not settled") }] }],
+    }).join(" ");
+    expect(out).toContain("still todo()");
+    expect(out).toContain("PID-3");
+  });
+
+  test("the same undecided row is allowed when the mapping lives in a DTL", () => {
+    const out = withTransform("dtl", {
+      blocks: [{ id: "PID", rows: [{ target: "PID-3", from: todo("not settled") }] }],
+    }).join(" ");
+    expect(out).not.toContain("still todo()");
+  });
+});
+
+// ---------------------------------------------------------------------------
+
+describe("validate: two rows on one target", () => {
+  // Same class of defect as a stamp on a path a row already assigns: the later
+  // write wins and the earlier line is dead while looking live. This one is
+  // easier to write by accident, and it is silent in every backend.
+  const withRows = (rows: Spec["blocks"][number]["rows"]) =>
+    validate(base({ blocks: [{ id: "PID", rows }] }));
+
+  test("distinct targets are silent", () => {
+    expect(withRows([
+      { target: "PID-3", from: copy("PID-3") },
+      { target: "PID-19", from: literal("") },
+    ])).toEqual([]);
+  });
+
+  // The measured case. A suppression row above a copy delivers the copied
+  // value: the spec reads as suppressed, the trace document says suppressed,
+  // and the receiver gets the identifier anyway.
+  test("a suppression row that a later copy overwrites is refused", () => {
+    const spec = base({
+      blocks: [{
+        id: "PID",
+        rows: [
+          { target: "PID-19", from: literal(""), label: "SSN (suppressed)" },
+          { target: "PID-19", from: copy("PID-19") },
+        ],
+      }],
+    });
+    const out = validate(spec).join(" ");
+    expect(out).toContain("two rows both assign PID-19");
+
+    // And the refusal is load bearing rather than advisory: `assertRunnable`
+    // is what every backend calls first, so this spec can no longer be run at
+    // all. Before the rule it ran happily and delivered the copied SSN.
+    expect(() => runOn(spec)).toThrow(/two rows both assign PID-19/);
+  });
+
+  test("three rows on one target still report once", () => {
+    const out = withRows([
+      { target: "PID-3", from: copy("PID-3") },
+      { target: "PID-3", from: literal("A") },
+      { target: "PID-3", from: literal("B") },
+    ]);
+    expect(out.filter((x) => x.includes("two rows both assign"))).toHaveLength(1);
+  });
+
+  // A whole field beside a component of it is a real and ordinary way to
+  // refine a value, and refusing it would be a false alarm on working specs.
+  test("a whole field beside a component of it is allowed", () => {
+    expect(withRows([
+      { target: "PID-5", from: copy("PID-5") },
+      { target: "PID-5.1", from: copy("PID-5.1"), via: [upper()] },
+    ])).toEqual([]);
+  });
+
+  test("the same target in two different blocks is allowed", () => {
+    expect(validate(base({
+      blocks: [
+        { id: "PID", rows: [{ target: "PID-3", from: copy("PID-3") }] },
+        { id: "NK1", rows: [{ target: "NK1-2", from: copy("NK1-2") }] },
+      ],
+    }))).toEqual([]);
   });
 });

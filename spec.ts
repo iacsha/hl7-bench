@@ -403,6 +403,24 @@ export interface Block {
    * a mapping -- the difference is what you told the receiver, not what is less
    * typing.
    *
+   * A SEED THAT FINDS NOTHING DELIVERS NOTHING
+   *
+   * A non-repeating block whose source segment is absent delivers NO segment,
+   * and its rows do not run either -- they exist to overwrite fields on top of
+   * a copy, and there is no copy. The sender did not send it, so neither do we.
+   *
+   * This was measured, not reasoned. Before it, the bench delivered a bare
+   * "PV2" and IRIS delivered a segment with no id at all, because
+   * `SetValueAt("", "PV2")` creates one and it goes down the wire as a blank
+   * line. Two backends wrong in two different ways, with the same segment
+   * count, which is precisely the shape the golden gate cannot see.
+   *
+   * The run still reports it. Losing a segment is a legitimate outcome and a
+   * silent one, so it is the outcome that gets a line.
+   *
+   * A repeat needs no such rule: no source occurrence means no iteration and
+   * no segment, in every backend, by construction.
+   *
    * SAME ID ONLY. A seed is the identity copy; a cross-segment whole copy would
    * carry the wrong segment id in the first field and IRIS would deliver it.
    * `validate()` refuses a repeat whose `over` is not this block's id.
@@ -454,6 +472,63 @@ export interface Stamp {
   /** Why this is here and not a literal() row. Goes in the class as a comment. */
   why: string;
 }
+
+/**
+ * Where the mapping lives in the emitted business process.
+ *
+ *   "dtl"      the process calls the DTL:
+ *              `set tSC = ##class(<iris.className>).Transform(tSource,.tTarget)`.
+ *              Two artifacts, and the DTL is the one that carries "proven on
+ *              the bench". This is the default and what every existing spec
+ *              gets without saying anything.
+ *
+ *   "inline"   the mapping is written into `OnRequest` as plain ObjectScript
+ *              and no DTL is called. ONE artifact, self-contained, nothing to
+ *              deploy but the process class.
+ *
+ * WHY "inline" EXISTS
+ *
+ * Not as a style preference. A receiving IRIS team that will not deploy a DTL
+ * is a real constraint and it is not negotiable from this side: the interface
+ * has to fit in the class they already accept, or it does not ship. This is
+ * the shape of the hand-written class that prompted it --
+ * `s tsc = tTarget.SetValueAt(tSource.GetValueAt("PID"),"PID")` and so on --
+ * which is a perfectly ordinary thing to find in a production and a miserable
+ * thing to maintain by hand.
+ *
+ * WHAT IT COSTS, SAID PLAINLY
+ *
+ * The DTL is visible in the portal. A business process is not: there is no
+ * Visual Trace of the mapping, no DTL test page, and the receiving team reads
+ * ObjectScript rather than a transform diagram. Reach for "dtl" when nothing
+ * stops you, and for "inline" when something does.
+ *
+ * THE BRACES ARE THE TRAP
+ *
+ * `{PID:5}` is a DTL compiler feature and a SYNTAX ERROR in a Method body. The
+ * inline backend therefore renders every path as `GetValueAt("PID:5")` through
+ * the shared expression layer in `emit/iris.ts`, so both backends still have
+ * one definition of every source and step kind between them.
+ */
+export type ProcessTransform = "dtl" | "inline";
+
+/**
+ * Every place the mapping can live, so the serializer, the form and the tests
+ * can enumerate them without a second list going stale. Same reason
+ * `SOURCE_KINDS` exists.
+ */
+export const PROCESS_TRANSFORMS = ["dtl", "inline"] as const;
+
+/**
+ * How much of the WHY travels into the generated class. See `Spec["iris"].comments`.
+ */
+export type CommentLevel = "full" | "brief" | "off";
+
+/**
+ * Every comment level, so the serializer, the form and the tests can enumerate
+ * them without a second list going stale. Same reason `PROCESS_TRANSFORMS` exists.
+ */
+export const COMMENT_LEVELS = ["full", "brief", "off"] as const;
 
 export interface Spec {
   name: string;
@@ -570,12 +645,14 @@ export interface Spec {
      *               See `Stamp`. Absent or empty means the process touches no
      *               fields, which is the right answer unless the value depends
      *               on the destination.
+     *   transform   where the mapping lives. See `ProcessTransform`.
      */
     process?: {
       className: string;
       sendTo: string;
       comment?: string;
       stamp?: Stamp[];
+      transform?: ProcessTransform;
     };
     /**
      * What the GENERATED CLASS logs at run time, inside IRIS. Nothing to do
@@ -599,6 +676,52 @@ export interface Spec {
      * there is nothing in the DTL to log. `emit.ts` prints the rule condition.
      */
     log?: "off" | "warn" | "trace";
+    /**
+     * How much of the WHY travels into the generated class. Comments only --
+     * with one stated exception, below.
+     *
+     *   "full"   every explanation the emitter can give. What this tool wrote
+     *            before the setting existed.
+     *   "brief"  one line per decision, and nothing a maintainer could work out
+     *            by reading the line underneath it. THE DEFAULT.
+     *   "off"    code, plus the class header. The header always stays: it
+     *            carries the fingerprint, and a generated file that cannot be
+     *            matched back to its spec is a file nobody can trust.
+     *
+     * `brief` is the default because the emitted class is maintained by the
+     * receiving site, not by the person who ran the bench. What survives at
+     * `brief` is what they cannot re-derive: the header, one label line per
+     * block, the suppression labels, the group names, the IsMutable reason and
+     * the gate rationale. What goes is the repetition -- the seed preamble
+     * rewritten verbatim for every wholeSegment block -- and the prose about
+     * this tool's opinions, which belongs in the repo's own docs.
+     *
+     * Free text you wrote yourself -- `description`, a block or row `note`, an
+     * `outOfScope` entry, `process.comment` -- is a decision, so it survives at
+     * `brief`. `off` drops it, which is what "off" means.
+     *
+     * THE ONE THING THAT IS NOT PURELY A COMMENT
+     *
+     * The inline backend checks the status of every SetValueAt and logs a
+     * warning when a write fails. The CHECK is behaviour and runs at every
+     * level. Its MESSAGE is not: at `full` it names the field and its label,
+     * which restates the line directly above it, and at `brief` and `off` it
+     * carries the path expression and the error text instead. The path is the
+     * more useful of the two anyway -- it resolves the occurrence number at run
+     * time, which a restated label cannot. The inline backend therefore gives a
+     * labelled row its own one-line comment below `full`, so the label is moved
+     * rather than lost. The DTL carries no such message and gains no such line.
+     *
+     * IT IS IN THE FINGERPRINT, AND THAT IS ON PURPOSE
+     *
+     * Setting this explicitly changes the spec fingerprint, even though the
+     * delivered message is identical -- exactly as `log` has always done.
+     * `fingerprint.ts` hashes the whole spec deliberately, and the alternative
+     * is worse than the surprise: two classes carrying ONE fingerprint and
+     * different bytes would quietly break the only stale-compile check there
+     * is, which is "same fingerprint, same class".
+     */
+    comments?: CommentLevel;
   };
   /**
    * The twin of Ens.Util.LookupTable. Rows live here so the bench and the
@@ -793,6 +916,13 @@ const RESERVED_PACKAGES = ["Ens.", "EnsLib.", "EnsPortal.", "HS.", "%"];
 /** Problems with `iris.className`, worst first. Empty when it is unset. */
 function classNameProblems(name: string | undefined): string[] {
   if (name === undefined) return [];
+  // Empty is its own answer. "is not a legal class name" is true and useless
+  // when the box is blank: the GUI keeps a half-filled process block on purpose
+  // now, rather than deleting what the user chose, so this message is the one
+  // that tells them which box is still empty.
+  if (name.trim() === "") {
+    return [`iris.className is empty. Name the class, or remove the block entirely.`];
+  }
   const problems: string[] = [];
 
   const reserved = RESERVED_PACKAGES.find((p) => name.startsWith(p));
@@ -967,6 +1097,17 @@ export function validate(spec: Spec): string[] {
 
   problems.push(...classNameProblems(spec.iris.className));
 
+  // Checked by NAME rather than left to the default, for the reason
+  // `iris.process.transform` is: the default is "brief", so a typo takes it
+  // silently and the only symptom is a class with fewer comments than the
+  // author asked for -- which nobody reads as a bug.
+  if (spec.iris.comments !== undefined && !COMMENT_LEVELS.includes(spec.iris.comments)) {
+    problems.push(
+      `iris.comments is "${spec.iris.comments}", which is not a comment level. ` +
+        `Use one of: ${COMMENT_LEVELS.join(", ")}.`,
+    );
+  }
+
   const proc = spec.iris.process;
   if (proc) {
     problems.push(...classNameProblems(proc.className).map((p) => p.replace("iris.className", "iris.process.className")));
@@ -986,6 +1127,53 @@ export function validate(spec: Spec): string[] {
         `iris.process.sendTo is empty. The process would call SendRequestAsync with no target, ` +
           `which fails at run time rather than at compile time.`,
       );
+    }
+
+    // Where the mapping lives. Checked by NAME rather than left to a default,
+    // because the default is "dtl" and a typo silently taking it is the whole
+    // failure: "Inline" emits a process that calls a DTL the customer's team
+    // refused to deploy, the class compiles, and the interface is dead at run
+    // time with ClassNotFound naming a transform nobody agreed to ship.
+    const transform = proc.transform;
+    if (transform !== undefined && !PROCESS_TRANSFORMS.includes(transform)) {
+      problems.push(
+        `iris.process.transform is "${transform}", which is not a place the mapping can live. ` +
+          `Use one of: ${PROCESS_TRANSFORMS.join(", ")}. An unrecognised value would otherwise ` +
+          `fall back to "dtl" and emit a process that calls a transform class you did not mean ` +
+          `to deploy.`,
+      );
+    }
+
+    if (transform === "inline") {
+      // Inline means the process IS the interface: nothing calls the DTL, so
+      // the target message is built by this class and its DocType is the only
+      // thing telling SetValueAt where a path goes. Empty resolves nothing, and
+      // resolves it silently -- the same fail-closed silence a wrong DocType
+      // has, with no DTL in the portal to inspect.
+      if (spec.iris.targetDocType.trim() === "") {
+        problems.push(
+          `iris.process.transform is "inline" and iris.targetDocType is empty. The inline ` +
+            `process builds the target itself and PokeDocType is the only thing that tells ` +
+            `SetValueAt where a path goes. With no DocType every write resolves nowhere and ` +
+            `a well-formed empty message is delivered.`,
+        );
+      }
+
+      // A TODO is a row nobody has decided. In the DTL it lands as a TODO
+      // comment beside an assign somebody will finish. Inline, there is no
+      // second artifact and no transform page -- the class IS the deliverable,
+      // and shipping it with a hole in it is shipping the hole.
+      const unfinished = spec.blocks.flatMap((b) =>
+        b.rows.filter((r) => r.from.kind === "todo").map((r) => r.target),
+      );
+      if (unfinished.length > 0) {
+        problems.push(
+          `iris.process.transform is "inline" and ${unfinished.length} row(s) are still todo(): ` +
+            `${unfinished.join(", ")}. Inline emits ONE artifact and it is the whole interface, ` +
+            `so an undecided row is a field the receiver never gets rather than a TODO beside ` +
+            `an assign in a DTL somebody opens next. Decide them, or keep transform "dtl".`,
+        );
+      }
     }
 
     // Stamps. Every one of these is a field the trace document will not
@@ -1051,6 +1239,31 @@ export function validate(spec: Spec): string[] {
       );
     }
     seen.add(block.id);
+
+    // Two rows in one block writing the SAME target. The later one wins and
+    // the earlier one is a dead line that looks live -- the same defect the
+    // duplicate-stamp and stamp-over-a-row refusals above exist for, in the
+    // place it is easiest to write by accident.
+    //
+    // Measured rather than assumed: a `literal("")` suppression row followed
+    // by a `copy()` row on PID-19 delivers the COPIED value, which is the
+    // identifier the suppression row was added to stop sending. The spec reads
+    // as though the field is suppressed, the trace document says it is
+    // suppressed, and the receiver gets it.
+    //
+    // Exact matches only. PID-5 beside PID-5.1 is a whole field and then a
+    // component of it, which is a real and ordinary way to refine a value.
+    const written = new Map<string, number>();
+    for (const row of block.rows) {
+      written.set(row.target, (written.get(row.target) ?? 0) + 1);
+      if (written.get(row.target) === 2) {
+        problems.push(
+          `${block.id}: two rows both assign ${row.target}. The later row wins and the earlier ` +
+            `one is dead, which is silent in every backend -- a literal("") suppression above a ` +
+            `copy() delivers the value the suppression was written to stop. Keep one.`,
+        );
+      }
+    }
 
     // A seed is the identity copy and nothing else. The three refusals below
     // are the three ways it can be written to look right and deliver wrong.

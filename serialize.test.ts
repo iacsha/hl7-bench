@@ -474,6 +474,29 @@ describe("nothing on the spec is dropped on the way out", () => {
     expect(out).toContain("this receiver keys routing on it");
   });
 
+  // Same failure as the three above, with a worse ending. A dropped
+  // `transform` turns a self-contained interface back into one that calls a
+  // DTL -- the class still compiles, and it dies at run time naming a
+  // transform the receiving team refused to deploy.
+  test("an inline transform survives", async () => {
+    const inline: Spec = {
+      ...full,
+      iris: { ...full.iris, process: { ...full.iris.process!, transform: "inline" } },
+    };
+    expect(specToSource(inline)).toContain(`transform: "inline"`);
+    expect(stable(await roundTrip(inline))).toBe(stable(inline));
+  });
+
+  // "dtl" is the default, so it is stored as absence. Writing it back would
+  // put a key in every file that says what the file already said.
+  test("the default transform is not written back", () => {
+    const explicit: Spec = {
+      ...full,
+      iris: { ...full.iris, process: { ...full.iris.process!, transform: "dtl" } },
+    };
+    expect(specToSource(explicit)).not.toContain("transform:");
+  });
+
   // The strongest form of the assertion: write it, read it back, compare. A
   // key that vanishes cannot hide from this.
   test("the whole iris block round-trips", async () => {
