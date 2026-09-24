@@ -334,31 +334,39 @@ export function combinedGrid(spec: Spec, inputs: Named[], opts: TraceOptions = {
 
   // Overview. Mapping columns are fixed by grid(): Block 0, Occurrence 1,
   // Group 2, Target 3, Required 4, Name 5, Source 6, Raw 7, Steps 8, Final 9.
-  // Keyed on the ordinal alone. grid() writes "1 of 2", and the total differs
-  // between messages -- keyed on the whole text, NK1 "1 of 1" in one message
-  // and "1 of 2" in another would land on two rows that are the same NK1.
-  const ordinal = (occ: string) => occ.split(" of ")[0]!;
-  const key = (r: string[]) => `${r[0]}\u0000${ordinal(r[1]!)}\u0000${r[3]}`;
+  //
+  // One row per FIELD, not per occurrence. A repeating block used to get a full
+  // set of rows for every occurrence -- ten FT1s made ten copies of every FT1
+  // field, most of them "(not sent)" for the messages with fewer -- and the
+  // reviewer had to scroll past the repetition to compare anything. The
+  // occurrences now share a row and the cell carries them in order. The
+  // per-message sheets keep one row per occurrence for the detail.
+  const key = (r: string[]) => `${r[0]}\u0000${r[3]}`;
   const order: string[] = [];
   const shape = new Map<string, string[]>();
+  const repeats = new Set<string>();
   const finals = taken.map((t) => {
-    const m = new Map<string, string>();
+    const m = new Map<string, string[]>();
     for (const r of t.rows.slice(1)) {
       const k = key(r);
       if (!shape.has(k)) {
         order.push(k);
-        shape.set(k, [r[0]!, ordinal(r[1]!), r[3]!, r[4]!, r[5]!, r[6]!]);
+        shape.set(k, [r[0]!, r[3]!, r[4]!, r[5]!, r[6]!]);
       }
-      m.set(k, r[9]!);
+      if (r[1] !== "") repeats.add(k);
+      m.set(k, [...(m.get(k) ?? []), r[9]!]);
     }
     return m;
   });
   const overview: string[][] = [
-    ["Block", "Occurrence", "Target", "Required", "Name", "Source", ...tabs],
-    ...order.map((k) => [
-      ...shape.get(k)!,
-      ...finals.map((f) => (f.has(k) ? f.get(k)! : "(not sent)")),
-    ]),
+    ["Block", "Repeats", "Target", "Required", "Name", "Source", ...tabs],
+    ...order.map((k) => {
+      const [block, target, required, name, source] = shape.get(k)!;
+      return [
+        block!, repeats.has(k) ? "yes" : "", target!, required!, name!, source!,
+        ...finals.map((f) => occurrences(f.get(k))),
+      ];
+    }),
   ];
 
   const about: string[][] = [
@@ -388,6 +396,26 @@ export function combinedGrid(spec: Spec, inputs: Named[], opts: TraceOptions = {
     ...taken.map((t, i) => ({ name: tabs[i]!, rows: t.rows })),
     { name: "About", rows: about },
   ];
+}
+
+/**
+ * One Overview cell: every occurrence of a field in one message.
+ *
+ *   none         (not sent)       the message never walked this block
+ *   one          the value        exactly as before
+ *   several, same  value (all 3)  the common case: a literal, a suppression
+ *   several, differ 1: a; 2: b    in delivery order, numbered like the tabs
+ *
+ * On one line, not one per occurrence: a line break in a cell only shows in
+ * Excel with wrap turned on, and without it the cell reads as run-together text.
+ */
+export function occurrences(values: string[] | undefined): string {
+  if (!values || values.length === 0) return "(not sent)";
+  if (values.length === 1) return values[0]!;
+  if (values.every((v) => v === values[0])) {
+    return values[0] === "" ? `(empty, all ${values.length})` : `${values[0]} (all ${values.length})`;
+  }
+  return values.map((v, i) => `${i + 1}: ${v === "" ? "(empty)" : v}`).join("; ");
 }
 
 /**

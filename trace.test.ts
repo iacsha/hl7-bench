@@ -11,7 +11,7 @@ import { join } from "node:path";
 
 import { Message } from "./hl7";
 import { spec } from "./transform";
-import { caseName, combinedGrid, goldenFiles, grid } from "./trace";
+import { caseName, combinedGrid, goldenFiles, grid, occurrences } from "./trace";
 
 const a01 = [
   "MSH|^~\\&|SENDAPP|SENDFAC|RECVAPP|RECVFAC|20260804120000||ADT^A01^ADT_A01|MSG1|P|2.5",
@@ -70,27 +70,36 @@ describe("gaps and collisions", () => {
     expect(names).toContain("A01 second");
   });
 
-  // Rows differ between messages where a repeating block walks a different
-  // number of occurrences: an A08 carrying two NK1 has a "2 of 2" the A01 lacks.
-  // The demo spec's NK1 block repeats.
+  // The demo spec's NK1 block repeats. An A08 carrying two NK1 against an A01
+  // carrying one is the case the Overview has to lay out without repeating rows.
   const one = a01 + "\rNK1|1|DOE^JANE";
   const two = as("A08") + "\rNK1|1|DOE^JANE\rNK1|2|DOE^JIM";
   const ov = () => combinedGrid(spec, [named("a", one), named("b", two)])[0]!.rows;
 
-  test("an occurrence one message does not have reads (not sent), not empty", () => {
-    const second = ov().filter((r) => r[0] === "NK1" && r[1] === "2");
-    expect(second.length).toBeGreaterThan(0);
-    for (const r of second) {
-      expect(r.at(-2)).toBe("(not sent)");
-      expect(r.at(-1)).not.toBe("(not sent)");
-    }
+  test("a repeating block is one row per field, not one per occurrence", () => {
+    const nk1 = ov().filter((r) => r[0] === "NK1");
+    const targets = nk1.map((r) => r[2]);
+    expect(new Set(targets).size).toBe(targets.length);
+    expect(targets).toEqual(["NK1-1", "NK1-2", "NK1-3"]);
+    for (const r of nk1) expect(r[1]).toBe("yes");
   });
 
-  test("the same occurrence lines up across messages whose totals differ", () => {
-    // "1 of 1" in one and "1 of 2" in the other is the same NK1, one row.
-    const first = ov().filter((r) => r[0] === "NK1" && r[1] === "1");
-    expect(first.length).toBeGreaterThan(0);
-    for (const r of first) expect(r.slice(-2)).not.toContain("(not sent)");
+  test("occurrences that differ are listed in order, numbered", () => {
+    const name = ov().find((r) => r[0] === "NK1" && r[2] === "NK1-2")!;
+    expect(name.at(-2)).toBe("DOE^JANE");
+    expect(name.at(-1)).toBe("1: DOE^JANE; 2: DOE^JIM");
+  });
+
+  test("a block the message never walked reads (not sent)", () => {
+    const ov1 = combinedGrid(spec, [named("a", a01), named("b", two)])[0]!.rows;
+    const name = ov1.find((r) => r[0] === "NK1" && r[2] === "NK1-2")!;
+    expect(name.at(-2)).toBe("(not sent)");
+  });
+
+  test("a non-repeating block says nothing in Repeats", () => {
+    const pid = ov().filter((r) => r[0] === "PID");
+    expect(pid.length).toBeGreaterThan(0);
+    for (const r of pid) expect(r[1]).toBe("");
   });
 
   test("every message refused is an error, not an empty workbook", () => {
@@ -111,4 +120,14 @@ describe("goldens", () => {
   test("the filter narrows by name, case-insensitively", () => {
     expect(goldenFiles(dir, "X-").map(caseName)).toEqual(["x-a01", "x-a03"]);
   });
+});
+
+describe("occurrences", () => {
+  test("none is (not sent)", () => expect(occurrences(undefined)).toBe("(not sent)"));
+  test("one is the value as it was", () => expect(occurrences(["X"])).toBe("X"));
+  test("one empty stays empty", () => expect(occurrences([""])).toBe(""));
+  test("several alike collapse, with the count", () => expect(occurrences(["X", "X", "X"])).toBe("X (all 3)"));
+  test("several empty say so", () => expect(occurrences(["", ""])).toBe("(empty, all 2)"));
+  test("several different are numbered, and an empty one is named", () =>
+    expect(occurrences(["A", "", "C"])).toBe("1: A; 2: (empty); 3: C"));
 });
