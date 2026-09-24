@@ -21,7 +21,9 @@
 import { Message } from "./hl7";
 import { describeSource, emptyTables, sourcePathsOf, type Spec } from "./spec";
 import { assertRunnable, gate, resolve, seedSource, walk, type Ctx } from "./run";
-import { toCsv, toXlsx, type Sheet } from "./sheet";
+import { sheetName, toCsv, toXlsx, type Sheet } from "./sheet";
+import { readdirSync } from "node:fs";
+import { basename, join } from "node:path";
 
 // ---------------------------------------------------------------------------
 // Table rendering
@@ -257,6 +259,159 @@ export function grid(spec: Spec, msg: Message, opts: TraceOptions = {}): Sheet[]
 }
 
 // ---------------------------------------------------------------------------
+// Several messages, one workbook
+// ---------------------------------------------------------------------------
+
+/** One message going into a combined workbook, and the name it is known by. */
+export interface Named {
+  name: string;
+  msg: Message;
+}
+
+/**
+ * One workbook for every message type the interface handles.
+ *
+ * An interface is reviewed as a whole: "what does the receiver get on an A08 that it
+ * does not get on an A01" is the question, and three separate files make the
+ * reviewer build that comparison by hand. So the first sheet is an Overview --
+ * one row per mapped field, one column per message, the value that message
+ * delivers in it. A row that one event does not walk reads `(not sent)`, which
+ * is a different statement from an empty value and is written differently.
+ *
+ * Each message keeps its own full Mapping sheet behind the Overview, built by
+ * `grid()`, so the per-message detail (raw, steps, notes) has one definition.
+ *
+ * A message the gate refuses gets no sheet. It is listed on About with the
+ * reason, because a refusal is part of the interface's contract too.
+ */
+export function combinedGrid(spec: Spec, inputs: Named[], opts: TraceOptions = {}): Sheet[] {
+  assertRunnable(spec);
+
+  type Taken = { name: string; label: string; rows: string[][] };
+  const taken: Taken[] = [];
+  const refused: string[][] = [];
+  const notes = new Set<string>();
+  const outOfScope = new Set<string>();
+
+  for (const { name, msg } of inputs) {
+    let sheets: Sheet[];
+    let label: string;
+    try {
+      const { trigger, event } = gate(spec, msg);
+      label = trigger === event ? trigger : `${trigger} to ${event}`;
+      sheets = grid(spec, msg, opts);
+    } catch (e) {
+      refused.push(["Refused", `${name}: ${e instanceof Error ? e.message : String(e)}`]);
+      continue;
+    }
+    taken.push({ name, label, rows: sheets[0]!.rows });
+    for (const [item, value] of sheets[1]!.rows.slice(1)) {
+      if (item === "Note" || item === "Missing required") notes.add(`${label} (${name}): ${value}`);
+      if (item === "Out of scope") outOfScope.add(value!);
+    }
+  }
+
+  if (taken.length === 0) {
+    throw new Error(
+      `the gate refused every message given, so there is nothing to map.\n` +
+        refused.map((r) => `  ${r[1]}`).join("\n"),
+    );
+  }
+
+  // Tab names: the event, and the file where two messages share an event.
+  // Excel refuses a duplicate tab name outright, so the file is not optional.
+  const counts = new Map<string, number>();
+  for (const t of taken) counts.set(t.label, (counts.get(t.label) ?? 0) + 1);
+  const used = new Set<string>(["Overview", "About"]);
+  const tabOf = (t: Taken): string => {
+    const base = (counts.get(t.label) ?? 0) > 1 ? `${t.label} ${t.name}` : t.label;
+    let tab = sheetName(base);
+    for (let i = 2; used.has(tab); i++) tab = sheetName(`${base.slice(0, 26)} #${i}`);
+    used.add(tab);
+    return tab;
+  };
+  const tabs = taken.map(tabOf);
+
+  // Overview. Mapping columns are fixed by grid(): Block 0, Occurrence 1,
+  // Group 2, Target 3, Required 4, Name 5, Source 6, Raw 7, Steps 8, Final 9.
+  // Keyed on the ordinal alone. grid() writes "1 of 2", and the total differs
+  // between messages -- keyed on the whole text, NK1 "1 of 1" in one message
+  // and "1 of 2" in another would land on two rows that are the same NK1.
+  const ordinal = (occ: string) => occ.split(" of ")[0]!;
+  const key = (r: string[]) => `${r[0]}\u0000${ordinal(r[1]!)}\u0000${r[3]}`;
+  const order: string[] = [];
+  const shape = new Map<string, string[]>();
+  const finals = taken.map((t) => {
+    const m = new Map<string, string>();
+    for (const r of t.rows.slice(1)) {
+      const k = key(r);
+      if (!shape.has(k)) {
+        order.push(k);
+        shape.set(k, [r[0]!, ordinal(r[1]!), r[3]!, r[4]!, r[5]!, r[6]!]);
+      }
+      m.set(k, r[9]!);
+    }
+    return m;
+  });
+  const overview: string[][] = [
+    ["Block", "Occurrence", "Target", "Required", "Name", "Source", ...tabs],
+    ...order.map((k) => [
+      ...shape.get(k)!,
+      ...finals.map((f) => (f.has(k) ? f.get(k)! : "(not sent)")),
+    ]),
+  ];
+
+  const about: string[][] = [
+    ["Item", "Value"],
+    ["Spec", spec.name],
+  ];
+  for (const [trigger, event] of Object.entries(spec.gate.permit)) {
+    about.push(["Gate", `${spec.gate.path} "${trigger}" delivers as ${event}`]);
+  }
+  for (const req of spec.gate.require ?? []) {
+    about.push(["Gate requires", `${req.path} must be "${req.equals}", or the message is refused`]);
+  }
+  if (spec.description) about.push(["Description", spec.description]);
+  taken.forEach((t, i) => about.push(["Message", `${t.name}: ${t.label}, sheet "${tabs[i]}"`]));
+  // A permitted trigger with no message is a gap in the evidence, not in the
+  // interface, and the reviewer should see it rather than assume coverage.
+  const covered = new Set(taken.map((t) => t.label.split(" ")[0]));
+  for (const trigger of Object.keys(spec.gate.permit)) {
+    if (!covered.has(trigger)) about.push(["Not shown", `${trigger}: no sample message was given`]);
+  }
+  about.push(...refused);
+  for (const n of notes) about.push(["Note", n]);
+  for (const s of outOfScope) about.push(["Out of scope", s]);
+
+  return [
+    { name: "Overview", rows: overview },
+    ...taken.map((t, i) => ({ name: tabs[i]!, rows: t.rows })),
+    { name: "About", rows: about },
+  ];
+}
+
+/**
+ * The goldens in `dir`, for `--goldens`. Inputs and rejections both: a refusal
+ * belongs in the document as much as a delivery does.
+ *
+ * PowerShell does not expand `messages\*.hl7` for a native program, so asking
+ * for a glob on the command line would work on CT109 and fail on the work PC.
+ */
+export function goldenFiles(dir: string, filter?: string): string[] {
+  const f = filter?.toLowerCase();
+  return readdirSync(dir)
+    .filter((n) => n.endsWith(".in.hl7") || n.endsWith(".reject.hl7"))
+    .filter((n) => !f || n.toLowerCase().includes(f))
+    .sort()
+    .map((n) => join(dir, n));
+}
+
+/** `messages/adt-a08b.in.hl7` is known as `adt-a08b`. */
+export function caseName(path: string): string {
+  return basename(path).replace(/\.(in|reject)\.hl7$/i, "").replace(/\.hl7$/i, "");
+}
+
+// ---------------------------------------------------------------------------
 // The source inventory
 // ---------------------------------------------------------------------------
 
@@ -322,6 +477,68 @@ if (import.meta.main) {
   const { spec } = await import("./specfile");
   const { readMessage, outArg, deliverText } = await import("./input");
   const outFile = outArg("trace");
+  const wantXlsx = process.argv.includes("--xlsx");
+  const wantCsv = process.argv.includes("--csv");
+  if (wantXlsx && wantCsv) {
+    process.stderr.write("trace: --csv and --xlsx are two files. Ask for one.\n");
+    process.exit(2);
+  }
+
+  // Several messages: named on the line, or every golden via --goldens.
+  const argv = process.argv.slice(2);
+  const gi = argv.indexOf("--goldens");
+  const named = argv.filter(
+    (a, i) => a.toLowerCase().endsWith(".hl7") && argv[i - 1] !== "-o" && argv[i - 1] !== "--out",
+  );
+  if (gi !== -1 || named.length > 1) {
+    if (!wantXlsx && !wantCsv) {
+      process.stderr.write(
+        "trace: several messages make a combined workbook. Add --xlsx (or --csv for the Overview only).\n",
+      );
+      process.exit(2);
+    }
+    let files = named;
+    if (gi !== -1) {
+      const next = argv[gi + 1];
+      const filter = next && !next.startsWith("-") && !next.toLowerCase().endsWith(".hl7") ? next : undefined;
+      const { existsSync } = await import("node:fs");
+      if (!existsSync("messages")) {
+        process.stderr.write("trace: --goldens reads messages\\, and there is no messages\\ folder here.\n");
+        process.exit(1);
+      }
+      files = goldenFiles("messages", filter);
+      if (files.length === 0) {
+        process.stderr.write(`trace: no goldens in messages\\${filter ? ` matching "${filter}"` : ""}.\n`);
+        process.exit(1);
+      }
+    }
+    const { decodeText } = await import("./input");
+    const { readFileSync } = await import("node:fs");
+    const inputs = files.map((f) => ({ name: caseName(f), msg: new Message(decodeText(readFileSync(f)).text) }));
+    let sheets: Sheet[];
+    try {
+      sheets = combinedGrid(spec, inputs);
+    } catch (e) {
+      process.stderr.write(`trace: ${e instanceof Error ? e.message : String(e)}\n`);
+      process.exit(1);
+    }
+    const target = outFile ?? (wantXlsx ? "mapping-document.xlsx" : "mapping-document.csv");
+    if (wantXlsx) {
+      await Bun.write(target, toXlsx(sheets));
+    } else {
+      await Bun.write(target, toCsv(sheets[0]!.rows));
+      process.stderr.write("trace: CSV carries the Overview sheet only -- use --xlsx for every sheet.\n");
+    }
+    const shown = sheets.slice(1, -1).map((s) => s.name);
+    const refusedCount = inputs.length - shown.length;
+    process.stderr.write(
+      `wrote ${target}\n  ${shown.length} mapped: ${shown.join(", ")}` +
+        (refusedCount > 0 ? `\n  ${refusedCount} refused by the gate, listed on About` : "") +
+        "\n",
+    );
+    process.exit(0);
+  }
+
   const { raw, source } = await readMessage("trace");
 
   const { logEvent } = await import("./log");
@@ -330,13 +547,7 @@ if (import.meta.main) {
 
   // A spreadsheet for the people who review this, text for the people who
   // diff it. Same walk, same resolution, two renderers.
-  const wantXlsx = process.argv.includes("--xlsx");
-  const wantCsv = process.argv.includes("--csv");
   if (wantXlsx || wantCsv) {
-    if (wantXlsx && wantCsv) {
-      process.stderr.write("trace: --csv and --xlsx are two files. Ask for one.\n");
-      process.exit(2);
-    }
     const sheets = grid(spec, m);
     const target = outFile ?? (wantXlsx ? "mapping-document.xlsx" : "mapping-document.csv");
     if (wantXlsx) {

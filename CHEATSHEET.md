@@ -54,6 +54,9 @@ the whole design: one spec, six readers.
 | ...just the ADT ones | `bun engine.ts --check adt --script MyProcess.cls` |
 | The mapping document for the receiver | `bun trace.ts messages\real.hl7` |
 | ...as a file to send them | `bun trace.ts messages\real.hl7 -o mapping-document.txt` |
+| ...as a spreadsheet for review | `bun trace.ts --xlsx -o mapping.xlsx messages\real.hl7` |
+| ...every message type in one workbook | `bun trace.ts --xlsx --goldens adt -o mapping.xlsx` |
+| ...or name the messages yourself | `bun trace.ts --xlsx -o mapping.xlsx messages\a.in.hl7 messages\b.in.hl7` |
 | Which source paths came back empty? | `bun reads.ts messages\real.hl7` |
 | ...and fail the run if any did | `bun reads.ts --strict messages\real.hl7` |
 | Does this message navigate the way the engine will read it? | `bun navcheck.ts messages\real.hl7` |
