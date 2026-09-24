@@ -341,7 +341,14 @@ export function combinedGrid(spec: Spec, inputs: Named[], opts: TraceOptions = {
   // reviewer had to scroll past the repetition to compare anything. The
   // occurrences now share a row and the cell carries them in order. The
   // per-message sheets keep one row per occurrence for the detail.
-  const key = (r: string[]) => `${r[0]}\u0000${r[3]}`;
+  //
+  // Keyed on the spec row, not just block and target: a spec may declare the
+  // same segment twice (report-line OBXs, then a CPT OBX with
+  // continuesNumbering), and keyed on "OBX" + "OBX-2" alone the second block
+  // folded into the first as one odd occurrence and its own source vanished.
+  // Name and Source are what tell two spec rows apart on the sheet, so they
+  // are what tells them apart here.
+  const key = (r: string[]) => [r[0], r[3], r[5], r[6]].join("\u0000");
   const order: string[] = [];
   const shape = new Map<string, string[]>();
   const repeats = new Set<string>();
@@ -353,9 +360,13 @@ export function combinedGrid(spec: Spec, inputs: Named[], opts: TraceOptions = {
         order.push(k);
         shape.set(k, [r[0]!, r[3]!, r[4]!, r[5]!, r[6]!]);
       }
-      if (r[1] !== "") repeats.add(k);
       m.set(k, [...(m.get(k) ?? []), r[9]!]);
     }
+    // "yes" when a message actually delivered this row more than once. Not
+    // from grid()'s occurrence text: that counts by segment ID, so a one-off
+    // block sharing an ID with a repeating one reads "44 of 44" and would be
+    // marked as repeating when it never does.
+    for (const [k, vs] of m) if (vs.length > 1) repeats.add(k);
     return m;
   });
   const overview: string[][] = [
@@ -364,7 +375,7 @@ export function combinedGrid(spec: Spec, inputs: Named[], opts: TraceOptions = {
       const [block, target, required, name, source] = shape.get(k)!;
       return [
         block!, repeats.has(k) ? "yes" : "", target!, required!, name!, source!,
-        ...finals.map((f) => occurrences(f.get(k))),
+        ...finals.map((f, i) => occurrences(f.get(k), tabs[i])),
       ];
     }),
   ];
@@ -399,24 +410,51 @@ export function combinedGrid(spec: Spec, inputs: Named[], opts: TraceOptions = {
 }
 
 /**
- * One Overview cell: every occurrence of a field in one message.
+ * One Overview cell: every occurrence of a field in one message, kept short.
  *
- *   none         (not sent)       the message never walked this block
- *   one          the value        exactly as before
- *   several, same  value (all 3)  the common case: a literal, a suppression
- *   several, differ 1: a; 2: b    in delivery order, numbered like the tabs
+ *   none               (not sent)        the message never walked this block
+ *   one                the value         exactly as before
+ *   several, same      X (all 3)         a literal, a suppression
+ *   a counter          1 to 43           an output ordinal: OBX-1, FT1-1
+ *   short enough       1: a; 2: b        in delivery order, numbered
+ *   a few distinct     F (42); C (1)     most common first
+ *   long free text     43 values, first "..."; every one on sheet "P03"
+ *
+ * The Overview is for reading ACROSS messages. A report split into 43 OBX
+ * lines made a 1900-character cell that compared nothing and buried the rows
+ * that did. The text is still whole on that message's own sheet, and the cell
+ * says which one.
  *
  * On one line, not one per occurrence: a line break in a cell only shows in
  * Excel with wrap turned on, and without it the cell reads as run-together text.
  */
-export function occurrences(values: string[] | undefined): string {
+export function occurrences(values: string[] | undefined, tab?: string): string {
   if (!values || values.length === 0) return "(not sent)";
   if (values.length === 1) return values[0]!;
+  const n = values.length;
   if (values.every((v) => v === values[0])) {
-    return values[0] === "" ? `(empty, all ${values.length})` : `${values[0]} (all ${values.length})`;
+    return values[0] === "" ? `(empty, all ${n})` : `${values[0]} (all ${n})`;
   }
-  return values.map((v, i) => `${i + 1}: ${v === "" ? "(empty)" : v}`).join("; ");
+  const first = Number(values[0]);
+  const counting = values.every((v, i) => /^\d+$/.test(v) && Number(v) === first + i);
+  if (counting) return `${values[0]} to ${values[n - 1]}`;
+
+  const show = (v: string) => (v === "" ? "(empty)" : v);
+  const listed = values.map((v, i) => `${i + 1}: ${show(v)}`).join("; ");
+  if (listed.length <= OVERVIEW_CELL) return listed;
+
+  const counts = new Map<string, number>();
+  for (const v of values) counts.set(v, (counts.get(v) ?? 0) + 1);
+  if (counts.size <= 3) {
+    return [...counts].sort((x, y) => y[1] - x[1]).map(([v, c]) => `${show(v)} (${c})`).join("; ");
+  }
+  const head = show(values[0]!);
+  const clipped = head.length > 40 ? `${head.slice(0, 40)}...` : head;
+  return `${n} values, first "${clipped}"` + (tab ? `; every one on sheet "${tab}"` : "");
 }
+
+/** Past this, a numbered list stops being readable in a cell. */
+const OVERVIEW_CELL = 120;
 
 /**
  * The goldens in `dir`, for `--goldens`. Inputs and rejections both: a refusal

@@ -11,6 +11,7 @@ import { join } from "node:path";
 
 import { Message } from "./hl7";
 import { spec } from "./transform";
+import { literal } from "./spec";
 import { caseName, combinedGrid, goldenFiles, grid, occurrences } from "./trace";
 
 const a01 = [
@@ -130,4 +131,57 @@ describe("occurrences", () => {
   test("several empty say so", () => expect(occurrences(["", ""])).toBe("(empty, all 2)"));
   test("several different are numbered, and an empty one is named", () =>
     expect(occurrences(["A", "", "C"])).toBe("1: A; 2: (empty); 3: C"));
+  test("a counter is a range", () =>
+    expect(occurrences(Array.from({ length: 43 }, (_, i) => String(i + 1)))).toBe("1 to 43"));
+  test("numbers that skip are not a range", () => expect(occurrences(["1", "3"])).toBe("1: 1; 2: 3"));
+
+  const many = (v: (i: number) => string, n = 44) => Array.from({ length: n }, (_, i) => v(i));
+
+  test("a long list with few distinct values is counted, most common first", () =>
+    expect(occurrences(many((i) => (i === 43 ? "C" : "F")))).toBe("F (43); C (1)"));
+  test("long free text is summarised and points at the sheet with all of it", () => {
+    const cell = occurrences(many((i) => `report line number ${i}`), "P03 to T02");
+    expect(cell).toBe('44 values, first "report line number 0"; every one on sheet "P03 to T02"');
+  });
+  test("a long first value is clipped", () => {
+    const cell = occurrences(many((i) => `${"x".repeat(60)}${i}`));
+    expect(cell).toContain(`first "${"x".repeat(40)}..."`);
+  });
+});
+
+describe("the same segment declared twice", () => {
+  // A report-line block and a second block continuing its numbering, as a
+  // spec with report OBXs and a trailing CPT OBX has. Before, the second
+  // block folded into the first as one odd occurrence.
+  const nk1 = spec.blocks.find((b) => b.id === "NK1")!;
+  const twice = {
+    ...spec,
+    blocks: [
+      ...spec.blocks,
+      { id: "NK1", continuesNumbering: true, rows: [{ target: "NK1-3", label: "Tail", from: literal("TAIL") }] },
+    ],
+  } as typeof spec;
+  const msg = a01 + "\rNK1|1|DOE^JANE|MTH\rNK1|2|DOE^JIM|BRO";
+  const ov = combinedGrid(twice, [named("a", msg), named("b", as("A08") + "\rNK1|1|DOE^JANE|MTH")])[0]!.rows;
+
+  test("each spec row keeps its own Overview row", () => {
+    const rel = ov.filter((r) => r[0] === "NK1" && r[2] === "NK1-3");
+    expect(rel.map((r) => r[4])).toEqual([nk1.rows.find((r) => r.target === "NK1-3")!.label, "Tail"]);
+  });
+
+  test("the first block's values are not diluted by the second", () => {
+    const rel = ov.find((r) => r[0] === "NK1" && r[2] === "NK1-3" && r[4] === "Relationship")!;
+    expect(rel.at(-2)).toBe("1: MTH; 2: BRO");
+    expect(rel.at(-1)).toBe("MTH");
+  });
+
+  test("a one-off block sharing an ID with a repeating one is not marked as repeating", () => {
+    expect(ov.find((r) => r[4] === "Tail")![1]).toBe("");
+  });
+
+  test("the second block shows its own literal", () => {
+    const tail = ov.find((r) => r[4] === "Tail")!;
+    expect(tail[5]).toBe('"TAIL"');
+    expect(tail.at(-1)).toBe("TAIL");
+  });
 });
