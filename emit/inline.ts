@@ -49,6 +49,7 @@ import {
   srcGroups, stepCode,
   type BareRefs, type Dialect, type Scope, type State,
 } from "./iris";
+import { DEFAULT_STYLE, styledWrite, type Style } from "../style";
 import { seedGuarded, type Spec, type Block, type Row, type CommentLevel, type Source } from "../spec";
 
 /**
@@ -66,6 +67,8 @@ import { seedGuarded, type Spec, type Block, type Row, type CommentLevel, type S
  * same code either way.
  */
 let house = false;
+/** The style in force for a house emit. See style.ts. */
+let houseStyle: Style = DEFAULT_STYLE;
 
 /** Reads for house style: the request as it arrived, and the message being built. */
 const HOUSE: Dialect = {
@@ -243,7 +246,7 @@ function write(
   what: string,
   indent: string,
 ): string[] {
-  if (house) return [`${indent}$$$ThrowOnError(tRequest.SetValueAt(${value},${path}))`];
+  if (house) return [`${indent}${styledWrite(houseStyle, `tRequest.SetValueAt(${value},${path})`)}`];
   if (irisLog(spec) === "off") return [`${indent}do tTarget.SetValueAt(${value}, ${path})`];
   // The CHECK runs at every comment level -- it is behaviour, and a write that
   // failed silently is the failure `iris.log` exists for. Only the MESSAGE
@@ -674,9 +677,11 @@ export function emitInlineMapping(
   spec: Spec,
   indent: string,
   collect?: BareRefs,
-  houseStyle = false,
+  houseMode = false,
+  style: Style = DEFAULT_STYLE,
 ): string[] {
-  house = houseStyle;
+  house = houseMode;
+  houseStyle = style;
   try {
     const out = mappingBody(spec, indent, collect);
     return house ? out.map(houseLine) : out;
@@ -727,7 +732,7 @@ function mappingBody(spec: Spec, indent: string, collect?: BareRefs): string[] {
     out.push(
       `${indent}set tRequest = ##class(EnsLib.HL7.Message).%New()`,
       `${indent}set tRequest.Separators = pRequest.Separators`,
-      `${indent}$$$ThrowOnError(tRequest.PokeDocType(${os(spec.iris.targetDocType)}))`,
+      `${indent}${styledWrite(houseStyle, `tRequest.PokeDocType(${os(spec.iris.targetDocType)})`)}`,
     );
   } else if (create === "copy") {
     out.push(

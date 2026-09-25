@@ -41,6 +41,7 @@ import { emitInlineMapping, inlineDeclarations, inlineHelpers } from "./inline";
 import { emitBuild, emitPatch } from "./patch";
 import { fingerprint } from "../fingerprint";
 import type { Spec } from "../spec";
+import type { Style } from "../style";
 
 // ---------------------------------------------------------------------------
 
@@ -79,7 +80,7 @@ function ref(obj: string, path: string, inline: boolean): string {
  * there is no sensible default for the one fact it carries that nothing else in
  * the spec does: the name of the config item to dispatch to.
  */
-export function emitProcess(spec: Spec, collect?: BareRefs): string {
+export function emitProcess(spec: Spec, collect?: BareRefs, style?: Style): string {
   const proc = spec.iris.process;
   if (!proc) {
     throw new Error(
@@ -91,8 +92,8 @@ export function emitProcess(spec: Spec, collect?: BareRefs): string {
   }
 
   // A different shape of class altogether, not a variation on this one.
-  if (proc.transform === "patch") return emitPatch(spec, collect);
-  if (proc.transform === "build") return emitBuild(spec, collect);
+  if (proc.transform === "patch") return emitPatch(spec, collect, style);
+  if (proc.transform === "build") return emitBuild(spec, collect, style);
 
   const notes = irisComments(spec);
   const inline = (proc.transform ?? "dtl") === "inline";

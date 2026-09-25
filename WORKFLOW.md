@@ -736,6 +736,47 @@ the class only at `comments: "full"`.
 
 Prove it the same way: `bun engine.ts --check --script MyProcess.cls`.
 
+### How the class reads: a style file
+
+`patch` and `build` write the class in one canonical form, then lay it out in
+your site's style. The spec says what the interface does; the style says how
+your team writes ObjectScript. Keep them apart, and one spec emits a class any
+team can accept.
+
+With no style file you get `defensive`: every write checked with
+`$$$ThrowOnError`, a try/catch in Mapping, tabs, `Set`. For anything else,
+point `HL7_BENCH_STYLE` at a JSON file, in `.env` like the spec. Name it
+`*.local.json`, which is gitignored, because it records your workplace's
+conventions:
+
+```json
+{ "extends": "lean", "indent": "tab", "keywords": "Set" }
+```
+
+| Setting | Values | Default |
+|---|---|---|
+| `extends` | `defensive`, `lean` | `defensive` |
+| `writes` | `checked` (`$$$ThrowOnError`), `unchecked` (`Do`) | `checked` |
+| `mappingTry` | `true`, `false` | `true` |
+| `send` | `checked`, `unchecked` | `checked` |
+| `filteredOut` | `trace`, `warning`, `silent` | `trace` |
+| `indent` | `"tab"`, `2`, `4` | `"tab"` |
+| `keywords` | `Set`, `set` | `Set` |
+| `header` | `generator`, `none` | `generator` |
+| `comments` | `full`, `brief`, `off`, overriding `iris.comments` | the spec's |
+
+`lean` is `writes: unchecked` and `mappingTry: false`, with 4 spaces and `set`.
+The send stays checked: it is the one line that can fail for a reason the class
+does not control, and the only one that puts a lost message in the error queue.
+
+Know what `unchecked` trades. A write fails when its path does not resolve
+under the DocType. Unchecked, that field goes out missing and nothing is
+logged. The style rests on the schema not changing under a deployed class, and
+on `bun engine.ts --check` catching an unresolvable path before deployment.
+
+Style never changes the delivered message. Re-run `engine.ts --check` after
+changing it anyway: that is the proof for your site.
+
 `todo()` is not a failure. It is the spec refusing to fake a row nobody has
 decided yet, so the gap shows up as a TODO in the right place in the file rather
 than as a silent hole you find at validation. Take the ObjectScript for it from
