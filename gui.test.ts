@@ -18,7 +18,7 @@
 
 import { expect, test, describe } from "bun:test";
 import { readFileSync } from "node:fs";
-import { validate, type Spec } from "./spec";
+import { validate, PROCESS_TRANSFORMS, type Spec } from "./spec";
 
 const html = readFileSync(new URL("./gui.html", import.meta.url), "utf8");
 
@@ -168,8 +168,10 @@ describe("the occurrence tail", () => {
 describe("iris.process.transform has a control", () => {
   const js = moduleSource();
 
-  test("the form offers both places the mapping can live", () => {
-    expect(js).toContain(`["dtl", "inline"]`);
+  // Against the constant, not a literal: a mode added to the spec and not to
+  // the form is a mode a GUI save silently turns back into "dtl".
+  test("the form offers every place the mapping can live", () => {
+    expect(js).toContain(JSON.stringify([...PROCESS_TRANSFORMS]).replaceAll(",", ", "));
   });
 
   test("the control writes through setProcess, so the key reaches the spec", () => {

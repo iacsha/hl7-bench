@@ -502,6 +502,12 @@ export interface Stamp {
  *              and no DTL is called. ONE artifact, self-contained, nothing to
  *              deploy but the process class.
  *
+ *   "patch"    also one self-contained class, written the way an IRIS team
+ *              writes an HL7-to-HL7 process by hand: clone the request, patch
+ *              fields in place, remove the segments the receiver does not
+ *              take, send. Leaner than "inline" because nothing is rebuilt,
+ *              and narrower: `patchProblems` names the specs it cannot say.
+ *
  * WHY "inline" EXISTS
  *
  * Not as a style preference. A receiving IRIS team that will not deploy a DTL
@@ -526,14 +532,14 @@ export interface Stamp {
  * the shared expression layer in `emit/iris.ts`, so both backends still have
  * one definition of every source and step kind between them.
  */
-export type ProcessTransform = "dtl" | "inline";
+export type ProcessTransform = "dtl" | "inline" | "patch";
 
 /**
  * Every place the mapping can live, so the serializer, the form and the tests
  * can enumerate them without a second list going stale. Same reason
  * `SOURCE_KINDS` exists.
  */
-export const PROCESS_TRANSFORMS = ["dtl", "inline"] as const;
+export const PROCESS_TRANSFORMS = ["dtl", "inline", "patch"] as const;
 
 /**
  * How much of the WHY travels into the generated class. See `Spec["iris"].comments`.
@@ -1189,7 +1195,9 @@ export function validate(spec: Spec): string[] {
       );
     }
 
-    if (transform === "inline") {
+    if (transform === "patch") problems.push(...patchProblems(spec));
+
+    if (transform === "inline" || transform === "patch") {
       // Inline means the process IS the interface: nothing calls the DTL, so
       // the target message is built by this class and its DocType is the only
       // thing telling SetValueAt where a path goes. Empty resolves nothing, and
@@ -1213,7 +1221,7 @@ export function validate(spec: Spec): string[] {
       );
       if (unfinished.length > 0) {
         problems.push(
-          `iris.process.transform is "inline" and ${unfinished.length} row(s) are still todo(): ` +
+          `iris.process.transform is "${transform}" and ${unfinished.length} row(s) are still todo(): ` +
             `${unfinished.join(", ")}. Inline emits ONE artifact and it is the whole interface, ` +
             `so an undecided row is a field the receiver never gets rather than a TODO beside ` +
             `an assign in a DTL somebody opens next. Decide them, or keep transform "dtl".`,
@@ -1501,4 +1509,57 @@ export function emptyTables(spec: Spec): string[] {
   return Object.entries(spec.tables ?? {})
     .filter(([, rows]) => Object.keys(rows).length === 0)
     .map(([name]) => name);
+}
+
+/**
+ * Why a spec cannot be emitted as a clone-and-patch process, or nothing.
+ *
+ * A clone starts from the whole request, so it can only say what the bench
+ * says when the bench is also starting from the request: every delivered
+ * segment copied whole and then patched. Each refusal below is a spec whose
+ * patch rendering would deliver a different message from `run.ts`, and the
+ * difference would be silent -- the class compiles and sends something
+ * plausible. "inline" can say all of these; the message says so.
+ */
+export function patchProblems(spec: Spec): string[] {
+  const problems: string[] = [];
+  const use = `Use iris.process.transform "inline", which builds the message and can say it.`;
+  if (spec.iris.sourceDocType !== spec.iris.targetDocType) {
+    problems.push(
+      `transform "patch" clones the request, so the target keeps the source DocType, and this spec ` +
+        `converts ${spec.iris.sourceDocType} to ${spec.iris.targetDocType}. ${use}`,
+    );
+  }
+  if (!spec.blocks.some((b) => b.id === "MSH" && b.wholeSegment)) {
+    problems.push(`transform "patch" always sends the request's MSH, so the spec needs an MSH block with wholeSegment.`);
+  }
+  const seen = new Set<string>();
+  const groups = spec.iris.sourceGroups ?? {};
+  for (const b of spec.blocks) {
+    if (!b.wholeSegment) {
+      problems.push(
+        `${b.id}: transform "patch" keeps each delivered segment as the sender sent it and patches it, ` +
+          `so every block has to be wholeSegment. This one enumerates its fields. ${use}`,
+      );
+    }
+    if (seen.has(b.id)) problems.push(`${b.id}: more than one block for one segment cannot be a patch. ${use}`);
+    seen.add(b.id);
+    if (b.continuesNumbering) problems.push(`${b.id}: continuesNumbering adds a segment the request does not have. ${use}`);
+    if (b.group && groups[b.id] && b.group !== groups[b.id]) {
+      problems.push(`${b.id}: group "${b.group}" differs from sourceGroups "${groups[b.id]}", and a clone has one shape. ${use}`);
+    }
+    const r = b.repeat;
+    if (r) {
+      for (const k of ["select", "fold", "max"] as const) {
+        if (r[k] !== undefined) problems.push(`${b.id}: repeat.${k} is not a patch. ${use}`);
+      }
+      if (r.skipWhenEmpty && b.rows.some((row) => row.from.kind === "counter")) {
+        problems.push(
+          `${b.id}: counter() beside skipWhenEmpty numbers the occurrences the bench keeps, which a ` +
+            `patch only knows after removing the others. ${use}`,
+        );
+      }
+    }
+  }
+  return problems;
 }

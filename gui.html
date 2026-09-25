@@ -945,7 +945,7 @@ function renderSpec() {
     // silently reverts to calling a DTL compiles and then dies at run time.
     el("label", { class: "f" }, [
       el("span", { text: "mapping" }),
-      select(spec.iris.process?.transform ?? "dtl", ["dtl", "inline"], (v) => {
+      select(spec.iris.process?.transform ?? "dtl", ["dtl", "inline", "patch"], (v) => {
         // "dtl" is the default, so it is stored as absence rather than as a
         // key. setProcess removes a field given "", which is what keeps an
         // untouched spec byte-identical through a round trip.

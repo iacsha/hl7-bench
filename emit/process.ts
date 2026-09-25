@@ -38,6 +38,7 @@
 
 import { comment, irisComments, os, pickNotes, type BareRefs } from "./iris";
 import { emitInlineMapping, inlineDeclarations, inlineHelpers } from "./inline";
+import { emitPatch } from "./patch";
 import { fingerprint } from "../fingerprint";
 import type { Spec } from "../spec";
 
@@ -88,6 +89,9 @@ export function emitProcess(spec: Spec, collect?: BareRefs): string {
         `one fact the bench cannot work out for itself.`,
     );
   }
+
+  // A different shape of class altogether, not a variation on this one.
+  if (proc.transform === "patch") return emitPatch(spec, collect);
 
   const notes = irisComments(spec);
   const inline = (proc.transform ?? "dtl") === "inline";

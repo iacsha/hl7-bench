@@ -684,6 +684,40 @@ distinction matters. A message whose first IN1 is a shell and gets skipped
 delivers a single coverage numbered `2` if you number from the source, and a
 receiver reading priority ordinally sees a secondary with no primary.
 
+### HL7 to HL7 as a business process: `transform: "patch"`
+
+Many IRIS teams write HL7-to-HL7 interfaces as one hand-written business
+process, not a DTL, and keep DTLs for heavier conversions such as HL7 to XML.
+If that is your site's style, set `iris.process.transform` to `"patch"` and
+emit the process:
+
+```powershell
+bun emit.ts process -o MyProcess.cls
+```
+
+The class is written the way those teams write it by hand. `OnRequest` is try,
+`Mapping`, send. `Mapping` clones the request, patches fields in place, removes
+the segments the receiver does not take, and returns. Writes go through
+`$$$ThrowOnError`. The gate's permit table is one `$CASE`, with no silent
+default. A passthrough ADT comes out at about seventy lines against nearly two
+hundred for `"inline"`, which builds a new message segment by segment.
+
+It is narrower than `"inline"`, and `bun check.ts` says why when a spec does not
+fit. Every block must be `wholeSegment`, one block per segment, repeats may use
+`skipWhenEmpty` but not `select`, `fold` or `max`, and the source and target
+DocType must match. Each refusal names `"inline"` as the mode that can say it.
+
+List the segments your feed always carries in `iris.alwaysPresent`. Their rows
+are patched without a presence test. Every other segment's rows sit behind
+`If (pRequest.GetValueAt("PV2") '= "")`, because writing to an absent segment
+would create it.
+
+`bun engine.ts --check` cannot run a patch class yet: it compiles `OnRequest`
+into a ClassMethod, and a ClassMethod cannot call the instance method
+`..Mapping`. Prove a patch class on a lab instance by subclassing it, overriding
+`SendRequestAsync` to capture the message, and comparing the captured output
+with what the bench delivers for the same inputs.
+
 `todo()` is not a failure. It is the spec refusing to fake a row nobody has
 decided yet, so the gap shows up as a TODO in the right place in the file rather
 than as a silent hole you find at validation. Take the ObjectScript for it from
