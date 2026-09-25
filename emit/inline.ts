@@ -44,20 +44,160 @@
  */
 
 import {
-  INLINE, comment, dtlPath, dtlSegment, highestScanStatement, irisComments, irisLog,
+  INLINE, comment, dtlPath, lookupExpr, dtlSegment, highestScanStatement, irisComments, irisLog,
   lookupMissStatement, newState, noteBare, os, pathString, pickNotes, sourceCode,
   srcGroups, stepCode,
-  type BareRefs, type Scope, type State,
+  type BareRefs, type Dialect, type Scope, type State,
 } from "./iris";
-import { seedGuarded, type Spec, type Block, type Row, type CommentLevel } from "../spec";
+import { seedGuarded, type Spec, type Block, type Row, type CommentLevel, type Source } from "../spec";
 
-/** `pickNotes`, wrapped as ObjectScript line comments at one indent. */
+/**
+ * HOUSE STYLE: the same mapping, written the way an IRIS team writes a
+ * process by hand. Set for one emit by `emitInlineMapping(..., true)`, which is
+ * what `transform: "build"` asks for.
+ *
+ * Reads come straight off `pRequest` with `GetValueAt`, which on IRIS for
+ * Health returns "" for an absent segment rather than throwing (measured, and
+ * what every hand-written class in the sampled namespace relies on), so the
+ * guarded-read helper goes. Writes go through `$$$ThrowOnError` into
+ * `tRequest`, so the status variables go. The explanatory prose goes too; a
+ * note the spec's author wrote still prints. Nothing about WHAT is mapped
+ * changes -- every source, step, repeat, select, fold and seed below is the
+ * same code either way.
+ */
+let house = false;
+
+/** Reads for house style: the request as it arrived, and the message being built. */
+const HOUSE: Dialect = {
+  value: (braced) => houseRead(braced),
+  code: (braced) => houseRead(braced),
+  lookup: (table, key, fallback) =>
+    `##class(Ens.Rule.FunctionSet).Lookup(${table},${key},${fallback})`,
+  block: (lines) => lines,
+};
+
+function houseRead(braced: string): string {
+  const m = /^(\w+)\.\{(.+)\}$/.exec(braced);
+  if (!m) throw new Error(`Not a DTL reference: "${braced}"`);
+  const obj = m[1] === "source" ? "pRequest" : m[1] === "target" ? "tRequest" : m[1];
+  return `${obj}.GetValueAt(${pathString(`{${m[2]}}`)})`;
+}
+
+/** The dialect in force for this emit. */
+const D = (): Dialect => (house ? HOUSE : INLINE);
+
+/**
+ * Whether a spec note prints as a comment in the class.
+ *
+ * In house style only a short one does, at the default level: a note that runs
+ * to a paragraph is the reasoning behind a decision, and it already prints in
+ * the mapping document `trace.ts` writes. In the class it is one line nobody
+ * can read without scrolling sideways. `comments: "full"` prints them all.
+ */
+export const NOTE_MAX = 100;
+export function noteShown(level: CommentLevel, note: string | undefined, houseStyle: boolean): boolean {
+  if (!note || level === "off") return false;
+  return !houseStyle || level === "full" || note.length <= NOTE_MAX;
+}
+
+type Found = Extract<Source, { kind: "fromFirst" | "fromWhere" }>;
+
+/** The "find an occurrence" source a row reads, directly or as a lookup key. */
+function foundOf(from: Source): Found | undefined {
+  if (from.kind === "fromFirst" || from.kind === "fromWhere") return from;
+  if (from.kind === "lookup" && (from.from?.kind === "fromFirst" || from.from?.kind === "fromWhere")) {
+    return from.from as Found;
+  }
+  return undefined;
+}
+
+const foundKey = (x: Found) =>
+  x.kind === "fromFirst" ? `first|${x.segment}|${x.nonEmpty}|${x.path}` : `where|${x.segment}|${x.where}|${x.equals}|${x.read}`;
+
+/** House style: the variable each hoisted find was read into. */
+let hoisted = new Map<string, string>();
+/** House style: top-level required targets, checked in one loop at the end. */
+let requiredPaths: string[] = [];
+
+/**
+ * House style: ONE pass over each segment the mapping searches, at the top of
+ * Mapping, reading every "first non-empty" and "the one where" value in it.
+ *
+ * A spec that says "the first OBX-14" in five places used to emit five loops
+ * over OBX. Both kinds read the MESSAGE, never the occurrence a repeat is on,
+ * so the answer is the same wherever the row sits and it may be read once,
+ * up front. First match wins, and nothing found leaves "", exactly as each
+ * loop on its own did. Variables are named for what they hold: Obxf14 is the
+ * first non-empty OBX-14, the way a hand-written class names Pid2.
+ */
+function emitFirstPass(st: State, indent: string, out: string[]): void {
+  hoisted = new Map();
+  const bySeg = new Map<string, Found[]>();
+  for (const block of st.spec.blocks) {
+    for (const row of block.rows) {
+      const x = foundOf(row.from);
+      if (!x || hoisted.has(foundKey(x))) continue;
+      hoisted.set(foundKey(x), "");
+      bySeg.set(x.segment, [...(bySeg.get(x.segment) ?? []), x]);
+    }
+  }
+  if (bySeg.size === 0) return;
+  const groups = srcGroups(st);
+  const names = new Set<string>();
+  const nameFor = (seg: string, path: string) => {
+    const stem = seg[0] + seg.slice(1).toLowerCase();
+    const base = `${stem}f${path.slice(seg.length + 1).replace(/[^0-9]+/g, "c")}`;
+    let n = base;
+    for (let k = 2; names.has(n); k++) n = `${base}s${k}`;
+    names.add(n);
+    return n;
+  };
+
+  for (const [seg, finds] of bySeg) {
+    const g = groups[seg];
+    const i = `i${seg[0]}${seg.slice(1).toLowerCase()}`;
+    const at = (p: string) => {
+      const field = p.slice(seg.length + 1);
+      const braced = g ? `{${g}(${i}).${seg}:${field}}` : `{${seg}(${i}):${field}}`;
+      noteBare(st, braced);
+      return HOUSE.value(`source.${braced}`);
+    };
+    const count = HOUSE.value(`source.${g ? `{${g}(*)}` : `{${seg}(*)}`}`);
+    const vars: string[] = [];
+    const lines: string[] = [];
+    for (const x of finds) {
+      const v = nameFor(seg, x.kind === "fromFirst" ? x.path : x.read);
+      vars.push(v);
+      hoisted.set(foundKey(x), v);
+      if (x.kind === "fromFirst" && x.nonEmpty === x.path) {
+        // "First non-empty X": setting an empty value leaves it "", so no flag.
+        lines.push(`    if (${v} = "") set ${v} = ${at(x.path)}`);
+      } else {
+        const flag = `${v}Found`;
+        vars.push(flag);
+        const test = x.kind === "fromFirst" ? `(${at(x.nonEmpty)} '= "")` : `(${at(x.where)} = ${os(x.equals)})`;
+        lines.push(`    if ('${flag}) && ${test} set ${flag} = 1, ${v} = ${at(x.kind === "fromFirst" ? x.path : x.read)}`);
+      }
+    }
+    out.push(
+      `${indent}// One pass over ${seg} for every value read from it`,
+      `${indent}set (${vars.join(",")}) = ""`,
+      `${indent}for ${i}=1:1:${count} {`,
+      ...lines.map((l) => indent + l),
+      `${indent}}`,
+    );
+  }
+  // Flags start "", which '"" reads as true: not found yet.
+}
+
+/** `pickNotes`, wrapped as ObjectScript line comments at one indent. None in house style. */
 function osNotes(
   level: CommentLevel,
   indent: string,
   full: string[],
   brief: string[],
 ): string[] {
+  if (house) return [];
   return pickNotes(level, full, brief).map((l) => `${indent}// ${l}`);
 }
 
@@ -103,6 +243,7 @@ function write(
   what: string,
   indent: string,
 ): string[] {
+  if (house) return [`${indent}$$$ThrowOnError(tRequest.SetValueAt(${value},${path}))`];
   if (irisLog(spec) === "off") return [`${indent}do tTarget.SetValueAt(${value}, ${path})`];
   // The CHECK runs at every comment level -- it is behaviour, and a write that
   // failed silently is the failure `iris.log` exists for. Only the MESSAGE
@@ -164,8 +305,12 @@ function emitSeed(st: State, block: Block, scope: Scope, indent: string, out: st
       ],
       [`${comment(block.id)}: copied WHOLE, then overwritten below.`],
     ),
-    `${indent}set ${SEED} = ${INLINE.value(`source.${braced}`)}`,
-    ...write(st.spec, SEED, to, `${block.id} (whole segment)`, indent),
+    ...(house
+      ? write(st.spec, HOUSE.value(`source.${braced}`), to, block.id, indent)
+      : [
+          `${indent}set ${SEED} = ${INLINE.value(`source.${braced}`)}`,
+          ...write(st.spec, SEED, to, `${block.id} (whole segment)`, indent),
+        ]),
   );
 }
 
@@ -196,9 +341,18 @@ function emitGuardedSeedBlock(
   const spec = st.spec;
   const braced = dtlSegment(block.id, scope.sourcePrefix, srcGroups(st));
   noteBare(st, braced);
-  const from = INLINE.value(`source.${braced}`);
+  const from = D().value(`source.${braced}`);
   const to = pathString(dtlSegment(block.id, scope.targetPrefix));
   const inner = `${indent}    `;
+
+  // House style: test the request, copy it, patch it. No seed variable, and no
+  // warning for an optional segment the sender left out -- that is ordinary.
+  if (house) {
+    out.push(`${indent}If (${from} '= "") {`, ...write(spec, from, to, block.id, inner));
+    for (const row of block.rows) emitRow(st, row, scope, inner, out);
+    out.push(`${indent}}`);
+    return;
+  }
 
   out.push(
     ...osNotes(
@@ -239,7 +393,7 @@ function emitGuardedSeedBlock(
 function emitRow(st: State, row: Row, scope: Scope, indent: string, out: string[]): void {
   const spec = st.spec;
   const notes = irisComments(spec);
-  if (notes !== "off" && row.note) out.push(`${indent}// ${comment(row.note)}`);
+  if (noteShown(notes, row.note, house)) out.push(`${indent}// ${comment(row.note!)}`);
 
   if (row.from.kind === "todo") {
     // Visible, and no write. A generator that quietly dropped what it cannot
@@ -261,11 +415,18 @@ function emitRow(st: State, row: Row, scope: Scope, indent: string, out: string[
   // `full` the label rides inside the write-failure message, `brief` shortens
   // that message to the path, and without this the spec's own words for the
   // field would be lost at the level that is now the default.
-  if (notes === "brief" && row.label && row.label !== row.target) {
+  if (!house && notes === "brief" && row.label && row.label !== row.target) {
     out.push(`${indent}// ${comment(row.target)}: ${comment(row.label)}`);
   }
 
-  const { expr, pre } = sourceCode(st, row.from, scope, INLINE);
+  // House style maps the event once, in OnRequest, and hands it in as pEvent.
+  const found = house ? foundOf(row.from) : undefined;
+  const held = found && hoisted.get(foundKey(found));
+  const { expr, pre } =
+    house && row.from.kind === "event" ? { expr: "pEvent", pre: [] }
+    : held && row.from.kind === "lookup" ? { expr: lookupExpr(HOUSE, row.from.table, held, row.from.unmapped), pre: [] }
+    : held ? { expr: held, pre: [] }
+    : sourceCode(st, row.from, scope, D());
   for (const line of pre ?? []) out.push(indent + line);
 
   let value = expr!;
@@ -273,7 +434,7 @@ function emitRow(st: State, row: Row, scope: Scope, indent: string, out: string[
 
   const braced = dtlPath(row.target, scope.targetPrefix);
   const path = pathString(braced);
-  const readBack = INLINE.value(`target.${braced}`);
+  const readBack = D().value(`target.${braced}`);
   const level = irisLog(spec);
   const label = row.label ?? row.target;
 
@@ -282,13 +443,13 @@ function emitRow(st: State, row: Row, scope: Scope, indent: string, out: string[
   // source already ran above and left its answer in a variable, and re-walking
   // it here could disagree with the value actually used.
   if (level !== "off" && row.from.kind === "lookup" && row.from.path) {
-    const ref = INLINE.value(
+    const ref = D().value(
       `source.${dtlPath(row.from.path, scope.sourcePrefix, srcGroups(st))}`,
     );
     const where =
       row.from.path === row.target ? row.target : `${row.from.path} to ${row.target}`;
     const msg = `${os(`${row.from.table} has no row for "`)}_${ref}_${os(`" (${where})`)}`;
-    out.push(`${indent}${lookupMissStatement(INLINE, row.from.table, ref, msg)}`);
+    out.push(`${indent}${lookupMissStatement(D(), row.from.table, ref, msg)}`);
   }
 
   out.push(...write(spec, value, path, label === row.target ? row.target : `${row.target} (${label})`, indent));
@@ -296,7 +457,9 @@ function emitRow(st: State, row: Row, scope: Scope, indent: string, out: string[
   // The other silent failure: a required target that came out empty. Read back
   // off the TARGET rather than checked on the source, so a step that emptied a
   // populated source is caught too.
-  if (level !== "off" && row.required) {
+  if (house && level !== "off" && row.required && !scope.targetPrefix) {
+    requiredPaths.push(path.slice(1, -1));
+  } else if (level !== "off" && row.required) {
     const named = label === row.target ? row.target : `${row.target} (${label})`;
     out.push(
       `${indent}if '$LENGTH(${readBack}) { $$$LOGWARNING(${os(`${named} is required and came out empty`)}) }`,
@@ -346,7 +509,7 @@ function emitRepeat(st: State, block: Block, index: number, indent: string, out:
   const notes = irisComments(spec);
 
   out.push("");
-  if (notes !== "off" && block.note) out.push(`${indent}// ${comment(block.note)}`);
+  if (noteShown(notes, block.note, house)) out.push(`${indent}// ${comment(block.note!)}`);
   out.push(
     ...osNotes(
       notes,
@@ -360,14 +523,14 @@ function emitRepeat(st: State, block: Block, index: number, indent: string, out:
       [`${comment(block.id)}: numbered by OUTPUT ordinal (${n}), not by source repeat (${k}).`],
     ),
     `${indent}set ${n} = 0`,
-    `${indent}set ${cnt} = +..ValueAt(tSource, ${countPath})`,
+    house ? `${indent}set ${cnt} = pRequest.GetValueAt(${countPath})` : `${indent}set ${cnt} = +..ValueAt(tSource, ${countPath})`,
   );
 
   const guards: string[] = [];
   if (r.skipWhenEmpty) {
     const skipBraced = dtlPath(r.skipWhenEmpty, scope.sourcePrefix, srcGroups(st));
     noteBare(st, skipBraced);
-    guards.push(`$LENGTH(${INLINE.value(`source.${skipBraced}`)})>0`);
+    guards.push(`$LENGTH(${D().value(`source.${skipBraced}`)})>0`);
   }
 
   // select, between skipWhenEmpty and max, because that is the order the stages
@@ -376,7 +539,7 @@ function emitRepeat(st: State, block: Block, index: number, indent: string, out:
     const sel = r.select;
     const selBraced = dtlPath(sel.path, scope.sourcePrefix, srcGroups(st));
     noteBare(st, selBraced);
-    const here = INLINE.value(`source.${selBraced}`);
+    const here = D().value(`source.${selBraced}`);
     if (sel.kind === "equals") {
       guards.push(`${here}=${os(sel.value)}`);
     } else {
@@ -388,7 +551,7 @@ function emitRepeat(st: State, block: Block, index: number, indent: string, out:
       const scanPrefix = sgrp ? `${sgrp}(${km})` : `${r.over}(${km})`;
       const scanBraced = dtlPath(sel.path, scanPrefix, srcGroups(st));
       noteBare(st, scanBraced);
-      const read = INLINE.value(`source.${scanBraced}`);
+      const read = D().value(`source.${scanBraced}`);
       out.push(
         ...osNotes(
           notes,
@@ -426,7 +589,7 @@ function emitRepeat(st: State, block: Block, index: number, indent: string, out:
     const fold = r.fold;
     const foldBraced = dtlPath(fold.path, scope.sourcePrefix, srcGroups(st));
     noteBare(st, foldBraced);
-    const here = INLINE.value(`source.${foldBraced}`);
+    const here = D().value(`source.${foldBraced}`);
     const isCont = `(${n}>0)&&($EXTRACT(${here},1)=" ")`;
     const carriers = block.rows.filter(
       (row) => row.from.kind === "copy" && row.from.path === fold.path,
@@ -453,8 +616,8 @@ function emitRepeat(st: State, block: Block, index: number, indent: string, out:
       const t = dtlPath(row.target, scope.targetPrefix);
       const joined =
         fold.join === ""
-          ? `${INLINE.value(`target.${t}`)}_${here}`
-          : `${INLINE.value(`target.${t}`)}_${os(fold.join)}_${here}`;
+          ? `${D().value(`target.${t}`)}_${here}`
+          : `${D().value(`target.${t}`)}_${os(fold.join)}_${here}`;
       body.push(...write(spec, joined, pathString(t), row.target, `${bodyIndent}    `));
     }
     body.push(`${bodyIndent}} else {`, ...head, `${bodyIndent}}`);
@@ -511,8 +674,38 @@ export function emitInlineMapping(
   spec: Spec,
   indent: string,
   collect?: BareRefs,
+  houseStyle = false,
 ): string[] {
+  house = houseStyle;
+  try {
+    const out = mappingBody(spec, indent, collect);
+    return house ? out.map(houseLine) : out;
+  } finally {
+    house = false;
+  }
+}
+
+/**
+ * One line, as a hand-written class writes it: tabs, and a capitalised
+ * leading command. Applied to the body AFTER it is built, so the shared source
+ * and step code does not need to know who is asking.
+ */
+function houseLine(line: string): string {
+  const m = /^( *)(.*)$/.exec(line)!;
+  const tabs = "\t".repeat(Math.floor(m[1]!.length / 4)) + " ".repeat(m[1]!.length % 4);
+  const text = m[2]!
+    .replace(/^(set|if|for|quit|do|while)\b/, (w) => w[0]!.toUpperCase() + w.slice(1))
+    .replace(/^\} else \{/, "} Else {")
+    .replace(/^\} elseif /, "} ElseIf ")
+    // A command after a condition on the same line, as in If (x) Set y = z.
+    .replace(/([{)]) (set|if|quit|do) /g, (_m, p: string, w: string) => `${p} ${w[0]!.toUpperCase()}${w.slice(1)} `)
+    .replace(/\} elseif /g, "} ElseIf ");
+  return tabs + text.replace(/^\/\/ /, "//");
+}
+
+function mappingBody(spec: Spec, indent: string, collect?: BareRefs): string[] {
   const st: State = newState(spec, collect);
+  requiredPaths = [];
   const notes = irisComments(spec);
   const out: string[] = [];
   const create = spec.iris.create ?? "new";
@@ -530,7 +723,13 @@ export function emitInlineMapping(
     ),
   );
 
-  if (create === "copy") {
+  if (house) {
+    out.push(
+      `${indent}set tRequest = ##class(EnsLib.HL7.Message).%New()`,
+      `${indent}set tRequest.Separators = pRequest.Separators`,
+      `${indent}$$$ThrowOnError(tRequest.PokeDocType(${os(spec.iris.targetDocType)}))`,
+    );
+  } else if (create === "copy") {
     out.push(
       ...osNotes(
         notes,
@@ -569,7 +768,8 @@ export function emitInlineMapping(
     );
   }
 
-  out.push(
+  // House style set its DocType above and needs no IsMutable: %New() is mutable.
+  if (!house) out.push(
     ...osNotes(
       notes,
       indent,
@@ -601,6 +801,11 @@ export function emitInlineMapping(
     `${indent}set tTarget.IsMutable = 1`,
   );
 
+  if (house) {
+    out.push(``);
+    emitFirstPass(st, indent, out);
+  }
+
   // Segment order is block order, the same order the runner delivers in.
   let repeatIndex = 0;
   let contIndex = 0;
@@ -615,7 +820,7 @@ export function emitInlineMapping(
     }
 
     out.push("");
-    if (notes !== "off" && block.note) out.push(`${indent}// ${comment(block.note)}`);
+    if (noteShown(notes, block.note, house)) out.push(`${indent}// ${comment(block.note!)}`);
 
     // A block that continues an earlier one's numbering needs the occurrence in
     // a variable of its own, for the same reason the DTL does: the addition
@@ -654,6 +859,18 @@ export function emitInlineMapping(
     // MSH, and anything in `iris.alwaysPresent`: the same seed, no guard around it.
     emitSeed(st, block, scope, indent, out);
     for (const row of block.rows) emitRow(st, row, scope, indent, out);
+  }
+
+  // The receiver's required fields, checked once the message is built: warn,
+  // never block. One loop, the way a hand-written class checks a list.
+  if (house && requiredPaths.length > 0) {
+    out.push(
+      ``,
+      `${indent}// Required by the receiver: warn, do not block`,
+      `${indent}for f=${requiredPaths.map((p) => os(p)).join(",")} {`,
+      `${indent}    if (tRequest.GetValueAt(f) = "") $$$LOGWARNING("Required field "_f_" came out empty")`,
+      `${indent}}`,
+    );
   }
 
   return out;

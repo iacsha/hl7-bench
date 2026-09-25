@@ -38,7 +38,7 @@
 
 import { comment, irisComments, os, pickNotes, type BareRefs } from "./iris";
 import { emitInlineMapping, inlineDeclarations, inlineHelpers } from "./inline";
-import { emitPatch } from "./patch";
+import { emitBuild, emitPatch } from "./patch";
 import { fingerprint } from "../fingerprint";
 import type { Spec } from "../spec";
 
@@ -92,6 +92,7 @@ export function emitProcess(spec: Spec, collect?: BareRefs): string {
 
   // A different shape of class altogether, not a variation on this one.
   if (proc.transform === "patch") return emitPatch(spec, collect);
+  if (proc.transform === "build") return emitBuild(spec, collect);
 
   const notes = irisComments(spec);
   const inline = (proc.transform ?? "dtl") === "inline";

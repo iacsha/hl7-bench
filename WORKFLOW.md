@@ -718,6 +718,24 @@ which a lifted body cannot reach, so engine.ts compiles the class WHOLE under a
 scratch name, captures `SendRequestAsync` instead of queueing, and says so on
 stderr. Nothing in the class is removed. `--host` forces the same for any class.
 
+### A message that changes shape: `transform: "build"`
+
+When the message type changes -- DFT to MDM, ORU to MDM -- cloning the request
+starts from the wrong structure, and `"patch"` refuses the spec. `"build"` is
+the same one-class house style for that case: the same `OnRequest` shell, and a
+`Mapping` that creates a fresh message of the target DocType and fills it. It
+takes the whole vocabulary a DTL does -- repeats, `select`, `fold`,
+`continuesNumbering` -- so a DTL is no longer needed for HL7 to HL7 work.
+
+It writes what a hand-written class would. Every "first non-empty" and "the one
+where" read of a segment is found in ONE pass over it at the top of `Mapping`,
+into variables named for what they hold (`Obxf14`). Top-level required fields
+are checked in one loop at the end. A spec note prints as a comment when it is
+short; a paragraph stays in the spec and the mapping document, and prints in
+the class only at `comments: "full"`.
+
+Prove it the same way: `bun engine.ts --check --script MyProcess.cls`.
+
 `todo()` is not a failure. It is the spec refusing to fake a row nobody has
 decided yet, so the gap shows up as a TODO in the right place in the file rather
 than as a silent hole you find at validation. Take the ObjectScript for it from

@@ -508,6 +508,11 @@ export interface Stamp {
  *              take, send. Leaner than "inline" because nothing is rebuilt,
  *              and narrower: `patchProblems` names the specs it cannot say.
  *
+ *   "build"    the same house-style class for a message that changes shape
+ *              (DFT to MDM): Mapping builds a fresh target and fills it, with
+ *              the whole vocabulary -- repeats, select, fold, continued
+ *              numbering. What a DTL does, as one process class.
+ *
  * WHY "inline" EXISTS
  *
  * Not as a style preference. A receiving IRIS team that will not deploy a DTL
@@ -532,14 +537,14 @@ export interface Stamp {
  * the shared expression layer in `emit/iris.ts`, so both backends still have
  * one definition of every source and step kind between them.
  */
-export type ProcessTransform = "dtl" | "inline" | "patch";
+export type ProcessTransform = "dtl" | "inline" | "patch" | "build";
 
 /**
  * Every place the mapping can live, so the serializer, the form and the tests
  * can enumerate them without a second list going stale. Same reason
  * `SOURCE_KINDS` exists.
  */
-export const PROCESS_TRANSFORMS = ["dtl", "inline", "patch"] as const;
+export const PROCESS_TRANSFORMS = ["dtl", "inline", "patch", "build"] as const;
 
 /**
  * How much of the WHY travels into the generated class. See `Spec["iris"].comments`.
@@ -1197,7 +1202,16 @@ export function validate(spec: Spec): string[] {
 
     if (transform === "patch") problems.push(...patchProblems(spec));
 
-    if (transform === "inline" || transform === "patch") {
+    // A copy starts from the request, which is exactly what "patch" is for.
+    if (transform === "build" && spec.iris.create === "copy") {
+      problems.push(
+        `iris.process.transform is "build" and iris.create is "copy". Build starts a fresh ` +
+          `message of the target DocType; for a message that keeps its shape, use "patch", ` +
+          `which clones the request.`,
+      );
+    }
+
+    if (transform === "inline" || transform === "patch" || transform === "build") {
       // Inline means the process IS the interface: nothing calls the DTL, so
       // the target message is built by this class and its DocType is the only
       // thing telling SetValueAt where a path goes. Empty resolves nothing, and

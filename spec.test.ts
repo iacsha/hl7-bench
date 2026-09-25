@@ -911,6 +911,13 @@ describe("every vocabulary kind is handled by every backend", () => {
     return spec;
   };
 
+  /** The fifth backend: house style, built fresh. Held to every kind like the others. */
+  const buildSpecFor = (from: Source, via?: Step[]): Spec => {
+    const spec = specFor(from, via);
+    spec.iris.process = { className: "Bench.TestProcess", sendTo: "ToTarget.ADT.TCP", transform: "build" };
+    return spec;
+  };
+
   /**
    * A brace in a Method body is a DTL compiler feature and a SYNTAX ERROR in
    * plain ObjectScript, and it is the specific way this backend can be wrong
@@ -959,6 +966,13 @@ describe("every vocabulary kind is handled by every backend", () => {
       expect(body).not.toMatch(/\{[A-Z0-9]{3}[:(]/);
     });
 
+    test(`emit/process.ts build handles ${kind}`, () => {
+      const body = methodBody(emitProcess(buildSpecFor(SAMPLES[kind])));
+      if (kind === "todo") expect(body).toContain("TODO IN1-4");
+      else expect(body).toContain("tRequest.SetValueAt(");
+      expect(body).not.toMatch(/\{[A-Z0-9]{3}[:(]/);
+    });
+
     test(`the inline ${kind} body has no DTL brace in it`, () => {
       // The failure this exists for: {IN1:4} is a path in a DTL attribute and
       // an "invalid name" to the ObjectScript compiler. It reads as correct.
@@ -979,6 +993,9 @@ describe("every vocabulary kind is handled by every backend", () => {
       const body = methodBody(emitProcess(inline));
       expect(body).not.toBe(methodBody(emitProcess(inlineSpecFor(copy("IN1-2")))));
       expect(body).not.toMatch(/\{[A-Z0-9]{3}[:(]/);
+
+      const build = methodBody(emitProcess(buildSpecFor(copy("IN1-2"), [STEP_SAMPLES[kind]])));
+      expect(build).not.toBe(methodBody(emitProcess(buildSpecFor(copy("IN1-2")))));
 
       const patch = methodBody(emitProcess(patchSpecFor(copy("IN1-2"), [STEP_SAMPLES[kind]])));
       expect(patch).not.toBe(methodBody(emitProcess(patchSpecFor(copy("IN1-2")))));

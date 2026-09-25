@@ -945,12 +945,12 @@ function renderSpec() {
     // silently reverts to calling a DTL compiles and then dies at run time.
     el("label", { class: "f" }, [
       el("span", { text: "mapping" }),
-      select(spec.iris.process?.transform ?? "dtl", ["dtl", "inline", "patch"], (v) => {
+      select(spec.iris.process?.transform ?? "dtl", ["dtl", "inline", "patch", "build"], (v) => {
         // "dtl" is the default, so it is stored as absence rather than as a
         // key. setProcess removes a field given "", which is what keeps an
         // untouched spec byte-identical through a round trip.
         setProcess("transform", v === "dtl" ? "" : v);
-      }, undefined, "dtl: the process calls the transform class above, which stays visible in the portal. inline: the mapping is written into OnRequest as ObjectScript and no DTL is called, so there is one class to deploy and nothing for a team that will not take a DTL to refuse. You give up the Visual Trace of the mapping and the DTL test page."),
+      }, undefined, "dtl: the process calls the transform class above, which stays visible in the portal. inline: the mapping is written into OnRequest as ObjectScript and no DTL is called, so there is one class to deploy and nothing for a team that will not take a DTL to refuse. You give up the Visual Trace of the mapping and the DTL test page. patch: one class the way IRIS teams write HL7-to-HL7 by hand, clone the request, patch fields, remove what the receiver does not take; every block must copy its segment whole. build: the same house style for a message that changes shape (DFT to MDM), built fresh, with every feature a DTL has."),
     ]),
     el("div", { class: "note", text: "inline emits ONE self-contained class: the mapping goes into OnRequest as plain ObjectScript and no DataTransform is called. Reach for it when the receiving team will not deploy a DTL. Every read in it is guarded, because GetValueAt on an absent optional segment throws and an unhandled throw kills the business process." }),
     el("div", { class: "note", text: "What the generated class writes to the IRIS Event Log, not what this bench writes here. warn: one warning on an unmapped lookup code and on a required field that came out empty. trace: that plus a $$TRACE per assigned field, visible in Visual Trace. A sender that routinely emits an unmapped code writes one warning PER MESSAGE until the table is fixed." }),
