@@ -18,7 +18,7 @@
 import { Message, Segment, type Delims } from "./hl7";
 import { logEvent } from "./log";
 import {
-  validate, segmentOf, fieldOf, describeSelect, describeFold,
+  validate, segmentOf, fieldOf, describeSelect, describeFold, seedGuarded,
   type Spec, type Source, type Step, type Row, type Block,
   type Repeat, type Select, type Fold,
 } from "./spec";
@@ -531,9 +531,20 @@ export function runSpec(spec: Spec, msg: Message): RunResult {
     //
     // Only the plain block needs this. A repeat already does it by
     // construction -- no source occurrence means no iteration and no segment.
-    if (block.wholeSegment && !block.repeat && !seedSource(ctx, block)) {
+    if (seedGuarded(spec, block) && !seedSource(ctx, block)) {
       result.notes.push(`${block.id}: source carries no ${block.id}, segment not delivered`);
       return;
+    }
+    // An unguarded seed (MSH, or `alwaysPresent`) is a claim that the segment
+    // is always there. When it is not, IRIS writes the empty seed and delivers
+    // a segment with no id, silently. The bench delivers its bare segment as
+    // before -- the two differ only when the claim is false -- and says so,
+    // because this line is the only place that failure is visible.
+    if (block.wholeSegment && !block.repeat && !seedSource(ctx, block)) {
+      result.notes.push(
+        `${block.id}: listed in iris.alwaysPresent, but source carries no ${block.id}. ` +
+          `IRIS would deliver a segment with no id here.`,
+      );
     }
     const seg = startSegment(ctx, block);
     fill(ctx, block, seg, result);

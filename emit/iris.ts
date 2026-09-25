@@ -28,7 +28,7 @@ import {
   assertRunnable, // shared with the runner, so both reject the same specs
 } from "../run";
 import {
-  emptyTables, segmentOf,
+  emptyTables, segmentOf, seedGuarded,
   type Spec, type Source, type Step, type Row, type Block, type CommentLevel,
 } from "../spec";
 import { fingerprint } from "../fingerprint";
@@ -1310,8 +1310,9 @@ export function emitIris(spec: Spec, collect?: BareRefs): string {
     // fields on top of a copy, and there is no copy.
     //
     // Repeats do not need this. `<foreach>` over an absent segment iterates
-    // zero times, so no segment is written and a guard could never fire.
-    if (block.wholeSegment) {
+    // zero times, so no segment is written and a guard could never fire. MSH
+    // and anything in `iris.alwaysPresent` skip it too -- see `seedGuarded`.
+    if (seedGuarded(st.spec, block)) {
       const presentBraced = dtlSegment(block.id, scope.sourcePrefix, srcGroups(st));
       noteBare(st, presentBraced);
       const present = `$LENGTH(source.${presentBraced})>0`;
@@ -1350,6 +1351,7 @@ export function emitIris(spec: Spec, collect?: BareRefs): string {
       continue;
     }
 
+    emitSeed(st, block, scope, "  ", out);
     for (const row of block.rows) emitRow(st, row, scope, "  ", out);
   }
 

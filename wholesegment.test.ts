@@ -469,3 +469,86 @@ describe("a wholeSegment block whose source segment is absent", () => {
     expect(inlineBody(spec)).toContain(said);
   });
 });
+
+// ---------------------------------------------------------------------------
+
+describe("iris.alwaysPresent", () => {
+  // The presence guard is right for PV2 and noise for a segment every message
+  // carries. MSH is exempt by construction; anything else is the author's
+  // claim about the feed, written once in the spec and honoured by all three
+  // backends -- or none of them, because a guard in one and not another is two
+  // different messages from one spec.
+  const blocks: Spec["blocks"] = [
+    msh,
+    { id: "EVN", wholeSegment: true, rows: [] },
+    { id: "PID", wholeSegment: true, rows: [{ target: "PID-9", from: literal("") }] },
+    { id: "PV2", wholeSegment: true, rows: [] },
+  ];
+  const listed: Spec = { ...base(blocks), iris: { ...base(blocks).iris, alwaysPresent: ["PID", "EVN"] } };
+  const unlisted = base(blocks);
+
+  const inline = (s: Spec): string => {
+    const cls = emitProcess({
+      ...s,
+      iris: {
+        ...s.iris,
+        process: { className: "Seed.Test.Process", sendTo: "ToTarget.ADT.TCP", transform: "inline" },
+      },
+    });
+    return cls.slice(cls.indexOf("Method OnRequest"));
+  };
+
+  test("MSH is never guarded, listed or not", () => {
+    expect(emitIris(unlisted)).not.toContain(`$LENGTH(source.{MSH})`);
+    expect(inline(unlisted)).toContain(`set tSeed = ..ValueAt(tSource,"MSH")\n`);
+    expect(inline(unlisted)).not.toMatch(/ValueAt\(tSource,"MSH"\)\n\s*if \$LENGTH/);
+  });
+
+  test("an unlisted segment keeps its guard in both emitters", () => {
+    for (const id of ["EVN", "PID", "PV2"]) {
+      expect(emitIris(unlisted)).toContain(`$LENGTH(source.{${id}})&gt;0`);
+      expect(inline(unlisted)).toMatch(new RegExp(`ValueAt\\(tSource,"${id}"\\)\\n\\s*if \\$LENGTH\\(tSeed\\)`));
+    }
+  });
+
+  test("a listed segment loses its guard in the DTL", () => {
+    const dtl = emitIris(listed);
+    expect(dtl).not.toContain(`$LENGTH(source.{PID})`);
+    expect(dtl).not.toContain(`$LENGTH(source.{EVN})`);
+    expect(dtl).toContain(`<assign value='source.{PID}' property='target.{PID}' action='set' />`);
+    expect(dtl).toContain(`$LENGTH(source.{PV2})&gt;0`);
+  });
+
+  test("a listed segment loses its guard in the inline process", () => {
+    const b = inline(listed);
+    expect(b).not.toMatch(/ValueAt\(tSource,"PID"\)\n\s*if \$LENGTH/);
+    expect(b).toContain(`tTarget.SetValueAt(tSeed, "PID")`);
+    // The rows still run, at the block's own depth rather than inside an if.
+    expect(b).toContain(`tTarget.SetValueAt("", "PID:9")`);
+    expect(b).toMatch(/ValueAt\(tSource,"PV2"\)\n\s*if \$LENGTH\(tSeed\)/);
+  });
+
+  test("the runner still delivers a listed segment the source carries", () => {
+    const msg = new Message(IN);
+    runSpec(listed, msg);
+    expect(msg.get("PID-5.1")).toBe("DOE");
+    expect(msg.get("EVN-1")).toBe("A01");
+  });
+
+  test("the runner says so when a listed segment is missing after all", () => {
+    const msg = new Message(IN.replace(/EVN\|[^\r]*\r/, ""));
+    const r = runSpec(listed, msg);
+    expect(r.notes.join(" ")).toContain("EVN: listed in iris.alwaysPresent, but source carries no EVN");
+  });
+
+  test("validate refuses something that is not a segment id", () => {
+    const bad: Spec = { ...unlisted, iris: { ...unlisted.iris, alwaysPresent: ["pid"] } };
+    expect(validate(bad).join(" ")).toContain(`iris.alwaysPresent has "pid"`);
+    expect(validate(listed)).toEqual([]);
+  });
+
+  test("a GUI save keeps the list, and a spec without one does not gain it", () => {
+    expect(specToSource(listed)).toContain(`alwaysPresent: ["PID", "EVN"],`);
+    expect(specToSource(unlisted)).not.toContain("alwaysPresent");
+  });
+});

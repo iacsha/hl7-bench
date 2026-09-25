@@ -49,7 +49,7 @@ import {
   srcGroups, stepCode,
   type BareRefs, type Scope, type State,
 } from "./iris";
-import type { Spec, Block, Row, CommentLevel } from "../spec";
+import { seedGuarded, type Spec, type Block, type Row, type CommentLevel } from "../spec";
 
 /** `pickNotes`, wrapped as ObjectScript line comments at one indent. */
 function osNotes(
@@ -647,10 +647,12 @@ export function emitInlineMapping(
         ? { sourcePrefix: `${block.group}(1)`, targetPrefix: `${block.group}(1)` }
         : { sourcePrefix: "", targetPrefix: "" };
 
-    if (block.wholeSegment) {
+    if (seedGuarded(st.spec, block)) {
       emitGuardedSeedBlock(st, block, scope, indent, out);
       continue;
     }
+    // MSH, and anything in `iris.alwaysPresent`: the same seed, no guard around it.
+    emitSeed(st, block, scope, indent, out);
     for (const row of block.rows) emitRow(st, row, scope, indent, out);
   }
 

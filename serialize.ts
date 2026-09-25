@@ -204,6 +204,10 @@ export function specToSource(spec: Spec): string {
   out.push(`    targetDocType: ${q(spec.iris.targetDocType)},`);
   if (spec.iris.create) out.push(`    create: ${q(spec.iris.create)},`);
   if (spec.iris.log) out.push(`    log: ${q(spec.iris.log)},`);
+  // Written back or a GUI save silently puts every presence guard back.
+  if (spec.iris.alwaysPresent?.length) {
+    out.push(`    alwaysPresent: [${spec.iris.alwaysPresent.map(q).join(", ")}],`);
+  }
 
   // The schema category, one structure per line because the definitions are
   // long and a diff on one of them should show which structure moved.

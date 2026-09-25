@@ -887,6 +887,22 @@ function renderSpec() {
       el("span", { text: "log" }),
       select(spec.iris.log ?? "warn", ["off", "warn", "trace"], (v) => { spec.iris.log = v; markEdited(); schedulePreview(); }),
     ]),
+    // Which whole-segment copies skip the "is it there?" check. MSH always
+    // does and is not listed. An empty box deletes the key rather than saving
+    // an empty list, so a spec that never used this stays byte-identical.
+    el("label", { class: "f" }, [
+      el("span", { text: "always present" }),
+      text({}, "alwaysPresent", {
+        w: "md", ph: "PID, EVN",
+        title: "Segments this feed ALWAYS carries. A whole-segment copy of one is emitted without its presence check (the if $LENGTH(tSeed) guard). MSH is always unchecked and need not be listed. If a listed segment is ever missing, IRIS delivers a segment with no id and logs nothing.",
+        get: () => (spec.iris.alwaysPresent ?? []).join(", "),
+        set: (_o, val) => {
+          const ids = val.split(/[\s,]+/).map((s) => s.trim().toUpperCase()).filter(Boolean);
+          if (ids.length) spec.iris.alwaysPresent = ids;
+          else delete spec.iris.alwaysPresent;
+        },
+      }),
+    ]),
 
     // The business process. Optional, and the form had no way to say it at
     // all -- so a spec authored entirely here could never emit one, and

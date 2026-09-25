@@ -435,6 +435,22 @@ export interface Block {
   note?: string;
 }
 
+/**
+ * Whether a `wholeSegment` block's seed sits inside an emptiness guard.
+ *
+ * One answer for all three backends -- DTL, inline process and the bench --
+ * because a guard in one and not another is two different messages from the
+ * same spec, which is the disagreement the golden gate exists to catch.
+ *
+ * A repeat is never guarded: its loop bound is the occurrence count, so an
+ * absent segment iterates zero times. MSH is never guarded: a message without
+ * one does not parse. Anything in `iris.alwaysPresent` is the author's call.
+ */
+export function seedGuarded(spec: Spec, block: Block): boolean {
+  if (!block.wholeSegment || block.repeat || block.id === "MSH") return false;
+  return !(spec.iris.alwaysPresent ?? []).includes(block.id);
+}
+
 /** A source field worth documenting whether or not it is mapped. */
 export interface InventoryItem {
   path: string;
@@ -722,6 +738,24 @@ export interface Spec {
      * is, which is "same fingerprint, same class".
      */
     comments?: CommentLevel;
+    /**
+     * Segment ids this feed always carries, e.g. `["PID", "EVN"]`. A
+     * `wholeSegment` block for one of these is emitted without its emptiness
+     * guard -- no `if $LENGTH(tSeed)` in the process, no `<if>` in the DTL --
+     * because the guard is a test that can never be false.
+     *
+     * MSH is always treated this way and need not be listed: IRIS cannot parse
+     * a message without one. Every other segment keeps its guard unless it is
+     * named here.
+     *
+     * IT IS A CLAIM ABOUT THE FEED, NOT ABOUT THE STANDARD. HL7 marks PID and
+     * EVN required in ADT, but IRIS does not enforce required segments on
+     * inbound unless validation is switched on. If the claim is ever false,
+     * IRIS writes the empty seed and delivers a segment with no id -- a blank
+     * line on the wire -- and logs nothing. The bench notes it; the engine
+     * does not.
+     */
+    alwaysPresent?: string[];
   };
   /**
    * The twin of Ens.Util.LookupTable. Rows live here so the bench and the
@@ -1106,6 +1140,17 @@ export function validate(spec: Spec): string[] {
       `iris.comments is "${spec.iris.comments}", which is not a comment level. ` +
         `Use one of: ${COMMENT_LEVELS.join(", ")}.`,
     );
+  }
+
+  // A lowercase "pid" matches no block id, so the guard it was meant to drop
+  // stays in and nothing says why.
+  for (const id of spec.iris.alwaysPresent ?? []) {
+    if (!/^[A-Z][A-Z0-9]{2}$/.test(id)) {
+      problems.push(
+        `iris.alwaysPresent has "${id}", which is not a segment id. ` +
+          `Use the three-character id as it appears on the wire, e.g. "PID".`,
+      );
+    }
   }
 
   const proc = spec.iris.process;
