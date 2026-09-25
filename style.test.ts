@@ -14,7 +14,7 @@ import { emitProcess } from "./emit/process";
 import { DEFAULT_STYLE, PRESETS, layout, loadStyle, resolveStyle, type Style } from "./style";
 import {
   SOURCE_KINDS, copy, literal, event, lookup, blank, fromFirst, fromWhere, pickRepeat,
-  firstOf, todo, type Spec, type Source,
+  firstOf, todo, sameAs, type Spec, type Source,
 } from "./spec";
 
 const patchSpec = (): Spec => ({
@@ -174,6 +174,7 @@ describe("every preset emits every kind", () => {
     pickRepeat: pickRepeat("IN1-2", 1, "A", 1),
     fromFirst: fromFirst("IN1", "IN1-2", "IN1-3"),
     fromWhere: fromWhere("IN1", "IN1-1", "1", "IN1-2"),
+    sameAs: sameAs("MSH-5"),
     todo: todo("later"),
   };
   const styles: Style[] = [PRESETS.defensive!, PRESETS.lean!, mine];
@@ -184,7 +185,7 @@ describe("every preset emits every kind", () => {
           const spec: Spec = {
             ...patchSpec(),
             blocks: [
-              { id: "MSH", wholeSegment: true, rows: [] },
+              { id: "MSH", wholeSegment: true, rows: kind === "sameAs" ? [{ target: "MSH-5", from: literal("R") }] : [] },
               { id: "IN1", wholeSegment: true, repeat: { over: "IN1" }, rows: [{ target: "IN1-4", from: samples[kind] }] },
             ],
           };

@@ -8,6 +8,7 @@ import {
   date8, truncate, upper, stripDelims, stripChars, defaultTo, prefix, stamp,
   highest, equals, continuation,
   type Spec, type Source, type Step, type Select, type Fold, type Repeat,
+  sameAs,
 } from "./spec";
 import { runSpec } from "./run";
 import { trace, inventory } from "./trace";
@@ -850,8 +851,14 @@ describe("every vocabulary kind is handled by every backend", () => {
     pickRepeat: pickRepeat("PV1-7", 7, "NPI", 1),
     fromFirst: fromFirst("NK1", "NK1-2", "NK1-2.1"),
     fromWhere: fromWhere("NK1", "NK1-1", "2", "NK1-2.1"),
+    // Reads a target an earlier row wrote. The spec builders below give it one.
+    sameAs: sameAs("MSH-3"),
     todo: todo("not settled yet"),
   };
+
+  /** The earlier row a sameAs sample needs, and nothing for any other kind. */
+  const writerFor = (from: Source) =>
+    from.kind === "sameAs" ? [{ target: "MSH-3", from: literal("SENDER") }] : [];
 
   const STEP_SAMPLES: Record<(typeof STEP_KINDS)[number], Step> = {
     date8: date8(),
@@ -872,7 +879,7 @@ describe("every vocabulary kind is handled by every backend", () => {
   // exercised inside one. That is the strictest context, not a special case.
   const specFor = (from: Source, via?: Step[]): Spec =>
     base({
-      blocks: [{
+      blocks: [...(from.kind === "sameAs" ? [{ id: "MSH", rows: writerFor(from) }] : []), {
         id: "IN1",
         repeat: { over: "IN1", skipWhenEmpty: "IN1-2" },
         rows: [{ target: "IN1-4", from, via }],
@@ -903,7 +910,7 @@ describe("every vocabulary kind is handled by every backend", () => {
   const patchSpecFor = (from: Source, via?: Step[]): Spec => {
     const spec = base({
       blocks: [
-        { id: "MSH", wholeSegment: true, rows: [] },
+        { id: "MSH", wholeSegment: true, rows: writerFor(from) },
         { id: "IN1", wholeSegment: true, repeat: { over: "IN1" }, rows: [{ target: "IN1-4", from, via }] },
       ],
     });

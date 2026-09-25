@@ -132,6 +132,21 @@ export type Source =
    */
   | { kind: "fromWhere"; segment: string; where: string; equals: string; read: string }
   /**
+   * A TARGET field an earlier row already wrote, read back and written again.
+   *
+   * For a value that goes in more than one place: the signing radiologist in
+   * TXA-5, TXA-9, TXA-10 and TXA-22. Written as four sets of the same three
+   * component rows, the spec says the same thing four times and the class
+   * reads OBR-32 twelve times. `sameAs("TXA-5")` says "whatever TXA-5 became",
+   * so a change to TXA-5 cannot leave the other three behind.
+   *
+   * Reads the value as written, components and all -- TXA-5 written as 5.1,
+   * 5.2 and 5.3 reads back as one composite. `validate()` refuses a target no
+   * earlier row writes, and one in a repeating block, where "the" value would
+   * be whichever occurrence happened to be written last.
+   */
+  | { kind: "sameAs"; target: string }
+  /**
    * Not expressible yet. Delivers empty, traces as TODO, emits a TODO comment
    * and no assign.
    *
@@ -163,7 +178,7 @@ export const KEY_SOURCE_KINDS = ["firstOf", "pickRepeat", "fromFirst", "fromWher
 
 export const SOURCE_KINDS = [
   "copy", "literal", "firstOf", "lookup", "counter",
-  "event", "pickRepeat", "fromFirst", "fromWhere", "todo",
+  "event", "pickRepeat", "fromFirst", "fromWhere", "sameAs", "todo",
 ] as const;
 
 // ---------------------------------------------------------------------------
@@ -798,6 +813,7 @@ export const firstOf = (...paths: string[]): Source => ({ kind: "firstOf", paths
 export const counter = (): Source => ({ kind: "counter" });
 export const event = (): Source => ({ kind: "event" });
 export const todo = (why: string): Source => ({ kind: "todo", why });
+export const sameAs = (target: string): Source => ({ kind: "sameAs", target });
 
 export const lookup = (
   table: string,
@@ -890,6 +906,7 @@ export function describeSource(from: Source): string {
     }
     case "fromFirst": return `first ${from.segment} with ${from.nonEmpty}`;
     case "fromWhere": return `${from.segment} where ${from.where}=${from.equals}, read ${from.read}`;
+    case "sameAs": return `same as ${from.target}`;
     case "todo": return "(TODO)";
   }
 }
@@ -931,6 +948,7 @@ export function sourcePathsOf(from: Source): string[] {
     case "literal":
     case "counter":
     case "event":
+    case "sameAs":
     case "todo":
       return [];
   }
@@ -1332,6 +1350,25 @@ export function validate(spec: Spec): string[] {
       }
     }
 
+    // sameAs reads what an EARLIER row wrote. Anything else reads a field that
+    // is empty when the row runs, and delivers empty with every test green.
+    for (const row of block.rows) {
+      if (row.from.kind !== "sameAs") continue;
+      const t = row.from.target;
+      const writer = earlierWriter(spec, block, row, t);
+      if (!writer) {
+        problems.push(
+          `${block.id}: ${row.target} is sameAs("${t}"), and no earlier row writes ${t}. ` +
+            `sameAs reads a target field back; put the row that writes ${t} first.`,
+        );
+      } else if (writer.repeat) {
+        problems.push(
+          `${block.id}: ${row.target} is sameAs("${t}"), and ${t} is written in a repeating ` +
+            `block, so there is no one value to read. Point it at a non-repeating field.`,
+        );
+      }
+    }
+
     // A seed is the identity copy and nothing else. The three refusals below
     // are the three ways it can be written to look right and deliver wrong.
     if (block.wholeSegment) {
@@ -1576,4 +1613,19 @@ export function patchProblems(spec: Spec): string[] {
     }
   }
   return problems;
+}
+
+/**
+ * The block holding the first row, before `row`, that writes `target` or one
+ * of its components (TXA-5 counts TXA-5.1). Undefined when none does.
+ */
+function earlierWriter(spec: Spec, inBlock: Block, row: Row, target: string): Block | undefined {
+  const writes = (t: string) => t === target || t.startsWith(target + ".") || t.startsWith(target + "(");
+  for (const b of spec.blocks) {
+    for (const r of b.rows) {
+      if (b === inBlock && r === row) return undefined;
+      if (writes(r.target)) return b;
+    }
+  }
+  return undefined;
 }

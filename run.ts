@@ -36,6 +36,11 @@ export interface Ctx {
   current?: Segment;
   /** 1-based OUTPUT ordinal. Not the source repeat index; see below. */
   ordinal: number;
+  /**
+   * Every target value written so far in this walk, by target path, for
+   * `sameAs`. Shared across the blocks of one walk; `resolve` fills it.
+   */
+  written?: Map<string, string>;
 }
 
 export interface Resolved {
@@ -197,6 +202,21 @@ function resolveSource(ctx: Ctx, from: Source): { raw: string; todo?: string; no
       return { raw: "" };
     }
 
+    case "sameAs": {
+      const w = ctx.written;
+      if (!w) return { raw: "" };
+      if (w.has(from.target)) return { raw: w.get(from.target)! };
+      // Written as components: reassemble in position, empties included, so
+      // TXA-5.1/.2/.3 reads back as the composite the target field now holds.
+      const parts: string[] = [];
+      for (const [k, v] of w) {
+        const m = new RegExp(`^${from.target.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\.(\\d+)$`).exec(k);
+        if (m) parts[Number(m[1]) - 1] = v;
+      }
+      if (parts.length === 0) return { raw: "" };
+      return { raw: Array.from(parts, (p) => p ?? "").join(ctx.msg.delims.comp) };
+    }
+
     case "todo":
       return { raw: "", todo: from.why };
   }
@@ -242,7 +262,9 @@ export function resolve(ctx: Ctx, row: Row): Resolved & { note?: string } {
     value = applied.value;
     steps.push(applied.label);
   }
-  return { raw, value, steps, todo, note };
+  const out = { raw, value, steps, todo, note };
+  if (!todo) ctx.written?.set(row.target, out.value);
+  return out;
 }
 
 // ---------------------------------------------------------------------------
@@ -456,6 +478,7 @@ export function walk(
   visit: (block: Block, ctx: Ctx) => void,
 ): void {
   const tables = spec.tables ?? {};
+  const written = new Map<string, string>();
   // How many of each target segment have been delivered so far, so a block with
   // continuesNumbering picks up where the last one left off rather than at 1.
   const delivered = new Map<string, number>();
@@ -465,14 +488,14 @@ export function walk(
 
     if (!block.repeat) {
       const ordinal = start + 1;
-      visit(block, { msg, event, tables, ordinal });
+      visit(block, { msg, event, tables, ordinal, written });
       delivered.set(block.id, ordinal);
       continue;
     }
     let ordinal = start;
     for (const current of occurrences(msg, block)) {
       ordinal++;
-      visit(block, { msg, event, tables, ordinal, repeatOver: block.repeat.over, current });
+      visit(block, { msg, event, tables, ordinal, repeatOver: block.repeat.over, current, written });
     }
     delivered.set(block.id, ordinal);
   }

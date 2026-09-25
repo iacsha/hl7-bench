@@ -713,6 +713,12 @@ export function sourceCode(
       };
     }
 
+    case "sameAs": {
+      // The TARGET, at the top level: validate() refuses a field written in a
+      // repeat, so there is exactly one occurrence to read back.
+      return { expr: d.value(`target.${dtlPath(from.target, "")}`) };
+    }
+
     case "todo":
       return { expr: null };
   }

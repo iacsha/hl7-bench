@@ -114,6 +114,7 @@ function source(from: Source): string {
       return `fromFirst(${q(from.segment)}, ${q(from.nonEmpty)}, ${q(from.path)})`;
     case "fromWhere":
       return `fromWhere(${q(from.segment)}, ${q(from.where)}, ${q(from.equals)}, ${q(from.read)})`;
+    case "sameAs": return `sameAs(${q(from.target)})`;
     case "todo": return `todo(${q(from.why)})`;
   }
 }
