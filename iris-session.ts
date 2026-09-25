@@ -211,7 +211,9 @@ export function runIris(
   if (answered(out)) return { out, err, code: p.exitCode };
 
   const lines = [
-    `could not reach IRIS (${MODE}).`,
+    // IRIS_CMD supersedes IRIS_MODE, so name what actually ran; "(docker)" over an
+    // irisdb.exe command line sends the reader to the wrong install.
+    `could not reach IRIS (${IRIS_CMD ? "IRIS_CMD" : MODE}).`,
     `  ran            ${cmd.join(" ")}`,
     `  namespace      ${NAMESPACE}`,
     `  exit code      ${p.exitCode}`,
