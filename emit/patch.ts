@@ -43,12 +43,12 @@
  */
 
 import {
-  comment, dtlPath, dtlSegment, irisComments, irisLog, lookupMissStatement, newState,
+  comment, dtlPath, dtlSegment, irisComments, irisLog, lookupExpr, lookupMissStatement, newState,
   noteBare, os, pathString, sourceCode, srcGroups, stepCode,
   type BareRefs, type Dialect, type Scope, type State,
 } from "./iris";
 import { fingerprint } from "../fingerprint";
-import { seedGuarded, fieldOf, type Spec, type Block, type Row } from "../spec";
+import { seedGuarded, fieldOf, type Spec, type Block, type Row, type KeySource } from "../spec";
 
 const T = "\t";
 
@@ -72,6 +72,83 @@ function patchRead(braced: string): string {
   return `${obj}.GetValueAt(${pathString(`{${m[2]}}`)})`;
 }
 
+type Where = Extract<KeySource, { kind: "fromWhere" }>;
+
+/** The occurrence a fromWhere finds: same segment, same test, same value. */
+const whereKey = (w: Where) => `${w.segment}|${w.where}|${w.equals}`;
+
+/** The fromWhere a row reads through, directly or as a lookup key, or none. */
+function whereOf(row: Row): Where | undefined {
+  const f = row.from;
+  if (f.kind === "fromWhere") return f;
+  if (f.kind === "lookup" && f.from?.kind === "fromWhere") return f.from;
+  return undefined;
+}
+
+/**
+ * Field reads resolved by a shared scan, keyed by `whereKey|read`. Set for the
+ * rows of one block, while that block is being written.
+ */
+let scanned = new Map<string, string>();
+
+/** How many scans each segment has had in this class, for unique names. */
+let usedStems = new Map<string, number>();
+
+/**
+ * One scan for every fromWhere match a block's rows share, emitted ABOVE the
+ * block and its loop.
+ *
+ * GT1-45, GT1-46 and GT1-48 all want "the NK1 whose NK1-1 is 2". Written row by
+ * row that is three identical loops over NK1, repeated for every GT1 -- the
+ * first thing a reviewer circles. This finds the occurrence once and pulls
+ * every field the rows read out of it in the same pass. It may move out of the
+ * repeat because fromWhere reads the MESSAGE, not the current occurrence, so
+ * its answer is the same on every pass of the loop; first match wins, and no
+ * match leaves every field "", exactly as the row-by-row form does.
+ */
+function emitScans(st: State, block: Block, indent: string, out: string[]): void {
+  scanned = new Map();
+  const groupsBy = new Map<string, { w: Where; reads: string[] }>();
+  for (const row of block.rows) {
+    const w = whereOf(row);
+    if (!w) continue;
+    const g = groupsBy.get(whereKey(w)) ?? { w, reads: [] };
+    if (!g.reads.includes(w.read)) g.reads.push(w.read);
+    groupsBy.set(whereKey(w), g);
+  }
+  const groups = srcGroups(st);
+  for (const { w, reads } of groupsBy.values()) {
+    // Named for what they hold, the way hand-written classes name them (Pid2,
+    // Pid18): "Nk1f2" is NK1-2. A second scan of the same segment in one class
+    // gets a number, so the names never collide.
+    const stem = w.segment[0] + w.segment.slice(1).toLowerCase();
+    const n = (usedStems.get(stem) ?? 0) + 1;
+    usedStems.set(stem, n);
+    const tag = n === 1 ? stem : `${stem}s${n}`;
+    const vars = reads.map((r) => `${tag}f${r.slice(w.segment.length + 1).replace(/[^0-9]+/g, "c")}`);
+    const i = `i${tag}`;
+    const g = groups[w.segment];
+    const at = (path: string) => {
+      const field = path.slice(w.segment.length + 1);
+      return pathString(g ? `{${g}(${i}).${w.segment}:${field}}` : `{${w.segment}(${i}):${field}}`);
+    };
+    const count = pathString(g ? `{${g}(*)}` : `{${w.segment}(*)}`);
+    if (irisComments(st.spec) !== "off") {
+      out.push(`${indent}//The ${w.segment} whose ${w.where} is ${comment(w.equals)}, found once for every field read from it`);
+    }
+    out.push(
+      `${indent}Set (${vars.join(",")}) = ""`,
+      `${indent}For ${i}=1:1:pRequest.GetValueAt(${count}) {`,
+      `${indent}${T}If (pRequest.GetValueAt(${at(w.where)}) = ${os(w.equals)}) {`,
+      `${indent}${T}${T}Set ${reads.map((r, n) => `${vars[n]} = pRequest.GetValueAt(${at(r)})`).join(", ")}`,
+      `${indent}${T}${T}Quit`,
+      `${indent}${T}}`,
+      `${indent}}`,
+    );
+    reads.forEach((r, n) => scanned.set(`${whereKey(w)}|${r}`, vars[n]!));
+  }
+}
+
 /** Loop variable for the n-th repeating block. */
 const key = (i: number) => `k${i + 1}`;
 
@@ -80,6 +157,7 @@ const key = (i: number) => `k${i + 1}`;
 export function emitPatch(spec: Spec, collect?: BareRefs): string {
   const proc = spec.iris.process!;
   const st = newState(spec, collect);
+  usedStems = new Map();
   const notes = irisComments(spec);
   const said = notes !== "off";
   const groups = srcGroups(st);
@@ -166,6 +244,7 @@ export function emitPatch(spec: Spec, collect?: BareRefs): string {
       const scope: Scope = { sourcePrefix: prefix, targetPrefix: prefix, counterVar: k };
       out.push(``);
       if (said && block.note) out.push(`${body}//${comment(block.note)}`);
+      emitScans(st, block, body, out);
       out.push(`${body}For ${k}=1:1:pRequest.GetValueAt(${countPath}) {`);
       for (const row of block.rows) emitRow(st, row, scope, inner, out);
       out.push(`${body}}`);
@@ -177,6 +256,7 @@ export function emitPatch(spec: Spec, collect?: BareRefs): string {
     const scope: Scope = { sourcePrefix: prefix, targetPrefix: prefix };
     out.push(``);
     if (said && block.note) out.push(`${body}//${comment(block.note)}`);
+    emitScans(st, block, body, out);
     // A segment the sender can leave out keeps its rows behind a presence
     // test: written unconditionally, the first SetValueAt would CREATE the
     // segment the sender did not send. MSH, and anything the spec lists in
@@ -203,7 +283,7 @@ export function emitPatch(spec: Spec, collect?: BareRefs): string {
     const seg = pathString(dtlSegment(block.id, at, groups));
     out.push(``);
     if (said) {
-      out.push(`${body}//${comment(block.note ?? `A ${block.id} with an empty ${block.id}-${fieldOf(path)} is not sent`)}`);
+      out.push(`${body}//${comment(block.note ?? `Remove each ${block.id} whose ${block.id}-${fieldOf(path)} is empty`)}`);
     }
     out.push(
       `${body}For ${k}=pRequest.GetValueAt(${countPath}):-1:1 {`,
@@ -273,8 +353,14 @@ function emitRow(st: State, row: Row, scope: Scope, indent: string, out: string[
   }
 
   let value: string;
+  const w = whereOf(row);
+  const found = w && scanned.get(`${whereKey(w)}|${w.read}`);
   if (row.from.kind === "event") {
     value = "pEvent";
+  } else if (found && row.from.kind === "fromWhere") {
+    value = found;
+  } else if (found && row.from.kind === "lookup") {
+    value = lookupExpr(PATCH, row.from.table, found, row.from.unmapped);
   } else {
     const { expr, pre } = sourceCode(st, row.from, scope, PATCH);
     // The shared scans indent by two spaces; this class indents by tab.

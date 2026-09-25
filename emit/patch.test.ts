@@ -114,6 +114,7 @@ describe("segments", () => {
   test("a skipped occurrence is removed walking backwards", () => {
     expect(cls).toContain(`For k2=pRequest.GetValueAt("NK1(*)"):-1:1 {`);
     expect(cls).toContain(`$$$ThrowOnError(tRequest.RemoveSegmentAt("NK1("_k2_")"))`);
+    expect(cls).toContain("//Remove each NK1 whose NK1-2 is empty");
   });
 
   test("a repeat's rows patch every occurrence by one index", () => {
@@ -190,5 +191,51 @@ describe("validate refuses what a patch cannot say", () => {
 
   test("a patch spec is not refused for being patch", () => {
     expect(validate(passthrough).join("\n")).not.toContain("not a place the mapping can live");
+  });
+});
+
+describe("fields read from one fromWhere match", () => {
+  const nk1 = (read: string) => ({ kind: "fromWhere", segment: "NK1", where: "NK1-1", equals: "2", read }) as const;
+  const shared = emitProcess(spec([
+    msh,
+    {
+      id: "GT1", wholeSegment: true, repeat: { over: "GT1" },
+      rows: [
+        { target: "GT1-45", from: nk1("NK1-2") },
+        { target: "GT1-46", from: nk1("NK1-5") },
+        { target: "GT1-48", from: { kind: "lookup", table: "Rel", from: nk1("NK1-3"), unmapped: { kind: "blank" } } },
+      ],
+    },
+  ]));
+
+  test("share ONE scan, not one per field", () => {
+    expect(shared.match(/For iNk1=/g)?.length).toBe(1);
+    expect(shared).toContain(`Set (Nk1f2,Nk1f5,Nk1f3) = ""`);
+  });
+
+  test("the scan sits above the repeat, because it reads the message, not the occurrence", () => {
+    expect(shared.indexOf("For iNk1=")).toBeLessThan(shared.indexOf(`For k1=1:1:pRequest.GetValueAt("GT1(*)")`));
+  });
+
+  test("first match wins, and the rows write the variables", () => {
+    expect(shared).toMatch(/If \(pRequest\.GetValueAt\("NK1\("_iNk1_"\):1"\) = "2"\) \{\n\t+Set Nk1f2 = .*\n\t+Quit/);
+    expect(shared).toContain(`$$$ThrowOnError(tRequest.SetValueAt(Nk1f2,"GT1("_k1_"):45"))`);
+    expect(shared).toContain(`Lookup("Rel",Nk1f3,""),1:""),"GT1("_k1_"):48"))`);
+  });
+
+  test("a second match on the same segment gets its own names", () => {
+    const two = emitProcess(spec([
+      msh,
+      {
+        id: "GT1", wholeSegment: true, repeat: { over: "GT1" },
+        rows: [
+          { target: "GT1-45", from: nk1("NK1-2") },
+          { target: "GT1-47", from: { kind: "fromWhere", segment: "NK1", where: "NK1-1", equals: "3", read: "NK1-2" } },
+        ],
+      },
+    ]));
+    expect(two).toContain("For iNk1=");
+    expect(two).toContain("For iNk1s2=");
+    expect(two).toContain("SetValueAt(Nk1s2f2,");
   });
 });

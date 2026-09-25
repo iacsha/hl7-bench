@@ -29,7 +29,7 @@ import {
 } from "../run";
 import {
   emptyTables, segmentOf, seedGuarded,
-  type Spec, type Source, type Step, type Row, type Block, type CommentLevel,
+  type Spec, type Source, type Step, type Row, type Block, type CommentLevel, type Unmapped,
 } from "../spec";
 import { fingerprint } from "../fingerprint";
 
@@ -472,6 +472,21 @@ export function lookupMissStatement(
   return `if $LENGTH(${ref}),${d.lookup(os(table), ref, MISS)}=${MISS} { $$$LOGWARNING(${message}) }`;
 }
 
+/**
+ * A lookup of an already-read key. Exported so a backend that found the key
+ * its own way -- the patch backend's shared scan -- does not grow a second
+ * copy of the unmapped rules.
+ */
+export function lookupExpr(d: Dialect, table: string, ref: string, unmapped: Unmapped): string {
+  const fallback =
+    unmapped.kind === "blank" ? '""'
+    : unmapped.kind === "passthrough" ? ref
+    : os(unmapped.value);
+  // Guard on emptiness so a field the sender left blank does not take the
+  // unmapped branch and invent a value.
+  return `$SELECT($LENGTH(${ref})>0:${d.lookup(os(table), ref, fallback)},1:"")`;
+}
+
 /** A class name out of a free-text spec name. */
 function classNameFor(spec: Spec): string {
   if (spec.iris.className) return spec.iris.className;
@@ -581,14 +596,7 @@ export function sourceCode(
       } else {
         ref = src(from.path ?? "");
       }
-      const fallback =
-        from.unmapped.kind === "blank" ? '""'
-        : from.unmapped.kind === "passthrough" ? ref
-        : os(from.unmapped.value);
-      // Guard on emptiness so a field the sender left blank does not take the
-      // unmapped branch and invent a value.
-      const call = d.lookup(os(from.table), ref, fallback);
-      return { expr: `$SELECT($LENGTH(${ref})>0:${call},1:"")`, pre };
+      return { expr: lookupExpr(d, from.table, ref, from.unmapped), pre };
     }
 
     case "counter":
