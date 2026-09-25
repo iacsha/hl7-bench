@@ -20,6 +20,7 @@
  *     bun engine.ts msg.hl7 --script AdtToReceiver.cls
  *     bun engine.ts msg.hl7 --script AdtToReceiver.cls --diff
  *     bun engine.ts --check --script AdtToReceiver.cls
+ *     bun engine.ts --check --script AdtToReceiver.cls --host   run the class whole
  *
  * KEEPING THE CLASS AS THE ARTIFACT YOU MAINTAIN
  *
@@ -67,6 +68,7 @@ import { spec } from "./specfile";
 import { readMessage, outArg, deliverText, decodeText } from "./input";
 import { NAMESPACE, REMOTE, runIris, engineLabel } from "./iris-session";
 import { classMethodsOf, type Carried } from "./scratch";
+import { HOST_CLASS, hostClass, hostedCall, instanceCalls, renamedClass } from "./hosted";
 
 const argv = process.argv.slice(2);
 
@@ -305,6 +307,8 @@ const keepScratch = argv.includes("--keep-scratch");
 const cleanup = keepScratch
   ? [`write "KEPT|HL7Bench.Scratch and ${REMOTE}/HL7Bench.Scratch.cls left in place",!`]
   : [
+      `do $system.OBJ.Delete("${HOST_CLASS}","-d")`,
+      `do ##class(%File).Delete("${REMOTE}/${HOST_CLASS}.cls")`,
       `do $system.OBJ.Delete("HL7Bench.Scratch","-d")`,
       `do ##class(%File).Delete("${REMOTE}/HL7Bench.Scratch.cls")`,
     ];
@@ -319,6 +323,35 @@ function segmentsOf(raw: string): string[] {
 }
 
 let removed: string[] = [];
+
+/**
+ * True when the class runs WHOLE rather than lifted. See hosted.ts. Decided by
+ * the file, not by a flag somebody has to remember: a body that calls its own
+ * instance methods cannot run any other way. `--host` forces it for a class
+ * that would lift fine but should be proven exactly as it will deploy.
+ */
+let hosted = false;
+
+/** The statement that runs one message into `tgt`, whichever way the class runs. */
+const runCall = (): string =>
+  hosted ? hostedCall() : `set tsc = ##class(HL7Bench.Scratch).Run(src,.tgt)`;
+
+/** Write one class into the engine and compile it, halting with ERR| if it fails. */
+function loadClass(name: string, text: string): string[] {
+  const literal = text
+    .split(/\r?\n/)
+    .map((l) => `do sf.WriteLine(${osLiteral(l)})`)
+    .join("\n");
+  return [
+    `set sf=##class(%Stream.FileCharacter).%New()`,
+    `set sc=sf.LinkToFile("${REMOTE}/${name}.cls")`,
+    literal,
+    `do sf.%Save()`,
+    `set sc=$system.OBJ.Load("${REMOTE}/${name}.cls","ck-d")`,
+    `if '$system.Status.IsOK(sc) { write "ERR|",$system.Status.GetErrorText(sc),! halt }`,
+    `if '##class(%Dictionary.CompiledClass).%ExistsId("${name}") { write "ERR|${name} did not compile",! ${cleanup.join(" ")} halt }`,
+  ];
+}
 
 /**
  * Write the scratch class into the engine and compile it.
@@ -347,6 +380,30 @@ function buildScratch(): string[] {
   }
   const extracted = extractBody(bodyRaw, methodName);
   process.stderr.write(`\n  read ${scriptFile} as ${extracted.found}\n`);
+
+  const calls = instanceCalls(bodyRaw, extracted.body);
+  if (calls.length > 0 || argv.includes("--host")) {
+    if (extracted.found === "a method body") {
+      die(2, `--host runs a class WHOLE, and ${scriptFile} is a method body, not a class.`);
+    }
+    if (methodName !== "OnRequest") {
+      die(2, `A class run whole is entered through OnRequest. Drop --method ${methodName}.`);
+    }
+    hosted = true;
+    process.stderr.write(
+      calls.length > 0
+        ? `  ${methodName} calls ${calls.map((c) => `..${c}`).join(", ")}, an instance method, so the class runs WHOLE\n`
+        : `  --host: the class runs WHOLE\n`,
+    );
+    process.stderr.write(`  nothing removed; SendRequestAsync is captured by ${HOST_CLASS} instead of queued\n\n`);
+    let whole: string;
+    try {
+      whole = renamedClass(bodyRaw, "HL7Bench.Scratch");
+    } catch (e) {
+      die(2, `${scriptFile}: ${e instanceof Error ? e.message : String(e)}`);
+    }
+    return [...loadClass("HL7Bench.Scratch", whole), ...loadClass(HOST_CLASS, hostClass("HL7Bench.Scratch"))];
+  }
   const prepared = prepareBody(extracted.body, extracted.firstLine);
   removed = prepared.removed;
   if (removed.length > 0) {
@@ -446,9 +503,7 @@ if (checkMode) {
     die(2, filter ? `No cases matching "${filter}".` : `No cases in messages\\.`);
   }
 
-  const call = className
-    ? `set tsc = ##class(${className}).Transform(src,.tgt)`
-    : `set tsc = ##class(HL7Bench.Scratch).Run(src,.tgt)`;
+  const call = className ? `set tsc = ##class(${className}).Transform(src,.tgt)` : runCall();
 
   const body: string[] = [];
   for (const c of chosen) {
@@ -545,7 +600,7 @@ if (className) {
     `zn "${NAMESPACE}"`,
     ...scratchSetup,
     ...preamble,
-    `set tsc = ##class(HL7Bench.Scratch).Run(src,.tgt)`,
+    runCall(),
     `write "STATUS|",$system.Status.GetErrorText(tsc),!`,
     // Dump BEFORE the cleanup, because `dump` halts on a missing target and a
     // halt must not be what skips the delete.
@@ -619,6 +674,11 @@ if (none.length > 0) {
 
 const status = marked("STATUS")[0] ?? "";
 const segments = marked("OUT");
+const sent = marked("SENT")[0];
+if (sent) {
+  const [count, to] = sent.split("|");
+  process.stderr.write(`\n  sent to ${to || "(nothing)"}${Number(count) > 1 ? ` -- ${count} sends, only the LAST is shown` : ""}\n`);
+}
 
 const engineOut = segments.join("\n");
 // deliverText prints to stdout when there is no -o, so this is the only write.

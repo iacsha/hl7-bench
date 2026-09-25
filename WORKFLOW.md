@@ -712,11 +712,11 @@ are patched without a presence test. Every other segment's rows sit behind
 `If (pRequest.GetValueAt("PV2") '= "")`, because writing to an absent segment
 would create it.
 
-`bun engine.ts --check` cannot run a patch class yet: it compiles `OnRequest`
-into a ClassMethod, and a ClassMethod cannot call the instance method
-`..Mapping`. Prove a patch class on a lab instance by subclassing it, overriding
-`SendRequestAsync` to capture the message, and comparing the captured output
-with what the bench delivers for the same inputs.
+`bun engine.ts --check --script MyProcess.cls` proves a patch class against the
+goldens like any other. Its `OnRequest` calls the instance method `..Mapping`,
+which a lifted body cannot reach, so engine.ts compiles the class WHOLE under a
+scratch name, captures `SendRequestAsync` instead of queueing, and says so on
+stderr. Nothing in the class is removed. `--host` forces the same for any class.
 
 `todo()` is not a failure. It is the spec refusing to fake a row nobody has
 decided yet, so the gap shows up as a TODO in the right place in the file rather
