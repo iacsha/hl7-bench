@@ -16,29 +16,38 @@ That is the whole interface. Anything that can spawn a process can drive it.
 
 ```mermaid
 flowchart LR
-    SPEC["Spec<br/>the mapping, as data"] --> BENCH
-    MSG["Synthetic HL7<br/>DFT, ADT, ORU"] --> BENCH
+    SPEC[("Spec &mdash; the mapping, as data")]
+    MSG[("Synthetic HL7 &mdash; DFT · ADT · ORU")]
 
-    subgraph BENCH["hl7-bench &nbsp;·&nbsp; one bun process, stdin to stdout"]
+    SPEC --> BENCH
+    MSG --> BENCH
+
+    subgraph BENCH["&nbsp;hl7-bench &nbsp;·&nbsp; one bun process, stdin to stdout&nbsp;"]
         direction TB
-        EMIT["emit &rarr; ObjectScript<br/>patch · build · DTL"]
-        XFORM["transform &rarr; HL7 out<br/>+ highlighted diff"]
-        CHECK["check &rarr; run on real IRIS<br/>byte-compare to golden"]
+        T["transform<br/><b>see every changed field</b>"]
+        E["emit<br/><b>ObjectScript · JS</b>"]
+        KNOB{{"style<br/>lean · accumulate"}}
+        KNOB -. shapes .-> E
     end
 
-    STYLE["Style knob<br/>defensive · lean/accumulate"] -.->|reads how, not what| EMIT
-    BENCH --> OUT["Verified class<br/>paste into Studio"]
+    BENCH --> CHECK{"run on real IRIS<br/>byte-compare golden"}
+    CHECK -- "differs" --> SPEC
+    CHECK == "identical" ==> OUT(["Verified class<br/><b>paste into Studio</b>"])
 
-    classDef in fill:#1e2530,stroke:#6b7c93,color:#e6edf5,stroke-width:2px
-    classDef bench fill:#123024,stroke:#3fa06a,color:#d5f0e2,stroke-width:2px
+    classDef io fill:#0f2a3a,stroke:#3f8fc0,color:#e8f4fb,stroke-width:2px
+    classDef work fill:#123024,stroke:#3fa06a,color:#d5f0e2,stroke-width:2px
     classDef knob fill:#2a2313,stroke:#c9a227,color:#f2e6b8,stroke-width:2px
-    classDef out fill:#0f2a3a,stroke:#3f8fc0,color:#d5ecf5,stroke-width:2px
-    class SPEC,MSG in
-    class EMIT,XFORM,CHECK bench
-    class STYLE knob
-    class OUT out
-    style IN fill:#0d1117,stroke:#30363d,color:#e6edf5
+    classDef gate fill:#2a1330,stroke:#a05fc0,color:#efd9f5,stroke-width:2px
+    classDef win fill:#123024,stroke:#5fd08a,color:#eafff2,stroke-width:3px
+    class SPEC,MSG io
+    class T,E work
+    class KNOB knob
+    class CHECK gate
+    class OUT win
     style BENCH fill:#0d1117,stroke:#3fa06a,color:#d5f0e2
+    linkStyle 2 stroke:#c9a227,stroke-width:1.5px
+    linkStyle 4 stroke:#c0526a,stroke-width:2px
+    linkStyle 5 stroke:#5fd08a,stroke-width:3px
 ```
 
 ---
