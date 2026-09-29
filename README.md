@@ -37,6 +37,8 @@ flowchart LR
     class EMIT,XFORM,CHECK bench
     class STYLE knob
     class OUT out
+    style IN fill:#0d1117,stroke:#30363d,color:#e6edf5
+    style BENCH fill:#0d1117,stroke:#3fa06a,color:#d5f0e2
 ```
 
 ---
