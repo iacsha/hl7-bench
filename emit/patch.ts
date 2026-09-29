@@ -49,7 +49,7 @@ import {
 } from "./iris";
 import { fingerprint } from "../fingerprint";
 import { emitInlineMapping } from "./inline";
-import { DEFAULT_STYLE, layout, loadStyle, styledWrite, type Style } from "../style";
+import { DEFAULT_STYLE, layout, loadStyle, mappingReturnsStatus, styledWrite, type Style } from "../style";
 
 /** The style in force for one emit. See style.ts. */
 let S: Style = DEFAULT_STYLE;
@@ -285,6 +285,9 @@ export function emitPatch(specIn: Spec, collect?: BareRefs, style: Style = loadS
     `${inner}${T}Set segCount = segCount + 1`,
     `${inner}} Else {`,
     `${inner}${T}${W("tRequest.RemoveSegmentAt(segCount)")}`,
+    // segCount only advances past a kept segment, so a remove that fails and
+    // does not throw would spin here forever. Accumulate stops the sweep.
+    ...(S.writes === "accumulate" ? [`${inner}${T}If $$$ISERR(tSC) Quit`] : []),
     `${inner}}`,
     `${body}}`,
   );
@@ -403,7 +406,7 @@ function houseHead(spec: Spec, st: State): string[] {
   }
   out.push(
     ``,
-    S.mappingTry
+    mappingReturnsStatus(S)
       ? `${T}${T}$$$ThrowOnError(..Mapping(pRequest,.tRequest,tEvent))`
       : `${T}${T}Do ..Mapping(pRequest,.tRequest,tEvent)`,
     S.send === "checked"
@@ -417,7 +420,7 @@ function houseHead(spec: Spec, st: State): string[] {
     ``,
     `Method Mapping(pRequest As EnsLib.HL7.Message, Output tRequest As EnsLib.HL7.Message, pEvent As %String) As %Status`,
     `{`,
-    ...(S.mappingTry ? [`${T}Set tSC = $$$OK`, `${T}try {`] : []),
+    ...(S.mappingTry ? [`${T}Set tSC = $$$OK`, `${T}try {`] : S.writes === "accumulate" ? [`${T}Set tSC = $$$OK`] : []),
   );
   return out;
 }
@@ -425,7 +428,8 @@ function houseHead(spec: Spec, st: State): string[] {
 /** What a filtered-out message leaves behind, per the style. */
 function filtered(indent: string, message: string): string[] {
   if (S.filteredOut === "silent") return [];
-  return [`${indent}${S.filteredOut === "warning" ? "$$$LOGWARNING" : "$$$TRACE"}(${message})`];
+  const macro = { trace: "$$$TRACE", info: "$$$LOGINFO", warning: "$$$LOGWARNING" }[S.filteredOut];
+  return [`${indent}${macro}(${message})`];
 }
 
 /** Stamps, then the close of Mapping and of the class. */
@@ -445,7 +449,7 @@ function houseTail(spec: Spec): string[] {
   out.push(
     ...(S.mappingTry
       ? [`${T}} catch e {`, `${T}${T}Set tSC = e.AsStatus()`, `${T}}`, `${T}Quit tSC`]
-      : [`${T}Quit $$$OK`]),
+      : [`${T}Quit ${S.writes === "accumulate" ? "tSC" : "$$$OK"}`]),
     `}`,
     ``,
     `Storage Default`,

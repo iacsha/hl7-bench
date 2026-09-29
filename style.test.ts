@@ -52,20 +52,42 @@ describe("presets", () => {
     expect(cls).toMatch(/Method Mapping[\s\S]*\ttry \{/);
   });
 
-  test("lean leaves ONE check, on the send", () => {
+  test("lean throws twice, on Mapping and the send, and never on a write", () => {
     const cls = emitProcess(patchSpec(), undefined, PRESETS.lean);
-    expect(cls.match(/\$\$\$ThrowOnError/g)?.length).toBe(1);
+    expect(cls.match(/\$\$\$ThrowOnError/g)?.length).toBe(2);
+    expect(cls).toContain("$$$ThrowOnError(..Mapping(pRequest,.tRequest,tEvent))");
     expect(cls).toContain(`$$$ThrowOnError(..SendRequestAsync("ToTarget.ADT.TCP",tRequest,0))`);
-    expect(cls).toContain(`do tRequest.SetValueAt("RECV","MSH:5")`);
-    expect(cls).toContain("do ..Mapping(pRequest,.tRequest,tEvent)");
   });
 
-  test("lean's Mapping has no try and returns OK; OnRequest still catches", () => {
+  test("lean accumulates every write into the status Mapping returns", () => {
     const cls = emitProcess(patchSpec(), undefined, PRESETS.lean);
     const mapping = cls.slice(cls.indexOf("Method Mapping"));
     expect(mapping).not.toContain("try {");
-    expect(mapping).toContain("    quit $$$OK");
+    expect(mapping).toMatch(/^ {4}set tSC = \$\$\$OK$/m);
+    expect(mapping).toContain(`set tSC = $$$ADDSC(tSC,tRequest.SetValueAt("RECV","MSH:5"))`);
+    expect(mapping).toContain(`set tSC = $$$ADDSC(tSC,tRequest.RemoveSegmentAt(segCount))`);
+    expect(mapping).toContain("    quit tSC");
+    expect(mapping).not.toMatch(/^\s+do tRequest\./m);
     expect(cls.slice(0, cls.indexOf("Method Mapping"))).toContain("} catch e {");
+  });
+
+  test("lean stops the segment sweep on a failed remove, so it cannot spin", () => {
+    const cls = emitProcess(patchSpec(), undefined, PRESETS.lean);
+    expect(cls).toMatch(/RemoveSegmentAt\(segCount\)\)\n +if \$\$\$ISERR\(tSC\) quit\n/);
+  });
+
+  test("lean logs a filtered message where production can see it", () => {
+    const cls = emitProcess(patchSpec(), undefined, PRESETS.lean);
+    expect(cls).toContain(`$$$LOGINFO("Message Filtered Out: MSH-9.2 is "`);
+    expect(cls).not.toContain("$$$TRACE");
+  });
+
+  test("writes: unchecked is still offered: Do writes, Mapping returns OK unchecked", () => {
+    const cls = emitProcess(patchSpec(), undefined, { ...PRESETS.lean!, writes: "unchecked" });
+    expect(cls).toContain(`do tRequest.SetValueAt("RECV","MSH:5")`);
+    expect(cls).toContain("do ..Mapping(pRequest,.tRequest,tEvent)");
+    expect(cls).toContain("    quit $$$OK");
+    expect(cls).not.toContain("$$$ADDSC");
   });
 
   test("lean is neutral: four spaces, lower-case commands", () => {
@@ -78,13 +100,15 @@ describe("presets", () => {
   test("a site file on top of lean: tabs and Set", () => {
     const cls = emitProcess(patchSpec(), undefined, mine);
     expect(cls).toMatch(/^\tSet tSC = \$\$\$OK$/m);
-    expect(cls).toMatch(/^\tDo tRequest\.SetValueAt\("RECV","MSH:5"\)$/m);
+    expect(cls).toMatch(/^\tSet tSC = \$\$\$ADDSC\(tSC,tRequest\.SetValueAt\("RECV","MSH:5"\)\)$/m);
     expect(cls).toContain(", style lean+local.");
   });
 });
 
 describe("the other knobs", () => {
-  test("filteredOut: warning, and silent", () => {
+  test("filteredOut: info, warning, and silent", () => {
+    const info = emitProcess(patchSpec(), undefined, { ...DEFAULT_STYLE, filteredOut: "info" });
+    expect(info).toContain(`$$$LOGINFO("Message Filtered Out: MSH-9.2 is "`);
     const warn = emitProcess(patchSpec(), undefined, { ...DEFAULT_STYLE, filteredOut: "warning" });
     expect(warn).toContain(`$$$LOGWARNING("Message Filtered Out: MSH-9.2 is "`);
     const quiet = emitProcess(patchSpec(), undefined, { ...DEFAULT_STYLE, filteredOut: "silent" });
@@ -93,7 +117,7 @@ describe("the other knobs", () => {
   });
 
   test("send: unchecked is offered, and writes Do", () => {
-    const cls = emitProcess(patchSpec(), undefined, { ...PRESETS.lean!, send: "unchecked" });
+    const cls = emitProcess(patchSpec(), undefined, { ...PRESETS.lean!, writes: "unchecked", send: "unchecked" });
     expect(cls).toContain(`do ..SendRequestAsync("ToTarget.ADT.TCP",tRequest,0)`);
     expect(cls).not.toContain("$$$ThrowOnError");
   });
@@ -138,7 +162,7 @@ describe("a style file", () => {
 
   test("is read, and its keys override the preset", () => {
     const s = loadStyle(file("ok.local.json", `{ "extends": "lean", "indent": "tab", "keywords": "Set" }`));
-    expect(s).toMatchObject({ writes: "unchecked", mappingTry: false, indent: "tab", keywords: "Set" });
+    expect(s).toMatchObject({ writes: "accumulate", mappingTry: false, indent: "tab", keywords: "Set" });
   });
 
   test("a preset name works in place of a path", () => {
@@ -158,7 +182,7 @@ describe("a style file", () => {
   });
 
   test("a BOM from Notepad does not break it", () => {
-    expect(loadStyle(file("bom.local.json", `﻿{ "extends": "lean" }`)).writes).toBe("unchecked");
+    expect(loadStyle(file("bom.local.json", `﻿{ "extends": "lean" }`)).writes).toBe("accumulate");
   });
 });
 

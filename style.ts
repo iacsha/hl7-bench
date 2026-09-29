@@ -46,12 +46,21 @@ export interface Style {
    * under a deployed class, and the golden gate (`bun engine.ts --check`)
    * catches a path that does not resolve before the class is deployed. Where
    * both hold, the checks are lines that can never fire.
+   *
+   * `accumulate` is the middle: one plain line per write,
+   * `Set tSC = $$$ADDSC(tSC,call)`, no throw and no try, and Mapping returns
+   * the sum. A failed write does not stop the mapping; the message is refused
+   * at the send, and the error queue lists EVERY write that failed, not the
+   * first. Reads like `unchecked`, and nothing is ignored -- a peer review
+   * of a lean class flagged the ignored statuses (2026-09-29).
    */
-  writes: "checked" | "unchecked";
+  writes: "checked" | "unchecked" | "accumulate";
   /**
    * Whether Mapping has its own try/catch. Without one, Mapping returns $$$OK
-   * and OnRequest calls it with `Do`; a runtime error (an exception, not a
-   * status) still reaches OnRequest's catch, because exceptions propagate.
+   * and OnRequest calls it with `Do` -- unless writes are `accumulate`, where
+   * Mapping returns the summed write status and OnRequest checks it. A runtime
+   * error (an exception, not a status) still reaches OnRequest's catch,
+   * because exceptions propagate.
    */
   mappingTry: boolean;
   /**
@@ -62,8 +71,12 @@ export interface Style {
    * because it is the one check that pays for itself.
    */
   send: "checked" | "unchecked";
-  /** What an event the interface does not handle leaves behind. */
-  filteredOut: "trace" | "warning" | "silent";
+  /**
+   * What an event the interface does not handle leaves behind.
+   * `trace` is invisible in a production that is not tracing, which is every
+   * production; `info` lands in the Event Log as $$$LOGINFO.
+   */
+  filteredOut: "trace" | "info" | "warning" | "silent";
   indent: "tab" | 2 | 4;
   /** How commands are written: `Set`, `If`, `For` or `set`, `if`, `for`. */
   keywords: "Set" | "set";
@@ -86,10 +99,10 @@ export const PRESETS: Record<string, Style> = {
   },
   lean: {
     name: "lean",
-    writes: "unchecked",
+    writes: "accumulate",
     mappingTry: false,
     send: "checked",
-    filteredOut: "trace",
+    filteredOut: "info",
     indent: 4,
     keywords: "set",
     header: "generator",
@@ -99,10 +112,10 @@ export const PRESETS: Record<string, Style> = {
 export const DEFAULT_STYLE = PRESETS.defensive!;
 
 const CHOICES: Record<string, readonly unknown[]> = {
-  writes: ["checked", "unchecked"],
+  writes: ["checked", "unchecked", "accumulate"],
   mappingTry: [true, false],
   send: ["checked", "unchecked"],
-  filteredOut: ["trace", "warning", "silent"],
+  filteredOut: ["trace", "info", "warning", "silent"],
   indent: ["tab", 2, 4],
   keywords: ["Set", "set"],
   header: ["generator", "none"],
@@ -159,7 +172,18 @@ export function loadStyle(env = process.env.HL7_BENCH_STYLE): Style {
 
 /** A write or remove, as this style writes it. `call` is e.g. `tRequest.SetValueAt(x,"PID:3")`. */
 export function styledWrite(style: Style, call: string): string {
-  return style.writes === "checked" ? `$$$ThrowOnError(${call})` : `Do ${call}`;
+  if (style.writes === "checked") return `$$$ThrowOnError(${call})`;
+  if (style.writes === "accumulate") return `Set tSC = $$$ADDSC(tSC,${call})`;
+  return `Do ${call}`;
+}
+
+/**
+ * Whether Mapping can return an error status. When it can, OnRequest checks
+ * it; a `Do` there would throw the status away, which is the one thing
+ * accumulate exists to stop.
+ */
+export function mappingReturnsStatus(style: Style): boolean {
+  return style.mappingTry || style.writes === "accumulate";
 }
 
 const COMMANDS = ["Set", "If", "ElseIf", "Else", "For", "While", "Quit", "Return", "Do"];
