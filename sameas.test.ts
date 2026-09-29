@@ -1,7 +1,7 @@
 // bun test
 //
-// sameAs: a target field an earlier row wrote, written again elsewhere. The
-// EXA feed writes the signing radiologist into TXA-5, -9, -10 and -22; before
+// sameAs: a target field an earlier row wrote, written again elsewhere. A
+// radiology feed writes the signing radiologist into TXA-5, -9, -10 and -22; before
 // this the spec said it four times and the class read OBR-32 twelve times.
 
 import { expect, test, describe } from "bun:test";
@@ -14,7 +14,7 @@ import { specToSource, constructorsUsed } from "./serialize";
 import { validate, copy, literal, sameAs, type Spec, type Block } from "./spec";
 
 const IN =
-  "MSH|^~\\&|EXA|SITE|||20260925||DFT^P03|1|P|2.5\r" +
+  "MSH|^~\\&|RAD|SITE|||20260925||DFT^P03|1|P|2.5\r" +
   "PID|1||MRN1||DOE^JANE\r" +
   "OBR|1|ORD1|ACC1|CT^CHEST|||||||||||||||||||||F|||||||NPI0^SMITH^ANN^^^1234567890\r";
 
@@ -46,12 +46,12 @@ describe("the runner", () => {
 
   test("reads a whole field written whole, from an earlier block", () => {
     const s = spec([
-      { id: "MSH", rows: [{ target: "MSH-3", from: literal("EXA") }] },
+      { id: "MSH", rows: [{ target: "MSH-3", from: literal("RAD") }] },
       { id: "TXA", rows: [{ target: "TXA-12.2", from: sameAs("MSH-3") }] },
     ]);
     const msg = new Message(IN);
     runSpec(s, msg);
-    expect(msg.get("TXA-12.2")).toBe("EXA");
+    expect(msg.get("TXA-12.2")).toBe("RAD");
   });
 
   test("a later component on top of a sameAs lands after it, as rows run in order", () => {

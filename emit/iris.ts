@@ -865,8 +865,8 @@ function emitRow(st: State, row: Row, scope: Scope, indent: string, out: string[
   // when the row is `required`, and that message is unchanged at every level.
   // So `brief` loses nothing here, and adding a label line would not be a
   // reduction -- it would be a new feature that makes the class LONGER, which
-  // is the opposite of what this setting was asked for. Measured on the EXA
-  // spec: 286 lines at `full`, 304 at `brief`, with the label line in.
+  // is the opposite of what this setting was asked for. Measured on the
+  // DFT to MDM spec: 286 lines at `full`, 304 at `brief`, with the label line in.
   //
   // Labelling every DTL assign may still be worth doing. It is a separate
   // change with its own argument, not a rider on this one.

@@ -1,7 +1,7 @@
 // bun test
 //
 // transform "build": the house-style class for a message that changes shape.
-// The EXA DFT to MDM spec, emitted this way, was run whole on IRIS for Health
+// A DFT to MDM spec, emitted this way, was run whole on IRIS for Health
 // 2026.1 by engine.ts --check and matched its golden, 49 segments identical.
 // These tests hold the SHAPE; the engine run holds the message.
 
