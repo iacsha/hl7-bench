@@ -14,6 +14,31 @@ stderr  -> diagnostics    exit 0  =  success
 
 That is the whole interface. Anything that can spawn a process can drive it.
 
+```mermaid
+flowchart LR
+    SPEC["Spec<br/>the mapping, as data"] --> BENCH
+    MSG["Synthetic HL7<br/>DFT, ADT, ORU"] --> BENCH
+
+    subgraph BENCH["hl7-bench &nbsp;·&nbsp; one bun process, stdin to stdout"]
+        direction TB
+        EMIT["emit &rarr; ObjectScript<br/>patch · build · DTL"]
+        XFORM["transform &rarr; HL7 out<br/>+ highlighted diff"]
+        CHECK["check &rarr; run on real IRIS<br/>byte-compare to golden"]
+    end
+
+    STYLE["Style knob<br/>defensive · lean/accumulate"] -.->|reads how, not what| EMIT
+    BENCH --> OUT["Verified class<br/>paste into Studio"]
+
+    classDef in fill:#1e2530,stroke:#6b7c93,color:#e6edf5,stroke-width:2px
+    classDef bench fill:#123024,stroke:#3fa06a,color:#d5f0e2,stroke-width:2px
+    classDef knob fill:#2a2313,stroke:#c9a227,color:#f2e6b8,stroke-width:2px
+    classDef out fill:#0f2a3a,stroke:#3f8fc0,color:#d5ecf5,stroke-width:2px
+    class SPEC,MSG in
+    class EMIT,XFORM,CHECK bench
+    class STYLE knob
+    class OUT out
+```
+
 ---
 
 ## What it is and is not
