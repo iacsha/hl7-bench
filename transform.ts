@@ -62,6 +62,16 @@ export const spec: Spec = {
   },
 
   /**
+   * BridgeLink target, so `bun emit.ts bridgelink` has something to emit out of
+   * the box. Optional and IRIS-only specs omit it; its absence is what
+   * `validate(spec, "bridgelink")` reports rather than emitting a nameless step.
+   */
+  bridgelink: {
+    channelName: "Demo ADT to Downstream",
+    log: "warn",
+  },
+
+  /**
    * Real schema names out of YOUR namespace. A wrong DocType fails CLOSED in
    * IRIS: paths stop resolving, the message comes out empty, and nothing useful
    * reaches the log. Open the schema browser before you compile.

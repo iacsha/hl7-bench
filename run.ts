@@ -20,7 +20,7 @@ import { logEvent } from "./log";
 import {
   validate, segmentOf, fieldOf, describeSelect, describeFold, seedGuarded,
   type Spec, type Source, type Step, type Row, type Block,
-  type Repeat, type Select, type Fold,
+  type Repeat, type Select, type Fold, type Engine,
 } from "./spec";
 
 // ---------------------------------------------------------------------------
@@ -502,8 +502,8 @@ export function walk(
 }
 
 /** Structural problems, or throw. Called by every backend before it works. */
-export function assertRunnable(spec: Spec): void {
-  const problems = validate(spec);
+export function assertRunnable(spec: Spec, engine?: Engine): void {
+  const problems = validate(spec, engine);
   if (problems.length > 0) {
     throw new Error(`Spec "${spec.name}" is not runnable:\n  ` + problems.join("\n  "));
   }

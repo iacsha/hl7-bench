@@ -596,6 +596,29 @@ export interface Spec {
      */
     require?: { path: string; equals: string }[];
   };
+  /**
+   * BridgeLink target facts. A SIBLING KEY, NOT AN `engines` MAP: optional and
+   * absent by default, so a spec that only targets IRIS is untouched by the
+   * second engine existing. Absent means "not aimed at BridgeLink yet", and
+   * `validate(spec, "bridgelink")` says so rather than emitting a transformer
+   * with holes where the channel facts should be.
+   */
+  bridgelink?: {
+    /**
+     * The channel this step belongs to, spelled as it is in the Administrator.
+     * The one fact the bench cannot derive from anything it already holds, and
+     * the same role `iris.process.sendTo` plays on the other side.
+     */
+    channelName: string;
+    /**
+     * What the generated step logs at run time, through the channel's `logger`.
+     * Same three levels and defaults as `iris.log`: they report the same two
+     * silent failures, an unmapped code and a required target that came out empty.
+     */
+    log?: "off" | "warn" | "trace";
+    /** One line for the step's header comment. */
+    note?: string;
+  };
   iris: {
     /** Class name for the generated DTL. Defaults to a name built from `name`. */
     className?: string;
@@ -880,6 +903,33 @@ export function segmentOf(path: string): string {
   return m[1];
 }
 
+/**
+ * A path split into its numbered parts. `repeat` defaults to 1 -- an
+ * unqualified path means the first occurrence, which is what both the runner
+ * and the DTL already do -- and `component`/`subcomponent` default to 0 when
+ * absent. Distinct from the flat-message parser in hl7.ts, which names its
+ * parts differently; emit/bridgelink.ts is written against THIS shape.
+ */
+export interface ParsedPath {
+  segment: string;
+  field: number;
+  repeat: number;
+  component: number;
+  subcomponent: number;
+}
+
+export function parsePath(path: string): ParsedPath {
+  const m = PATH_RE.exec(path.trim());
+  if (!m) throw new Error(`Not a valid HL7 path: "${path}" (expected something like PID-5.1)`);
+  return {
+    segment: m[1],
+    field: parseInt(m[2], 10),
+    repeat: m[3] === undefined ? 1 : parseInt(m[3], 10),
+    component: m[4] === undefined ? 0 : parseInt(m[4], 10),
+    subcomponent: m[5] === undefined ? 0 : parseInt(m[5], 10),
+  };
+}
+
 /** The part after the segment id: "5.1" from "PID-5.1". */
 export function fieldOf(path: string): string {
   const m = /^[A-Z][A-Z0-9]{2}-(.+)$/.exec(path.trim());
@@ -1020,8 +1070,38 @@ function categoryOf(docType: string): string {
   return docType.includes(":") ? docType.split(":", 1)[0] : "";
 }
 
-export function validate(spec: Spec): string[] {
+/** Engines a spec can be emitted for. `undefined` means "the spec on its own". */
+export type Engine = "iris" | "bridgelink";
+
+/**
+ * Problems with an engine key, checked only when an emit is aimed at that
+ * engine. Opt-in on purpose: a spec that targets IRIS only must not start
+ * failing validation the day a second engine exists, and the runner and trace
+ * (engine-neutral) must never be made to demand a channel name to move a message.
+ */
+function engineProblems(spec: Spec, engine: Engine): string[] {
+  if (engine !== "bridgelink") return [];
+  const bl = spec.bridgelink;
+  if (bl === undefined) {
+    return [
+      `This spec has no "bridgelink" key, so it has not been aimed at BridgeLink yet. ` +
+        `Add one beside "iris" with the channel name in it: ` +
+        `bridgelink: { channelName: "ADT to ..." }. ` +
+        `Emitting without it would produce a step whose header cannot say which channel it belongs to.`,
+    ];
+  }
+  return bl.channelName.trim() === ""
+    ? [
+        `bridgelink.channelName is empty. It names the channel this step is pasted into, ` +
+          `and it is the one fact the spec cannot derive from anything else it holds.`,
+      ]
+    : [];
+}
+
+export function validate(spec: Spec, engine?: Engine): string[] {
   const problems: string[] = [];
+
+  if (engine) problems.push(...engineProblems(spec, engine));
 
   if (Object.keys(spec.gate.permit).length === 0) {
     problems.push("gate.permit is empty, so this interface would refuse every message");

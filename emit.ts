@@ -35,18 +35,39 @@ import { writeFileSync } from "node:fs";
 import { spec } from "./specfile";
 import { emitIris, newBareRefs, routingCondition } from "./emit/iris";
 import { emitProcess } from "./emit/process";
+import { emitBridgelink, filterCondition } from "./emit/bridgelink";
 import { buildLookup } from "./emit/lookup";
 import { emitSchema } from "./emit/schema";
 import { fingerprint } from "./fingerprint";
-import { emptyTables, validate } from "./spec";
+import { emptyTables, validate, type Engine } from "./spec";
 import { logEvent } from "./log";
 
 // ---------------------------------------------------------------------------
 
-const ARTIFACTS = ["dtl", "process", "tables", "schema"] as const;
-type Artifact = (typeof ARTIFACTS)[number];
+/**
+ * What each engine can actually produce, and what it produces by default.
+ *
+ * Per engine rather than one flat list, because the artifact sets genuinely
+ * differ: there is no business process in a channel and no DTL class in one
+ * either. A shared list would make `bridgelink:process` an accepted argument
+ * that then emitted an IRIS class, a worse failure than an unknown-artifact
+ * message. BridgeLink lists ONE artifact on purpose: `channel` and `tables`
+ * are on the roadmap and not built, so `bridgelink:channel` fails loudly here.
+ */
+const ENGINE_ARTIFACTS = {
+  iris: { fallback: "dtl", artifacts: ["dtl", "process", "tables", "schema"] },
+  bridgelink: { fallback: "transformer", artifacts: ["transformer"] },
+} as const satisfies Record<Engine, { fallback: string; artifacts: readonly string[] }>;
 
-const ENGINES = ["iris"] as const;
+const ARTIFACT_HELP: Record<string, string> = {
+  dtl: "the transform class, the default",
+  process: "the business process template",
+  tables: "lookup tables as an import document",
+  schema: "the custom HL7 schema category this spec depends on",
+  transformer: "the JavaScript transformer step, paste-ready",
+};
+
+const ENGINES = Object.keys(ENGINE_ARTIFACTS) as Engine[];
 
 const argv = process.argv.slice(2);
 
@@ -118,24 +139,30 @@ const tableFlag = (() => {
 const raw = (positional[0] ?? "iris").toLowerCase();
 const [left, right] = raw.includes(":") ? raw.split(":", 2) : [undefined, raw];
 
-const engine = left ?? (ENGINES.includes(right as any) ? right : "iris");
-const artifact: string = left === undefined && ENGINES.includes(right as any) ? "dtl" : right;
+// A bare engine name (`bridgelink`, `iris`) means that engine's default
+// artifact. A bare artifact name still means IRIS, so no shell history breaks.
+const bareEngine = left === undefined && (ENGINES as string[]).includes(right);
+const engine = (left ?? (bareEngine ? right : "iris")) as Engine;
 
-if (!ENGINES.includes(engine as any)) {
+if (!(ENGINES as string[]).includes(engine)) {
   process.stderr.write(
     `Unknown engine "${engine}". Known: ${ENGINES.join(", ")}\n` +
-      `The argument is [engine:]artifact, e.g. iris:process, or just "process".\n`,
+      `The argument is [engine:]artifact, e.g. iris:process, bridgelink:transformer,\n` +
+      `or just "process" when you mean IRIS.\n`,
   );
   process.exit(2);
 }
-if (!ARTIFACTS.includes(artifact as Artifact)) {
+
+const known = ENGINE_ARTIFACTS[engine];
+const artifact: string = bareEngine ? known.fallback : right;
+
+if (!(known.artifacts as readonly string[]).includes(artifact)) {
   process.stderr.write(
-    `Unknown artifact "${artifact}". Known: ${ARTIFACTS.join(", ")}\n` +
-      `  dtl      the transform class, the default\n` +
-      `  process  the business process template\n` +
-      `  tables   lookup tables as an import document\n` +
-      `  schema   the custom HL7 schema category this spec depends on\n`,
+    `Unknown artifact "${artifact}" for ${engine}. Known: ${known.artifacts.join(", ")}\n`,
   );
+  for (const a of known.artifacts) {
+    process.stderr.write(`  ${a.padEnd(12)}${ARTIFACT_HELP[a] ?? ""}\n`);
+  }
   process.exit(2);
 }
 
@@ -143,7 +170,7 @@ if (!ARTIFACTS.includes(artifact as Artifact)) {
 
 // Refuse to emit from a spec that does not hold together. A class that compiles
 // from a broken spec is worse than no class, because it looks finished.
-const problems = validate(spec);
+const problems = validate(spec, engine);
 if (problems.length > 0) {
   // Validation problems name rows and paths, never message values, so they
   // would be safe as fields. They go in as notes anyway: one rule about what
@@ -252,7 +279,10 @@ const bare = newBareRefs();
 
 let out: string;
 try {
-  out = artifact === "process" ? emitProcess(spec, bare) : emitIris(spec, bare);
+  out =
+    artifact === "transformer" ? emitBridgelink(spec)
+    : artifact === "process" ? emitProcess(spec, bare)
+    : emitIris(spec, bare);
 } catch (e) {
   process.stderr.write(`${(e as Error).message}\n`);
   process.exit(2);
@@ -292,12 +322,30 @@ if (artifact === "process") {
   );
 }
 
-process.stderr.write(`\nROUTING RULE CONDITION\n  ${routingCondition(spec)}\n`);
-if (artifact === "process") {
+// The gate is one decision with two spellings. IRIS puts it in a routing rule;
+// a channel puts it in the Source Filter. Whichever engine you asked for, you
+// get told what has to sit in front of the artifact just generated.
+if (engine === "bridgelink") {
   process.stderr.write(
-    `  The process class filters on this too. Two copies of one gate: keep the\n` +
-      `  rule's if a routing engine is in front, keep the class's if it is not.\n`,
+    `\nCHANNEL SOURCE FILTER\n  ${filterCondition(spec)}\n` +
+      `  Paste this into the channel's Source Filter. The step does NOT gate:\n` +
+      `  a message this interface does not handle should never be transformed\n` +
+      `  at all, rather than transformed into something else.\n`,
   );
+  process.stderr.write(
+    `\nRHINO JAVASCRIPT LEVEL: assumed ES5.\n` +
+      `  The emitted step uses no let, no arrow functions, no template literals,\n` +
+      `  because the level is fixed by the bundled Rhino build and not by the JDK.\n` +
+      `  ES5 runs on every Rhino. Nothing here needs testing for that to hold.\n`,
+  );
+} else {
+  process.stderr.write(`\nROUTING RULE CONDITION\n  ${routingCondition(spec)}\n`);
+  if (artifact === "process") {
+    process.stderr.write(
+      `  The process class filters on this too. Two copies of one gate: keep the\n` +
+        `  rule's if a routing engine is in front, keep the class's if it is not.\n`,
+    );
+  }
 }
 
 if (empties.length > 0) {
