@@ -57,14 +57,6 @@ worse than one more paste. Needs either a comment-preserving insert or a loud
 `.bak` and a stated warning. Must refuse to overwrite an existing table of the
 same name without `--replace`.
 
-### Vendor mapping document
-
-Export the inventory as something a receiving vendor can read.
-
-Every integration project asks for one. Today that is a spreadsheet maintained
-by hand, and a spreadsheet maintained by hand drifts from the DTL the day after
-it is sent.
-
 ### More than one occurrence of a grouped bundle
 
 `validate()` requires every row target in a block to match the block id, so IN1
@@ -84,26 +76,6 @@ placeholder crosses to the receiver as though it were data.
 Seen in real traffic on NK1 contact names, NK1 employer fields and the guarantor
 employer. The receiver creates a contact named UNKNOWN for every patient whose
 employer the sender does not know.
-
-### Emit a thin-segment warning
-
-A target segment whose only populated field is a set id or a counter is almost
-always a mistake. `IN2|1` shipped to a receiver on a live interface, and IN2 has
-no set id field, so field 1 is Insured's Employee ID and the receiver was told
-the employee id is `1`.
-
-Cheap check, real defect, and it fires on exactly the case where a block was
-mapped out of completeness rather than because the source had anything in it.
-
-### Recover a spec from an emitted class
-
-Either a `--recover` flag or a `.cls` to `transform.ts` importer. For the case
-where the class survived and the spec did not.
-
-Lower value than it looks: the emitted class is a lossy view of the spec. Notes,
-labels, and the reasoning behind a row do not survive the trip out, so what
-comes back is a mapping, not a spec. Worth it only as a rescue, not as a
-workflow.
 
 ---
 
@@ -320,6 +292,37 @@ rule chosen (2026-10-02): copy from the source, never default, mark the row
 required so an empty one is logged. `processingId()` classifies a spec against
 it, the checklist carries the verdict, and `bun emit.ts` warns on every run.
 The demo spec had the fallback itself and was fixed.
+
+### Thin-segment warning
+
+Two layers. In the spec (`thinSegmentRisks()`, printed by `bun emit.ts` as THIN
+SEGMENTS): a block whose every row is a counter, literal or event, and a
+`counter()` in field 1 of a segment whose field 1 is not a Set ID. The second
+names the field it actually lands in: `IN2-1 is written by counter(), but IN2
+has no Set ID: field 1 is Insured's Employee ID`. The list of such segments is
+short and checked against the standard on purpose, because a wrong entry would
+warn on a correct mapping. On the bench, per message: a delivered segment whose
+only filled fields came from counters or literals, because every source field
+it reads was empty in this message. Run over eleven real site specs with no
+warnings, so no false positives on what exists.
+
+### Vendor mapping document
+
+Already there: `bun trace.ts --xlsx` writes the mapping as a workbook (Overview,
+one Mapping sheet per message, About), every cell a string so Excel does not
+turn `01` into `1`, from the same spec the class is emitted from, so it cannot
+drift from the DTL. `--csv` for anything that is not Excel. Closed without new
+code.
+
+### Recover a spec from an emitted class
+
+Mostly there: `import-cls.ts` reads a business process into a spec, once, for
+the class that survived when the spec did not. Tried on an emitted patch class
+(2026-10-02): every row came back, but the gate did not. The emitted gate is a
+`$CASE`, which the importer does not parse, so the recovered spec fails
+validate() with an empty permit table and has to be filled in by hand. A DTL
+class is not read at all. Left as is: the entry rated this rescue-only, and the
+validate() failure says exactly what is missing.
 
 ### Spreadsheet to import file, the settled half
 

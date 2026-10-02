@@ -1674,6 +1674,61 @@ export function describeRequire(r: GateRequire): string {
     : `${r.path} must be "${r.equals}"`;
 }
 
+/**
+ * Segments whose field 1 is NOT a Set ID, so a counter written there is data.
+ *
+ * Deliberately short and only segments checked against the standard: a wrong
+ * entry here would warn about a correct mapping, and a segment not listed is
+ * simply not judged. IN2-1 is Insured's Employee ID; `IN2|1` shipped on a live
+ * interface and told the receiver the employee id was 1.
+ */
+const NO_SET_ID: Record<string, string> = {
+  MSH: "Field Separator",
+  EVN: "Event Type Code",
+  PD1: "Living Dependency",
+  PV2: "Prior Pending Location",
+  IN2: "Insured's Employee ID",
+  ORC: "Order Control",
+  MRG: "Prior Patient Identifier List",
+  ACC: "Accident Date/Time",
+};
+
+/** Sources that put no source data in the field: the value exists without the message. */
+export const DATALESS = new Set(["counter", "literal", "event"]);
+
+/**
+ * Blocks that would deliver a segment with nothing from the source in it.
+ *
+ * A target segment whose only content is a set id or a constant is almost
+ * always a block mapped for completeness rather than because the source had
+ * anything for it. Two shapes, both visible in the spec without a message:
+ * every row is a counter, literal or event; or a counter lands in field 1 of
+ * a segment whose field 1 is not a Set ID.
+ */
+export function thinSegmentRisks(spec: Spec): string[] {
+  const out: string[] = [];
+  for (const block of spec.blocks) {
+    if (block.id === "MSH" || block.wholeSegment) continue;
+    for (const row of block.rows) {
+      if (row.from.kind !== "counter") continue;
+      const named = NO_SET_ID[segmentOf(row.target)];
+      if (named && fieldOf(row.target) === "1") {
+        out.push(
+          `${row.target} is written by counter(), but ${segmentOf(row.target)} has no Set ID: ` +
+            `field 1 is ${named}, so the receiver reads the counter as that.`,
+        );
+      }
+    }
+    if (block.rows.length > 0 && block.rows.every((r) => DATALESS.has(r.from.kind))) {
+      out.push(
+        `${block.id}: every row is a counter, literal or event, so this segment is delivered ` +
+          `with nothing from the source in it. Map a source field, or drop the block.`,
+      );
+    }
+  }
+  return out;
+}
+
 /** Tables the gate reads, in order. They decide delivery, so they count as used. */
 export function gateTables(spec: Spec): string[] {
   const out: string[] = [];

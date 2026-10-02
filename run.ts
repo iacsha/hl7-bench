@@ -18,7 +18,7 @@
 import { Message, Segment, type Delims } from "./hl7";
 import { logEvent } from "./log";
 import {
-  validate, segmentOf, fieldOf, describeSelect, describeFold, seedGuarded,
+  validate, segmentOf, fieldOf, describeSelect, describeFold, seedGuarded, DATALESS,
   type Spec, type Source, type Step, type Row, type Block,
   type Repeat, type Select, type Fold, type Engine,
 } from "./spec";
@@ -439,6 +439,13 @@ function fill(ctx: Ctx, block: Block, out: Segment, result: RunResult): void {
   }
 }
 
+/** A delivered segment for a note: trailing empty fields dropped, and short. */
+function shown(seg: string, field: string): string {
+  let s = seg;
+  while (s.endsWith(field)) s = s.slice(0, -field.length);
+  return s.length > 40 ? `${s.slice(0, 37)}...` : s;
+}
+
 /**
  * Apply the gate, or throw.
  *
@@ -675,6 +682,20 @@ export function runSpec(spec: Spec, msg: Message): RunResult {
     }
     const seg = startSegment(ctx, block);
     fill(ctx, block, seg, result);
+    // Per message: every source-reading row came out empty, so what is left
+    // is a set id or a constant. The spec-level check cannot see this, since
+    // the block does map source fields; this sender just did not fill them.
+    if (block.id !== "MSH" && !block.wholeSegment) {
+      const sourced = block.rows.filter((r) => !DATALESS.has(r.from.kind));
+      const filled = block.rows.filter((r) => seg.get(r.target) !== "");
+      if (sourced.length > 0 && filled.length > 0 && filled.every((r) => DATALESS.has(r.from.kind))) {
+        result.notes.push(
+          `${block.id}: delivered as "${shown(seg.toString(), msg.delims.field)}", nothing from the source in it ` +
+            `(only ${filled.map((r) => r.target).join(", ")}). A segment carrying only a set id is ` +
+            `usually one the receiver should not get.`,
+        );
+      }
+    }
     out.push(seg);
   });
 

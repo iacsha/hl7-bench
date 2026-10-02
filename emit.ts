@@ -41,7 +41,7 @@ import { buildLookup, specsDeclaring, tableArg } from "./emit/lookup";
 import { emitSchema } from "./emit/schema";
 import { emitPromote, processingId } from "./emit/promote";
 import { fingerprint } from "./fingerprint";
-import { emptyTables, gateTables, validate, type Engine } from "./spec";
+import { emptyTables, gateTables, thinSegmentRisks, validate, type Engine } from "./spec";
 import { loadStyle } from "./style";
 import { logEvent } from "./log";
 
@@ -402,6 +402,14 @@ if (engine === "bridgelink") {
   // at build.
   const pid = processingId(spec);
   if (pid.hazard) process.stderr.write(`\nPROCESSING ID (MSH-11): ${pid.how}\n  ${pid.hazard}\n`);
+}
+
+// Both engines: a segment with nothing from the source in it is a mapping
+// decision, not an engine one.
+const thin = thinSegmentRisks(spec);
+if (thin.length > 0) {
+  process.stderr.write(`\nTHIN SEGMENTS (${thin.length}):\n`);
+  for (const t of thin) process.stderr.write(`  - ${t}\n`);
 }
 
 if (empties.length > 0) {
