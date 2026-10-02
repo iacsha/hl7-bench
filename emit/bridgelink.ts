@@ -623,6 +623,12 @@ function emitRepeat(st: State, block: Block, index: number, out: string[]): void
       `benchGet(${cur}, ${js(p.segment)}, ${p.field}, ${p.repeat}, ` +
         `${p.component}, ${p.subcomponent}) !== ''`,
     );
+    if (r.skipValues?.length) {
+      guards.push(
+        `[${r.skipValues.map(js).join(", ")}].indexOf(benchGet(${cur}, ${js(p.segment)}, ${p.field}, ` +
+          `${p.repeat}, ${p.component}, ${p.subcomponent})) < 0`,
+      );
+    }
   }
   // Counted on the OUTPUT, so occurrences past the cap are dropped after the
   // skip rule has run, which is the order the runner uses.

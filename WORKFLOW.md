@@ -493,6 +493,18 @@ A block that repeats gets a `repeat`:
 send shell segments. `counter()` numbers by **output ordinal**, so a skipped
 occurrence leaves no hole in the set ids.
 
+A sender that writes a placeholder instead of leaving the field blank defeats
+that, and the receiver creates a contact named UNKNOWN for every patient. List
+the placeholders, read from the same field:
+
+```ts
+repeat: { over: "NK1", skipWhenEmpty: "NK1-2", skipValues: ["UNKNOWN"], max: 3 },
+```
+
+The match is exact and case-sensitive on the whole field, the comparison
+ObjectScript and JavaScript both make, so every engine skips the same
+occurrences. List each spelling the sender uses.
+
 Path syntax is in `METHOD.md` and is the same shape as the DTL:
 
 ```

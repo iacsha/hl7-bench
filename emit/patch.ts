@@ -265,7 +265,9 @@ export function emitPatch(specIn: Spec, collect?: BareRefs, style: Style = loadS
     }
     out.push(
       `${body}For ${k}=pRequest.GetValueAt(${countPath}):-1:1 {`,
-      `${inner}If (${test} = "") ${W(`tRequest.RemoveSegmentAt(${seg})`)}`,
+      // Each comparison parenthesised: ObjectScript reads `a = "" || a = "X"`
+      // left to right as `((a = "") || a) = "X"`.
+      `${inner}If ${["", ...(block.repeat!.skipValues ?? [])].map((v) => `(${test} = ${os(v)})`).join(" || ")} ${W(`tRequest.RemoveSegmentAt(${seg})`)}`,
       `${body}}`,
     );
   }

@@ -310,6 +310,7 @@ export function specToSource(spec: Spec): string {
       // that is the order they run in and the order decides the result.
       const parts = [`over: ${q(r.over)}`];
       if (r.skipWhenEmpty) parts.push(`skipWhenEmpty: ${q(r.skipWhenEmpty)}`);
+      if (r.skipValues?.length) parts.push(`skipValues: [${r.skipValues.map(q).join(", ")}]`);
       if (r.select) parts.push(`select: ${select(r.select)}`);
       if (r.fold) parts.push(`fold: ${fold(r.fold)}`);
       if (r.max !== undefined) parts.push(`max: ${r.max}`);

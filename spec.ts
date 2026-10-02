@@ -364,6 +364,16 @@ export interface Repeat {
   over: string;
   /** Skip a source occurrence when this path is empty. */
   skipWhenEmpty?: string;
+  /**
+   * Also skip when the `skipWhenEmpty` field holds exactly one of these: a
+   * sender that writes `UNKNOWN` instead of leaving a contact name blank
+   * defeats an empty test, and the placeholder reaches the receiver as a
+   * contact named UNKNOWN. Exact and case-sensitive on the whole field, the
+   * same comparison ObjectScript `=` and JavaScript `===` make, so the bench
+   * and every engine skip the same occurrences. List each spelling the sender
+   * uses.
+   */
+  skipValues?: string[];
   /** Which occurrences participate at all. Runs after skipWhenEmpty. */
   select?: Select;
   /** How surviving occurrences merge into each other. Runs after select. */
@@ -1575,6 +1585,20 @@ export function validate(spec: Spec, engine?: Engine): string[] {
         }
       } catch (e) {
         problems.push(`${block.id}: repeat.skipWhenEmpty: ${(e as Error).message}`);
+      }
+    }
+    if (rep?.skipValues !== undefined) {
+      if (!rep.skipWhenEmpty) {
+        problems.push(
+          `${block.id}: repeat.skipValues needs repeat.skipWhenEmpty, which names the field the values are read from.`,
+        );
+      }
+      if (!Array.isArray(rep.skipValues) || rep.skipValues.length === 0) {
+        problems.push(`${block.id}: repeat.skipValues is empty. Remove it, or list the placeholders to skip.`);
+      } else if (rep.skipValues.some((v) => typeof v !== "string" || v === "")) {
+        problems.push(
+          `${block.id}: repeat.skipValues holds an empty value. Empty is skipWhenEmpty's job; list only placeholders.`,
+        );
       }
     }
 

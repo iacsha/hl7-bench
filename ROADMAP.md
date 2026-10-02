@@ -67,16 +67,6 @@ IN1 and IN2 are one bundle in the schema. Splitting them across group
 occurrences would hand the receiver an IN2 belonging to no coverage, so the
 block has to carry both or neither.
 
-### Skip a repetition when a field equals a given value
-
-`repeat` currently skips a repetition when a field is empty. A sender that
-writes `UNKNOWN` rather than leaving a field blank defeats that, and the
-placeholder crosses to the receiver as though it were data.
-
-Seen in real traffic on NK1 contact names, NK1 employer fields and the guarantor
-employer. The receiver creates a contact named UNKNOWN for every patient whose
-employer the sender does not know.
-
 ---
 
 ## Settled
@@ -323,6 +313,26 @@ the class that survived when the spec did not. Tried on an emitted patch class
 validate() with an empty permit table and has to be filled in by hand. A DTL
 class is not read at all. Left as is: the entry rated this rescue-only, and the
 validate() failure says exactly what is missing.
+
+### Skip a repetition when a field equals a given value
+
+`repeat.skipValues` beside `skipWhenEmpty`, read from the same field: an
+occurrence is skipped when that field is empty or exactly one of the listed
+placeholders. Exact and case-sensitive on purpose, so the bench, ObjectScript
+`=` and JavaScript `===` cannot disagree; a sender with two spellings gets
+both listed. Emitted in the DTL, inline, patch and BridgeLink forms, saved by
+the GUI and editable there as a comma list. Run in IRIS for Health 2026.1 on a
+message carrying a real contact, `UNKNOWN`, an empty one, `unknown` and two
+more under a cap of 3: IRIS delivered the same three NK1 the bench does.
+
+**Found on the way: repeat guards were ignored in IRIS.** ObjectScript has no
+operator precedence, so the emitted `$LENGTH(x)>0 && n<3` read as
+`(($LENGTH(x)>0)&&n)<3`, true for an empty x and for n=5. Any DTL or inline
+repeat with two guards (skip and max, select and max) delivered everything. The
+demo DTL sent all five NK1 against the bench's three. Every guard is now
+parenthesised and `guards.test.ts` pins it; patch and build processes use their
+own loops and were not affected. The bench could never have caught this, since
+it evaluates in JavaScript. Only running the compiled class did.
 
 ### Spreadsheet to import file, the settled half
 

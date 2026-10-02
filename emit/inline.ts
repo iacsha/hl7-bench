@@ -534,6 +534,7 @@ function emitRepeat(st: State, block: Block, index: number, indent: string, out:
     const skipBraced = dtlPath(r.skipWhenEmpty, scope.sourcePrefix, srcGroups(st));
     noteBare(st, skipBraced);
     guards.push(`$LENGTH(${D().value(`source.${skipBraced}`)})>0`);
+    for (const v of r.skipValues ?? []) guards.push(`${D().value(`source.${skipBraced}`)}'=${os(v)}`);
   }
 
   // select, between skipWhenEmpty and max, because that is the order the stages

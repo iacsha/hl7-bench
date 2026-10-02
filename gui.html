@@ -1117,6 +1117,16 @@ function renderSpec() {
       repeatRow.appendChild(el("span", { class: "tag", text: "skip when empty" }));
       repeatRow.appendChild(text(block.repeat, "skipWhenEmpty", { w: "sm", optional: true, ph: "IN1-4",
         title: "Skip a source occurrence when this path is empty. Set ids still number by OUTPUT ordinal, so a skip leaves no hole." }));
+      repeatRow.appendChild(el("span", { class: "tag", text: "or is" }));
+      // A list edited as text: comma separated, each value exact. Empty removes
+      // the key, so a cleared box saves no `skipValues: []` for validate to refuse.
+      repeatRow.appendChild(text(block.repeat, "skipValues", { w: "sm", ph: "UNKNOWN",
+        title: "Also skip when that field holds exactly one of these, comma separated: placeholders a sender writes instead of leaving it blank. Exact and case-sensitive.",
+        get: (r) => (r.skipValues ?? []).join(", "),
+        set: (r, v) => {
+          const list = v.split(",").map((s) => s.trim()).filter((s) => s !== "");
+          if (list.length) r.skipValues = list; else delete r.skipValues;
+        } }));
       // Laid out in the order the stages run -- skip, select, fold, max -- because
       // the order decides the result and reading it left to right should say so.
       repeatRow.appendChild(el("span", { class: "tag", text: "select" }));

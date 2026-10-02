@@ -404,8 +404,12 @@ interface Stages {
  */
 function stages(msg: Message, r: Repeat): Stages {
   const all = msg.all(r.over);
+  const placeholders = r.skipValues ?? [];
   const afterSkip = r.skipWhenEmpty
-    ? all.filter((s) => s.get(r.skipWhenEmpty!) !== "")
+    ? all.filter((s) => {
+        const v = s.get(r.skipWhenEmpty!);
+        return v !== "" && !placeholders.includes(v);
+      })
     : all;
   const afterSelect = r.select ? selected(afterSkip, r.select) : afterSkip;
   const afterFold = r.fold ? folded(afterSelect, r.fold) : afterSelect;
@@ -710,7 +714,7 @@ export function runSpec(spec: Spec, msg: Message): RunResult {
     if (st.all.length - st.afterSkip.length > 0) {
       result.notes.push(
         `${st.all.length - st.afterSkip.length} ${r.over} segment(s) skipped: ` +
-          `${r.skipWhenEmpty} empty`,
+          `${r.skipWhenEmpty} empty${r.skipValues?.length ? ` or ${r.skipValues.map((v) => JSON.stringify(v)).join(", ")}` : ""}`,
       );
     }
     // The largest silent drop this bench can perform. On a radiology addendum
