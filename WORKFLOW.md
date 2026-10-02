@@ -937,7 +937,13 @@ invisible in every editor and in the portal, survives a copy-paste, and makes
 `Lookup` miss. `--no-trim` if your keys genuinely carry spaces. The same key
 twice with different values is refused rather than resolved, because that is two
 people disagreeing about a code and picking one silently is how the wrong one
-ships.
+ships. The same key twice with the same value is collapsed and counted in one
+warning line.
+
+A one-column file is an allowlist: each code is mapped to itself, and stderr says
+so. `--value-literal 1` stores a fixed value instead, for a site whose allowlist
+holds a flag. A one-column file whose cells hold a tab, semicolon or pipe is not
+taken as an allowlist: that is the wrong `--delim`, and it is named.
 
 ### The routing rule
 

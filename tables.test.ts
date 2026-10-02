@@ -13,7 +13,7 @@ import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { parseCsv, toTable, renderTable, renderModule, identName, tablesEntry, type TableOptions } from "./tables";
+import { parseCsv, toTable, renderTable, renderModule, identName, tablesEntry, oneColumn, type TableOptions } from "./tables";
 import { specsDeclaring, tableArg } from "./emit/lookup";
 
 const opts = (over: Partial<TableOptions> = {}): TableOptions => ({
@@ -153,8 +153,30 @@ describe("duplicate keys", () => {
   test("the same value twice is untidy, so a warning", () => {
     const r = toTable([["M", "MALE"], ["M", "MALE"]], opts({ header: false }));
     expect(r.errors).toEqual([]);
-    expect(r.warnings[0]).toContain("more than once");
+    expect(r.warnings[0]).toContain("1 repeated row(s) collapsed");
     expect(r.rows).toEqual({ M: "MALE" });
+  });
+
+  // Sixteen harmless repeats printed sixteen lines and buried the summary.
+  test("many repeats are one warning, not one per line", () => {
+    const rows = [["A", "1"], ["A", "1"], ["A", "1"], ["B", "2"], ["B", "2"]];
+    const r = toTable(rows, opts({ header: false }));
+    expect(r.warnings).toHaveLength(1);
+    expect(r.warnings[0]).toBe(`3 repeated row(s) collapsed, each the same key with the same value: "A", "B"`);
+  });
+
+  test("the list of repeated keys is capped", () => {
+    const rows = Array.from({ length: 12 }, (_, i) => [[`K${i}`, "v"], [`K${i}`, "v"]]).flat();
+    const r = toTable(rows, opts({ header: false }));
+    expect(r.warnings[0]).toStartWith("12 repeated row(s)");
+    expect(r.warnings[0]).toEndWith(", and 2 more");
+  });
+
+  // A disagreement stays one line each: every one is a decision for a person.
+  test("conflicting repeats are still refused line by line", () => {
+    const r = toTable([["A", "1"], ["A", "2"], ["B", "1"], ["B", "2"]], opts({ header: false }));
+    expect(r.errors).toHaveLength(2);
+    expect(r.warnings).toEqual([]);
   });
 
   test("two different values is two people disagreeing, so a refusal", () => {
@@ -272,5 +294,47 @@ describe("which sibling spec declares a table", () => {
 
   test("the active spec is never offered as the other file", () => {
     expect(specsDeclaring("Dept.ADT.Other", active)).toEqual([]);
+  });
+});
+
+// A single column of codes is the normal shape for a filter table.
+describe("a one-column allowlist", () => {
+  test("is recognised, header or not", () => {
+    expect(oneColumn([["Code"], ["RGH"], ["HGH"]], true)).toBe("allowlist");
+    expect(oneColumn([["RGH"], ["HGH"]], false)).toBe("allowlist");
+  });
+
+  test("a two-column file is not one", () => {
+    expect(oneColumn([["Code", "Name"], ["RGH", "GENERAL"]], true)).toBe(false);
+  });
+
+  // The wrong --delim also makes one column. Mapping "RGH\tGENERAL" to itself
+  // and reporting success is the quiet failure this guards against.
+  test("glued columns are suspect, not an allowlist", () => {
+    expect(oneColumn([["Code\tName"], ["RGH\tGENERAL"]], true)).toBe("suspect");
+    expect(oneColumn([["RGH;GENERAL"]], false)).toBe("suspect");
+  });
+
+  test("the active delimiter in a cell was quoted on purpose", () => {
+    expect(oneColumn([["MOUNT ST. MARY'S, WEST"]], false, ",")).toBe("allowlist");
+    expect(oneColumn([["MOUNT ST. MARY'S, WEST"]], false, "\t")).toBe("suspect");
+  });
+
+  test("key = value maps each code to itself", () => {
+    const r = toTable([["Code"], ["RGH"], [" HGH "]], opts({ value: 1 }));
+    expect(r.errors).toEqual([]);
+    expect(r.rows).toEqual({ RGH: "RGH", HGH: "HGH" });
+  });
+
+  test("--value-literal gives every row a fixed value and reads no value column", () => {
+    const r = toTable([["Code"], ["RGH"], ["HGH"]], opts({ value: 2, valueLiteral: "1" }));
+    expect(r.errors).toEqual([]);
+    expect(r.rows).toEqual({ RGH: "1", HGH: "1" });
+  });
+
+  test("with a literal, a repeated code is a collapse, never a conflict", () => {
+    const r = toTable([["RGH"], ["RGH"]], opts({ header: false, valueLiteral: "1" }));
+    expect(r.errors).toEqual([]);
+    expect(r.warnings[0]).toContain("1 repeated row(s) collapsed");
   });
 });

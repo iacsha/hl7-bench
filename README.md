@@ -478,9 +478,15 @@ key is invisible in every editor and in the portal, survives a copy-paste, and
 makes `Lookup` miss. It is the commonest defect in a hand-built table. `--no-trim`
 if your keys really do carry spaces.
 
-The same key twice with the same value is a warning. The same key twice with
-**different** values is a refusal: that is two people who disagree about what a
-code means, and picking one silently is how the wrong one reaches production.
+The same key twice with the same value is collapsed, and all such repeats are
+counted in one warning line. The same key twice with **different** values is a
+refusal: that is two people who disagree about what a code means, and picking
+one silently is how the wrong one reaches production.
+
+A one-column file is an allowlist: each code maps to itself, and stderr says so.
+`--value-literal 1` stores a fixed value instead. A one-column file whose cells
+hold a tab, semicolon or pipe is the wrong `--delim`, not an allowlist, and the
+tool names the delimiter it found.
 
 ### The empty-read report
 

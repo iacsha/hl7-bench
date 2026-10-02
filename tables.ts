@@ -96,8 +96,13 @@ export function parseCsv(input: string, delim = ","): string[][] {
 export interface TableOptions {
   /** 1-based column number for the key. */
   key: number;
-  /** 1-based column number for the value. */
+  /** 1-based column number for the value. Ignored when `valueLiteral` is set. */
   value: number;
+  /**
+   * Every row gets this value instead of reading a column. For an allowlist
+   * whose site stores a flag such as `1` rather than the code itself.
+   */
+  valueLiteral?: string;
   /** Drop the first row. */
   header: boolean;
   trim: boolean;
@@ -119,14 +124,19 @@ export function toTable(csv: string[][], opts: TableOptions): TableResult {
   const result: TableResult = { rows: {}, errors: [], warnings: [], trimmed: 0, read: 0 };
   const body = opts.header ? csv.slice(1) : csv;
 
+  const literal = opts.valueLiteral;
   const k = opts.key - 1;
-  const v = opts.value - 1;
+  const v = literal === undefined ? opts.value - 1 : k;
   if (k < 0 || v < 0) {
     result.errors.push("Column numbers are 1-based; --key 0 is not a column.");
     return result;
   }
 
   let blanks = 0;
+  // Same key, same value, counted rather than reported line by line: sixteen
+  // harmless repeats used to print sixteen warnings and bury the one summary
+  // line that mattered.
+  const repeats = new Map<string, number>();
 
   for (const [n, cells] of body.entries()) {
     // Line number as the person would count it in Excel, header included.
@@ -135,14 +145,14 @@ export function toTable(csv: string[][], opts: TableOptions): TableResult {
 
     if (cells.length <= Math.max(k, v)) {
       result.errors.push(
-        `line ${line}: only ${cells.length} column(s), need at least ${Math.max(opts.key, opts.value)}. ` +
+        `line ${line}: only ${cells.length} column(s), need at least ${Math.max(k, v) + 1}. ` +
           `Usually the wrong --delim, or a stray delimiter inside an unquoted cell.`,
       );
       continue;
     }
 
     const rawKey = cells[k];
-    const rawValue = cells[v];
+    const rawValue = literal ?? cells[v];
     const key = opts.trim ? rawKey.trim() : rawKey;
     const value = opts.trim ? rawValue.trim() : rawValue;
     if (key !== rawKey || value !== rawValue) result.trimmed++;
@@ -159,7 +169,7 @@ export function toTable(csv: string[][], opts: TableOptions): TableResult {
       // disagree about what a code means, and picking one silently is how the
       // wrong one ends up in production.
       if (result.rows[key] === value) {
-        result.warnings.push(`line ${line}: "${key}" appears more than once with the same value`);
+        repeats.set(key, (repeats.get(key) ?? 0) + 1);
       } else {
         result.errors.push(
           `line ${line}: "${key}" is already mapped to "${result.rows[key]}" and this row says "${value}". ` +
@@ -172,6 +182,16 @@ export function toTable(csv: string[][], opts: TableOptions): TableResult {
     result.rows[key] = value;
   }
 
+  if (repeats.size > 0) {
+    const total = [...repeats.values()].reduce((a, b) => a + b, 0);
+    const keys = [...repeats.keys()];
+    const shown = keys.slice(0, 10).map((key) => `"${key}"`).join(", ");
+    const more = keys.length > 10 ? `, and ${keys.length - 10} more` : "";
+    result.warnings.push(
+      `${total} repeated row(s) collapsed, each the same key with the same value: ${shown}${more}`,
+    );
+  }
+
   if (blanks > 0) {
     result.warnings.push(
       `${blanks} row(s) have an empty value. Lookup returns your default for a blank value ` +
@@ -180,6 +200,25 @@ export function toTable(csv: string[][], opts: TableOptions): TableResult {
   }
 
   return result;
+}
+
+/**
+ * Whether a file is a one-column allowlist, or only looks like one.
+ *
+ * A single column of codes is the normal shape for a filter table, and used to
+ * need `--key 1 --value 1` to say so. But a file read with the wrong
+ * delimiter is ALSO one column, with the real columns glued together inside
+ * each cell, and treating that as an allowlist would map `RGH\tGENERAL` to
+ * itself and report success. So a cell holding a likely delimiter is
+ * `"suspect"`, and the caller lets the ordinary column-count error, which
+ * names `--delim`, do the talking. The active delimiter is not suspect: if it
+ * survived into a cell, it was quoted there on purpose.
+ */
+export function oneColumn(csv: string[][], header: boolean, delim = ","): "allowlist" | "suspect" | false {
+  const body = header ? csv.slice(1) : csv;
+  if (body.length === 0 || body.some((cells) => cells.length !== 1)) return false;
+  const others = ["\t", ";", "|", ","].filter((d) => d !== delim);
+  return body.some((cells) => others.some((d) => cells[0].includes(d))) ? "suspect" : "allowlist";
 }
 
 // ---------------------------------------------------------------------------
@@ -270,7 +309,7 @@ if (import.meta.main) {
   // a switch, and the first bare word is the table name. Spelled out rather
   // than inferred, so `--delim tab Facilities` reads the same as
   // `Facilities --delim tab` instead of taking "tab" for the table name.
-  const TAKES_VALUE = new Set(["--delim", "--key", "--value", "--from"]);
+  const TAKES_VALUE = new Set(["--delim", "--key", "--value", "--value-literal", "--from"]);
   const values = new Map<string, string>();
   const switches = new Set<string>();
   const bare: string[] = [];
@@ -295,11 +334,13 @@ if (import.meta.main) {
         `  --delim <c|name>  column separator: a character, or tab/comma/semicolon/pipe`,
         `  --key <n>         1-based key column, default 1`,
         `  --value <n>       1-based value column, default 2`,
+        `  --value-literal <v>  every row gets this value instead of a column`,
         `  --no-header       the first row is data, not column names`,
         `  --no-trim         keep surrounding whitespace in keys and values`,
         `  --from <name>     source file name to record in --module output`,
         ``,
         `The first row is treated as a header unless you pass --no-header.`,
+        `A one-column file is an allowlist: each code is mapped to itself.`,
         ``,
       ].join("\n"),
     );
@@ -321,10 +362,48 @@ if (import.meta.main) {
   }
 
   const csv = parseCsv(input, delim);
+  const header = !has("no-header");
+  const valueLiteral = flag("value-literal");
+
+  if (valueLiteral !== undefined && flag("value") !== undefined) {
+    process.stderr.write(`--value and --value-literal both say where the value comes from. Pick one.\n`);
+    process.exit(2);
+  }
+  if (valueLiteral === "") {
+    process.stderr.write(
+      `--value-literal needs a value. An empty one makes every row behave as if it is not there.\n`,
+    );
+    process.exit(2);
+  }
+
+  // Only when nothing said where the value comes from: an explicit --value 2
+  // on a one-column file is a mistake worth the column-count error.
+  let value = Number(flag("value") ?? 2);
+  if (valueLiteral === undefined && flag("value") === undefined && flag("key") === undefined) {
+    const shape = oneColumn(csv, header, delim);
+    if (shape === "allowlist") {
+      value = 1;
+      process.stderr.write(
+        `One column: treated as an allowlist, each code mapped to itself. ` +
+          `--value-literal <v> to store a fixed value instead.\n`,
+      );
+    } else if (shape === "suspect") {
+      // Named here because the column-count error below can only say "wrong
+      // --delim", and this can say which one.
+      const names: Record<string, string> = { "\t": "tab", ";": "semicolon", "|": "pipe", ",": "comma" };
+      const cells = csv.flat().join("");
+      const found = Object.keys(names).find((d) => d !== delim && cells.includes(d))!;
+      process.stderr.write(
+        `One column, but the cells hold a ${names[found]}: probably --delim ${names[found]}.\n`,
+      );
+    }
+  }
+
   const result = toTable(csv, {
     key: Number(flag("key") ?? 1),
-    value: Number(flag("value") ?? 2),
-    header: !has("no-header"),
+    value,
+    valueLiteral,
+    header,
     trim: !has("no-trim"),
   });
 

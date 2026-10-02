@@ -126,8 +126,8 @@ table. That is a laptop-sized problem being diagnosed in a dev namespace today.
 ### Spreadsheet to import file: the rough edges
 
 Found walking a one-column facility allowlist from a CSV to an imported table on
-2026-10-02. Each one cost a round trip. Four are settled (see Settled); these
-remain.
+2026-10-02. Each one cost a round trip. The rest are settled (see Settled);
+this one remains.
 
 **`tables.ts --into-spec`.** `tables.ts` now says the spec is unchanged and
 names the file to paste into. Writing the table there itself would remove the
@@ -137,17 +137,6 @@ comments inside it; a CLI that quietly strips a hand-written spec's comments is
 worse than one more paste. Needs either a comment-preserving insert or a loud
 `.bak` and a stated warning. Must refuse to overwrite an existing table of the
 same name without `--replace`.
-
-**A one-column CSV is an allowlist.** Today it needs `--key 1 --value 1`, which
-works but nobody would guess. Treat a file whose every row has one column as
-key = value, say so on stderr, and add `--value-literal <v>` for a site that
-stores a flag such as `1` instead.
-
-**Collapse same-value duplicate warnings.** Sixteen harmless duplicates printed
-sixteen lines and buried the summary. One line instead: `16 duplicate key(s)
-with the same value collapsed: DE, DO, DQ, ...`, capped. A duplicate with a
-different value stays a refusal, one line per key, since each is a real
-disagreement.
 
 ### Promotion diff
 
@@ -328,7 +317,7 @@ a listed code and refused an unlisted one.
 
 ### Spreadsheet to import file, the settled half
 
-Four of the rough edges found on 2026-10-02, fixed together:
+The rough edges found on 2026-10-02, fixed in two commits:
 
 - **An unknown `--table` names the spec it read** and why that file
   (`specSource()` in `specpath.ts`: `.env.local`, `.env`, the shell, or the
@@ -344,6 +333,14 @@ Four of the rough edges found on 2026-10-02, fixed together:
 - **`--module` with a dotted name** exports an identifier (`identName()`) and
   wires it in under the real name: `tables: { "A.B.C": ABC }`. It used to write
   `export const "A.B.C"`, which does not parse, for every IRIS-style name.
+- **A one-column file is an allowlist** (`oneColumn()`): each code maps to
+  itself, said on stderr. `--value-literal <v>` stores a fixed value instead.
+  A one-column file whose cells hold another delimiter is `"suspect"`, not an
+  allowlist, because that is the wrong `--delim` gluing columns together, and
+  the likely delimiter is named. The active delimiter is exempt: if it survived
+  into a cell it was quoted on purpose.
+- **Same-value repeats collapse into one warning** with a count and the first
+  ten keys. A repeat with a different value is still refused, one line per key.
 
 ### Source-side group paths and DocType
 

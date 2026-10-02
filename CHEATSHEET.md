@@ -46,6 +46,8 @@ the whole design: one spec, six readers.
 | Turn this spreadsheet into a lookup table | `bun tables.ts Facilities facilities.csv` |
 | ...or drop it on the form | `+ table from CSV` in `bun gui.ts` |
 | ...as its own importable module | `bun tables.ts Facilities --module facilities.csv > tables.facilities.ts` |
+| ...one column of codes (an allowlist) | `bun tables.ts Facilities facilities.csv` -- detected, each code maps to itself |
+| ...allowlist storing a flag instead | `bun tables.ts Facilities --value-literal 1 facilities.csv` |
 | ...odd columns / tab delimited | `bun tables.ts Sex --key 2 --value 3 --delim tab codes.txt` |
 | What does the class I already wrote do to this message? | `bun engine.ts messages\real.hl7 --class My.Dtl.Class` |
 | ...it is a business process, not a DTL | `bun engine.ts messages\real.hl7 --script MyProcess.cls` |
