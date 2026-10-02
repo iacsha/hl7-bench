@@ -1085,7 +1085,11 @@ function emitRepeat(st: State, block: Block, index: number, out: string[]): void
 
   if (guards.length) {
     out.push(
-      `    <if condition='${attr(guards.join(" && "))}' >`,
+      // Each guard parenthesised. ObjectScript has no operator precedence, so
+      // `$LENGTH(x)>0 && n<3` is `(($LENGTH(x)>0)&&n)<3`, which is 1 for n=5 and
+      // for an empty x: skip and max both ignored. Measured on IRIS for Health,
+      // 2026-10-02, after the bench had honoured them for weeks.
+      `    <if condition='${attr(guards.map((g) => `(${g})`).join(" && "))}' >`,
       `      <true>`,
       ...body,
       `      </true>`,

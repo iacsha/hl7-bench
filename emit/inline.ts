@@ -632,7 +632,9 @@ function emitRepeat(st: State, block: Block, index: number, indent: string, out:
 
   out.push(`${indent}for ${k}=1:1:${cnt} {`);
   if (guards.length) {
-    out.push(`${indent}    if ${guards.join(" && ")} {`, ...body, `${indent}    }`);
+    // Parenthesised: ObjectScript reads `a>0 && n<3` as `((a>0)&&n)<3`. See the
+    // DTL emitter's <if> for the measurement.
+    out.push(`${indent}    if ${guards.map((g) => `(${g})`).join(" && ")} {`, ...body, `${indent}    }`);
   } else {
     out.push(...body);
   }
