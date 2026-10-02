@@ -313,3 +313,22 @@ describe("a half-filled process block is refused by name", () => {
     expect(problems.some((p) => /iris\.process\.sendTo is empty/.test(p))).toBe(true);
   });
 });
+
+// `bun emit.ts process` wrote the class and the GUI could not show it.
+describe("the process class has a tab", () => {
+  const js = moduleSource();
+
+  test("a tab button and a pane, named so the generic switcher pairs them", () => {
+    expect(html).toContain(`<button data-tab="process">Process class</button>`);
+    expect(html).toContain(`<div class="tabpane" id="tab-process"><pre class="mono" id="process"></pre></div>`);
+  });
+
+  test("the pane is filled from the preview, and says what to set when there is no process", () => {
+    expect(js).toContain(`$("process").textContent = res.process ||`);
+    expect(js).toContain("This spec has no iris.process");
+  });
+
+  test("the ObjectScript pane carries the filter expression", () => {
+    expect(js).toContain("FILTER EXPRESSION (over pRequest; parens and quotes checked)");
+  });
+});

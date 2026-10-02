@@ -42,25 +42,6 @@ two profilers that will disagree about what counts as populated.
 
 ## Open
 
-### The process class needs a GUI tab
-
-`bun emit.ts process` writes the class; the GUI cannot show it. A tab beside
-ObjectScript, with the same copy button, which already copies whatever tab is
-visible.
-
-Small, and worth doing before anyone builds a process from the command line
-twice.
-
-### Golden-file regression
-
-Save input and expected output pairs, re-run after any spec change, show what
-moved.
-
-The trigger: a working interface got a package rename, a class rename, and a
-config item rebuild in one sitting, and the only thing that confirmed it still
-worked was a person reading ten segments and comparing them to ten segments from
-memory.
-
 ### Spreadsheet to import file: the rough edges
 
 Found walking a one-column facility allowlist from a CSV to an imported table on
@@ -299,6 +280,30 @@ failure the entry was written for.
 Fixed on the way: the permit table was indexed directly, so a trigger of
 `constructor` read an inherited property and passed. Key presence now uses
 `hasOwn` there as well as on gate tables.
+
+### The process class has a GUI tab
+
+A **Process class** tab beside ObjectScript shows `emitProcess` output from the
+same preview as every other pane, so the copy button copies it like the rest.
+When the spec has no `iris.process` the pane says what to set instead of
+showing the CLI's throw. The ObjectScript pane now carries the filter
+expression under the routing rule condition. Checked in a real browser
+(Interceptor on a lab container, 2026-10-02): the tab renders, selects, and
+shows the class.
+
+### Golden-file regression
+
+Already there under another name. `check.ts` is the input and expected-output
+pair runner: `<name>.in.hl7` beside `<name>.want.hl7`, plus `.reject.hl7` for
+messages that must be refused, re-run with one command after any spec change,
+and a failure prints the segments that differ. `engine.ts --check` runs the
+compiled class in a real namespace against the same files, which is the check
+the original trigger needed after a package rename, a class rename and a config
+item rebuild. The entry was written before either existed and is closed rather
+than rebuilt.
+
+Not built: a field-level diff. A failing case prints whole differing segments,
+and finding the one field that moved in a long OBX is still a read.
 
 ### Spreadsheet to import file, the settled half
 

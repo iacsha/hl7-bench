@@ -55,7 +55,7 @@ import {
 } from "./spec";
 import { rewriteTransform } from "./serialize";
 import { trace, inventory } from "./trace";
-import { emitIris, routingCondition } from "./emit/iris";
+import { emitIris, filterExpression, routingCondition } from "./emit/iris";
 import { emitProcess } from "./emit/process";
 import { logAuthoring } from "./log";
 import { discardDraft, draftPath, readDraft, writeDraft } from "./draft";
@@ -196,6 +196,10 @@ function derive(spec: Spec, raw: string) {
   return {
     iris: attempt(() => emitIris(spec)),
     routing: attempt(() => routingCondition(spec)),
+    filter: attempt(() => filterExpression(spec)),
+    // Empty, not an error, when the spec has no iris.process: the pane says
+    // what to set rather than showing the throw emitProcess uses for the CLI.
+    process: spec.iris?.process ? attempt(() => emitProcess(spec)) : "",
     trace: msg ? attempt(() => trace(spec, msg!)) : "(the message did not parse)",
     inventory: msg ? attempt(() => inventory(spec, msg!)) : "",
     emptyTables: emptyTables(spec),

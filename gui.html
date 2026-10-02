@@ -231,6 +231,7 @@ input.md { width: 116px; }
       <div class="tabs" id="tabs">
         <button data-tab="output" class="on">Message out</button>
         <button data-tab="iris">ObjectScript</button>
+        <button data-tab="process">Process class</button>
         <button data-tab="mapping">Mapping</button>
         <button data-tab="inventory">Inventory</button>
         <button data-tab="source">transform.ts</button>
@@ -241,6 +242,7 @@ input.md { width: 116px; }
         <div class="out" id="output"></div>
       </div>
       <div class="tabpane" id="tab-iris"><pre class="mono" id="iris"></pre></div>
+      <div class="tabpane" id="tab-process"><pre class="mono" id="process"></pre></div>
       <div class="tabpane" id="tab-mapping"><pre class="mono" id="mapping"></pre></div>
       <div class="tabpane" id="tab-inventory"><pre class="mono" id="inventory"></pre></div>
       <div class="tabpane" id="tab-source"><pre class="mono" id="source"></pre></div>
@@ -1533,8 +1535,14 @@ function showDerived(res) {
       ? `\n\nEMPTY LOOKUP TABLES (${res.emptyTables.length}), each one a go-live gate:\n` +
         res.emptyTables.map((n) => `  - ${n}: returns the unmapped branch for EVERY message`).join("\n")
       : "";
+    const filter = res.filter ? `\n\nFILTER EXPRESSION (over pRequest; parens and quotes checked)\n  ${res.filter}` : "";
     $("iris").textContent =
-      `ROUTING RULE CONDITION\n  ${res.routing}\n\n${"-".repeat(64)}\n\n${res.iris}${empties}`;
+      `ROUTING RULE CONDITION\n  ${res.routing}${filter}\n\n${"-".repeat(64)}\n\n${res.iris}${empties}`;
+  }
+  if (res.process !== undefined) {
+    $("process").textContent = res.process ||
+      "(This spec has no iris.process. Set its class name and the config item it sends to\n" +
+      " under IRIS on the left, and the business process class appears here.)";
   }
   if (res.trace !== undefined) $("mapping").textContent = res.trace;
   if (res.inventory !== undefined) $("inventory").textContent = res.inventory || "(this spec has no sourceInventory)";
