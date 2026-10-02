@@ -15,6 +15,8 @@ import { expect, test, describe } from "bun:test";
 
 import { Message } from "./hl7";
 import {
+  fieldReport,
+  narrowCell,
   diffFields, diffSegmentCounts, accumulate, render,
   type Cell, type FieldRow, type Report,
 } from "./compare";
@@ -234,5 +236,43 @@ describe("render", () => {
     const refused = Array.from({ length: 25 }, (_, i) => ({ case: `c${i}`, why: "not permitted" }));
     const out = render(report({ pairs: 25, compared: 0, refused }));
     expect(out).toContain("... and 15 more");
+  });
+});
+
+// check.ts prints these above the raw lines, so a failing case names the field.
+describe("fieldReport", () => {
+  test("one moved component is narrowed to it", () => {
+    const cell = { path: "PID-5", occurrence: 1, got: "DOE^JANE^Q", want: "DOE^JANE^" };
+    expect(narrowCell(cell)).toEqual({ path: "PID-5.3", occurrence: 1, got: "Q", want: "" });
+  });
+
+  test("two moved components stay the whole field", () => {
+    const cell = { path: "PID-5", occurrence: 1, got: "DOE^JANE", want: "ROE^JAN" };
+    expect(narrowCell(cell).path).toBe("PID-5");
+  });
+
+  test("a repeating field stays whole, so no repetition is hidden", () => {
+    const cell = { path: "PID-3", occurrence: 1, got: "1^^^A~2^^^B", want: "1^^^A~2^^^C" };
+    expect(narrowCell(cell).path).toBe("PID-3");
+  });
+
+  test("a plain field is untouched", () => {
+    const cell = { path: "EVN-2", occurrence: 1, got: "1", want: "2" };
+    expect(narrowCell(cell)).toEqual(cell);
+  });
+
+  test("a line per moved field, with the occurrence only where the segment repeats", () => {
+    const got = msg("PID|1||MRN||DOE^JANE^Q", "OBX|1|ST|A||x", "OBX|2|ST|B||y");
+    const want = msg("PID|1||MRN||DOE^JANE^R", "OBX|1|ST|A||x", "OBX|2|ST|B||z");
+    expect(fieldReport(got, want)).toEqual([
+      `PID-5.3        got "Q"  want "R"`,
+      `OBX-5 (2)      got "y"  want "z"`,
+    ]);
+  });
+
+  test("a missing occurrence is a count line, not a ghost field", () => {
+    const got = msg("OBX|1|ST|A||x");
+    const want = msg("OBX|1|ST|A||x", "OBX|2|ST|B||y");
+    expect(fieldReport(got, want)).toEqual([`OBX            1 in got, 2 in want`]);
   });
 });

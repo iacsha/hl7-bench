@@ -68,7 +68,10 @@
 process.env.HL7_BENCH_NOTES = "off";
 
 import { Message } from "./hl7";
-import { transform } from "./transform";
+// specfile, not ./transform: the spec HL7_BENCH_TRANSFORM names, as every other
+// tool runs. Importing transform.ts directly compared the demo spec against a
+// real corpus whatever the environment said.
+import { transform } from "./specfile";
 import { logEvent } from "./log";
 import { readdirSync, readFileSync, existsSync } from "node:fs";
 import { join } from "node:path";
@@ -125,6 +128,54 @@ export function diffFields(got: Message, want: Message, ignore: Set<string> = ne
     }
   }
   return cells;
+}
+
+/**
+ * One difference, narrowed to the component when only one component moved.
+ *
+ * `PID-5 got "DOE^JANE^Q" want "DOE^JANE^"` makes the reader find the third
+ * component by eye; `PID-5.3 got "Q" want "(empty)"` does not. More than one
+ * component changed, or a repeating field, stays whole: picking one would hide
+ * the others.
+ */
+export function narrowCell(c: Cell, d: { comp: string; rep: string } = { comp: "^", rep: "~" }): Cell {
+  if (c.got.includes(d.rep) || c.want.includes(d.rep)) return c;
+  const g = c.got.split(d.comp);
+  const w = c.want.split(d.comp);
+  if (g.length === 1 && w.length === 1) return c;
+  const moved: number[] = [];
+  for (let i = 0; i < Math.max(g.length, w.length); i++) if ((g[i] ?? "") !== (w[i] ?? "")) moved.push(i);
+  if (moved.length !== 1) return c;
+  const k = moved[0];
+  return { ...c, path: `${c.path}.${k + 1}`, got: g[k] ?? "", want: w[k] ?? "" };
+}
+
+/**
+ * The per-message field report `check.ts` prints above the raw lines: one line
+ * per moved field, then segments present a different number of times.
+ *
+ * Whole differing segments were all a failing case used to show, and finding
+ * the one field that moved in a long OBX was a read. The lines are kept below
+ * it, because a shifted segment order shows best as lines.
+ */
+export function fieldReport(got: Message, want: Message): string[] {
+  const out: string[] = [];
+  const counts = new Map(want.segments.map((s) => [s.id, want.all(s.id).length]));
+  for (const c of diffFields(got, want)) {
+    const n = narrowCell(c, want.delims);
+    const occ = (counts.get(c.path.split("-")[0]) ?? 1) > 1 ? ` (${c.occurrence})` : "";
+    out.push(`${(n.path + occ).padEnd(14)} got ${quoted(n.got)}  want ${quoted(n.want)}`);
+  }
+  for (const d of diffSegmentCounts(got, want)) {
+    out.push(`${d.id.padEnd(14)} ${d.got} in got, ${d.want} in want`);
+  }
+  return out;
+}
+
+function quoted(v: string): string {
+  if (v === "") return "(empty)";
+  const s = v.replace(/\r|\n/g, " ");
+  return JSON.stringify(s.length > 60 ? `${s.slice(0, 57)}...` : s);
 }
 
 export interface CountDiff {

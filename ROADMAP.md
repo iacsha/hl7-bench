@@ -302,8 +302,13 @@ the original trigger needed after a package rename, a class rename and a config
 item rebuild. The entry was written before either existed and is closed rather
 than rebuilt.
 
-Not built: a field-level diff. A failing case prints whole differing segments,
-and finding the one field that moved in a long OBX is still a read.
+**Field-level detail, added 2026-10-02.** A failing case now prints the moved
+fields above the differing lines, one per field (`fieldReport()` in
+`compare.ts`, the same diff core the corpus compare uses), narrowed to the
+component when only one moved: `PID-5.3 got "Q" want "R"`. A repeating field,
+or one with several components moved, stays whole so nothing is hidden. A
+segment present a different number of times is a count line, not a run of
+ghost fields. The raw lines stay below, for a segment out of order.
 
 ### Spreadsheet to import file, the settled half
 

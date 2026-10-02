@@ -42,6 +42,7 @@ process.env.HL7_BENCH_NOTES = "off";
 
 import { Message } from "./hl7";
 import { transform } from "./specfile";
+import { fieldReport } from "./compare";
 import { logEvent } from "./log";
 import { readdirSync, readFileSync, existsSync } from "node:fs";
 import { join } from "node:path";
@@ -143,7 +144,16 @@ function run(c: Case): boolean {
     { case: c.name, kind: "golden", segments: got.length, differing: bad.length, result: "fail" },
     bad,
   );
-  console.log(`FAIL  ${c.name}  ${bad.length} differing line(s):\n${bad.join("\n")}`);
+  // Fields first: which field moved is the question. The lines stay below for
+  // what a field list cannot show, a segment out of order.
+  let fields: string[] = [];
+  try {
+    fields = fieldReport(msg, new Message(readFileSync(join(DIR, c.want), "utf8")));
+  } catch {
+    fields = [];
+  }
+  const head = fields.length > 0 ? `\n    fields:\n${fields.map((l) => `      ${l}`).join("\n")}\n    lines:` : "";
+  console.log(`FAIL  ${c.name}  ${bad.length} differing line(s):${head}\n${bad.join("\n")}`);
   return false;
 }
 
