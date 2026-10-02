@@ -34,6 +34,13 @@ export interface Ctx {
   repeatOver?: string;
   /** The current source occurrence, when inside a repeat. */
   current?: Segment;
+  /**
+   * A bundle's companions for the current occurrence, by segment id: the IN2
+   * that travels with THIS IN1. A listed id with no entry is a companion this
+   * occurrence does not carry, and reads as empty rather than falling through to
+   * the message, which would hand coverage 2 the IN2 of coverage 1.
+   */
+  companions?: { ids: string[]; found: Map<string, Segment> };
   /** 1-based OUTPUT ordinal. Not the source repeat index; see below. */
   ordinal: number;
   /**
@@ -87,6 +94,9 @@ export function readPath(ctx: Ctx, path: string): string {
   if (ctx.current && ctx.repeatOver && segmentOf(path) === ctx.repeatOver) {
     return ctx.current.get(path);
   }
+  if (ctx.companions?.ids.includes(segmentOf(path))) {
+    return ctx.companions.found.get(segmentOf(path))?.get(path) ?? "";
+  }
   return ctx.msg.get(path);
 }
 
@@ -100,7 +110,25 @@ export function readPath(ctx: Ctx, path: string): string {
  */
 export function segFor(ctx: Ctx, path: string): Segment | undefined {
   if (ctx.current && ctx.repeatOver && segmentOf(path) === ctx.repeatOver) return ctx.current;
+  if (ctx.companions?.ids.includes(segmentOf(path))) return ctx.companions.found.get(segmentOf(path));
   return ctx.msg.seg(segmentOf(path));
+}
+
+/**
+ * The companions that follow one occurrence in the source: each bundle id's
+ * first segment after it, up to the next segment that is neither the repeat's
+ * own nor a bundle member. That run is what the schema calls one group
+ * occurrence, IN1grp(k), read off a flat message.
+ */
+export function companionsOf(msg: Message, current: Segment, ids: string[]): Map<string, Segment> {
+  const found = new Map<string, Segment>();
+  const at = msg.segments.indexOf(current);
+  for (let i = at + 1; i < msg.segments.length; i++) {
+    const s = msg.segments[i];
+    if (!ids.includes(s.id)) break;
+    if (!found.has(s.id)) found.set(s.id, s);
+  }
+  return found;
 }
 
 /** Field number out of a path: 7 from "PV1-7". */
@@ -421,8 +449,8 @@ function occurrences(msg: Message, block: Block): Segment[] {
   return stages(msg, block.repeat!).delivered;
 }
 
-function fill(ctx: Ctx, block: Block, out: Segment, result: RunResult): void {
-  for (const row of block.rows) {
+function fill(ctx: Ctx, rows: Row[], out: Segment, result: RunResult): void {
+  for (const row of rows) {
     const { value, todo, note } = resolve(ctx, row);
     const label = row.label ?? row.target;
 
@@ -608,9 +636,11 @@ export function walk(
       continue;
     }
     let ordinal = start;
+    const ids = block.bundle ?? [];
     for (const current of occurrences(msg, block)) {
       ordinal++;
-      visit(block, { msg, event, tables, ordinal, repeatOver: block.repeat.over, current, written });
+      const companions = ids.length ? { ids, found: companionsOf(msg, current, ids) } : undefined;
+      visit(block, { msg, event, tables, ordinal, repeatOver: block.repeat.over, current, companions, written });
     }
     delivered.set(block.id, ordinal);
   }
@@ -685,13 +715,14 @@ export function runSpec(spec: Spec, msg: Message): RunResult {
       );
     }
     const seg = startSegment(ctx, block);
-    fill(ctx, block, seg, result);
+    const own = block.rows.filter((r) => segmentOf(r.target) === block.id);
+    fill(ctx, own, seg, result);
     // Per message: every source-reading row came out empty, so what is left
     // is a set id or a constant. The spec-level check cannot see this, since
     // the block does map source fields; this sender just did not fill them.
     if (block.id !== "MSH" && !block.wholeSegment) {
-      const sourced = block.rows.filter((r) => !DATALESS.has(r.from.kind));
-      const filled = block.rows.filter((r) => seg.get(r.target) !== "");
+      const sourced = own.filter((r) => !DATALESS.has(r.from.kind));
+      const filled = own.filter((r) => seg.get(r.target) !== "");
       if (sourced.length > 0 && filled.length > 0 && filled.every((r) => DATALESS.has(r.from.kind))) {
         result.notes.push(
           `${block.id}: delivered as "${shown(seg.toString(), msg.delims.field)}", nothing from the source in it ` +
@@ -701,6 +732,15 @@ export function runSpec(spec: Spec, msg: Message): RunResult {
       }
     }
     out.push(seg);
+    // Each companion right behind its own occurrence, and only when the
+    // sender's bundle carried one. The engines write it under the same group
+    // occurrence, so the order matches what IRIS delivers.
+    for (const id of ctx.companions?.ids ?? []) {
+      if (!ctx.companions!.found.has(id)) continue;
+      const comp = blankSegment(id, ctx.msg.delims);
+      fill(ctx, block.rows.filter((r) => segmentOf(r.target) === id), comp, result);
+      out.push(comp);
+    }
   });
 
   // What a repeat left behind. Both of these are silent by construction: the

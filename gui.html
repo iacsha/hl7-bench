@@ -1078,6 +1078,13 @@ function renderSpec() {
         title: "TARGET segment id. Block order IS the delivered segment order." }),
       text(block, "group", { w: "md", optional: true, ph: "IRIS group, e.g. INSURANCEgrp",
         title: "Where the TARGET schema keeps this segment. Wrong or missing, the DTL writes nowhere and says nothing. Read it off the schema browser, do not guess." }),
+      text(block, "bundle", { w: "sm", ph: "bundle: IN2",
+        title: "Segments that travel with each occurrence of this repeat in the same group, comma separated: IN2 on an IN1 block. Rows may then target them, and each is delivered only when that occurrence carries one.",
+        get: (b) => (b.bundle ?? []).join(", "),
+        set: (b, v) => {
+          const list = v.split(",").map((s) => s.trim().toUpperCase()).filter((s) => s !== "");
+          if (list.length) b.bundle = list; else delete b.bundle;
+        } }),
       btn("up", "move this segment earlier", () => {
         if (bi === 0) return;
         spec.blocks.splice(bi - 1, 0, spec.blocks.splice(bi, 1)[0]);

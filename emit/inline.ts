@@ -46,11 +46,11 @@
 import {
   INLINE, comment, dtlPath, lookupExpr, dtlSegment, highestScanStatement, irisComments, irisLog,
   lookupMissStatement, newState, noteBare, os, pathString, pickNotes, sourceCode,
-  srcGroups, stepCode,
+  srcGroups, stepCode, stripOccurrence,
   type BareRefs, type Dialect, type Scope, type State,
 } from "./iris";
 import { DEFAULT_STYLE, styledWrite, type Style } from "../style";
-import { seedGuarded, type Spec, type Block, type Row, type CommentLevel, type Source } from "../spec";
+import { seedGuarded, segmentOf, type Spec, type Block, type Row, type CommentLevel, type Source } from "../spec";
 
 /**
  * HOUSE STYLE: the same mapping, written the way an IRIS team writes a
@@ -628,7 +628,30 @@ function emitRepeat(st: State, block: Block, index: number, indent: string, out:
   } else {
     body.push(`${bodyIndent}set ${n} = ${n} + 1`);
     emitSeed(st, block, scope, bodyIndent, body);
-    for (const row of block.rows) emitRow(st, row, scope, bodyIndent, body);
+    const ids = block.bundle ?? [];
+    if (ids.length === 0) {
+      for (const row of block.rows) emitRow(st, row, scope, bodyIndent, body);
+    } else {
+      // The DTL emitter's bundle, spelled for a process: companions read from
+      // this group occurrence, written only when it carries one.
+      const grpOf = stripOccurrence(scope.sourcePrefix);
+      st.bundleGroups = Object.fromEntries([r.over, ...ids].map((id) => [id, grpOf]));
+      try {
+        for (const row of block.rows.filter((x) => segmentOf(x.target) === block.id)) {
+          emitRow(st, row, scope, bodyIndent, body);
+        }
+        for (const id of ids) {
+          const rows = block.rows.filter((x) => segmentOf(x.target) === id);
+          if (rows.length === 0) continue;
+          const has = `$LENGTH(${D().value(`source.${dtlSegment(id, scope.sourcePrefix, srcGroups(st))}`)})>0`;
+          body.push(`${bodyIndent}if ${has} {`);
+          for (const row of rows) emitRow(st, row, scope, `${bodyIndent}    `, body);
+          body.push(`${bodyIndent}}`);
+        }
+      } finally {
+        st.bundleGroups = undefined;
+      }
+    }
   }
 
   out.push(`${indent}for ${k}=1:1:${cnt} {`);

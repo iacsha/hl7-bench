@@ -301,7 +301,7 @@ prevent, so it is a compile-time failure rather than a production one.
 | Sources | `copy`, `literal`, `firstOf`, `lookup`, `counter`, `event`, `pickRepeat`, `fromFirst`, `todo` |
 | Steps | `date8`, `truncate`, `upper`, `stripDelims`, `stripChars`, `defaultTo` |
 | Unmapped branches | `blank()`, `passthrough()`, `constant(v)`, `{ error: true }` |
-| Block controls | `group`, `repeat.over`, `repeat.skipWhenEmpty`, `repeat.skipValues`, `repeat.max` |
+| Block controls | `group`, `repeat.over`, `repeat.skipWhenEmpty`, `repeat.skipValues`, `repeat.max`, `bundle` |
 
 ### Things it says out loud
 

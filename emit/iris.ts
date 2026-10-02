@@ -249,7 +249,7 @@ export function dtlSegment(
 }
 
 /** "ORCgrp(1).OBXgrp(k1)" becomes "ORCgrp(1).OBXgrp". */
-function stripOccurrence(prefix: string): string {
+export function stripOccurrence(prefix: string): string {
   return prefix.replace(/\([^)]*\)$/, "");
 }
 
@@ -521,7 +521,7 @@ const TOP: Scope = { sourcePrefix: "", targetPrefix: "" };
  * transform that resolves nothing on one side and says nothing about it.
  */
 export function srcGroups(st: State): Record<string, string> {
-  return st.spec.iris.sourceGroups ?? {};
+  return { ...(st.spec.iris.sourceGroups ?? {}), ...(st.bundleGroups ?? {}) };
 }
 
 /** Emitter state that has to be unique across the whole class. */
@@ -534,6 +534,12 @@ export interface State {
    * segments and groups kept apart. See `noteBare` for why anyone cares.
    */
   bare: BareRefs;
+  /**
+   * Set while a bundled block is emitted: the repeat's segment and its
+   * companions, all placed in the loop's source group, so `IN2-3` inside an
+   * IN1 loop reads THIS group occurrence's IN2 and nothing else.
+   */
+  bundleGroups?: Record<string, string>;
 }
 
 /** A fresh state, with the one collector nobody should have to remember. */
@@ -1081,7 +1087,36 @@ function emitRepeat(st: State, block: Block, index: number, out: string[]): void
       `${bodyIndent}</code>`,
     );
     emitSeed(st, block, scope, bodyIndent, body);
-    for (const row of block.rows) emitRow(st, row, scope, bodyIndent, body);
+    const ids = block.bundle ?? [];
+    if (ids.length === 0) {
+      for (const row of block.rows) emitRow(st, row, scope, bodyIndent, body);
+    } else {
+      const grpOf = stripOccurrence(scope.sourcePrefix);
+      st.bundleGroups = Object.fromEntries([r.over, ...ids].map((id) => [id, grpOf]));
+      try {
+        for (const row of block.rows.filter((x) => segmentOf(x.target) === block.id)) {
+          emitRow(st, row, scope, bodyIndent, body);
+        }
+        // A companion only when this group occurrence carries one, which is
+        // what the bench delivers. Assigning into an absent IN2 would create it.
+        for (const id of ids) {
+          const rows = block.rows.filter((x) => segmentOf(x.target) === id);
+          if (rows.length === 0) continue;
+          const has = `$LENGTH(source.${dtlSegment(id, scope.sourcePrefix, srcGroups(st))})>0`;
+          const inner: string[] = [];
+          for (const row of rows) emitRow(st, row, scope, `${bodyIndent}    `, inner);
+          body.push(
+            `${bodyIndent}<if condition='${attr(has)}' >`,
+            `${bodyIndent}  <true>`,
+            ...inner,
+            `${bodyIndent}  </true>`,
+            `${bodyIndent}</if>`,
+          );
+        }
+      } finally {
+        st.bundleGroups = undefined;
+      }
+    }
   }
 
   if (guards.length) {

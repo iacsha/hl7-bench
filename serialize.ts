@@ -298,6 +298,9 @@ export function specToSource(spec: Spec): string {
     out.push("    {");
     out.push(`      id: ${q(block.id)},`);
     if (block.group) out.push(`      group: ${q(block.group)},`);
+    // Without this a GUI save turns a bundled block's IN2 rows into validate()
+    // failures, and the second coverage's IN2 is unreachable again.
+    if (block.bundle?.length) out.push(`      bundle: [${block.bundle.map(q).join(", ")}],`);
     if (block.continuesNumbering) out.push(`      continuesNumbering: true,`);
     // Written back or a GUI save silently un-seeds the block: the form round
     // trip would drop the flag, the emitted class would stop copying the

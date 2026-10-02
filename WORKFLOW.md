@@ -505,6 +505,29 @@ The match is exact and case-sensitive on the whole field, the comparison
 ObjectScript and JavaScript both make, so every engine skips the same
 occurrences. List each spelling the sender uses.
 
+### More than one coverage: IN1 with its IN2
+
+IN1 and IN2 are one group in the schema, so they repeat together. List the
+companion on the IN1 block and its rows can sit there too:
+
+```ts
+{
+  id: "IN1", group: "IN1grp", bundle: ["IN2"],
+  repeat: { over: "IN1", skipWhenEmpty: "IN1-2" },
+  rows: [
+    { target: "IN1-1", from: counter() },
+    { target: "IN1-2", from: copy("IN1-2") },
+    { target: "IN2-6", from: copy("IN2-6") },
+  ],
+},
+```
+
+Inside the loop `IN2-6` means THIS coverage's IN2. Each IN2 is delivered right
+behind its own IN1 and only when that coverage carried one; a coverage the
+skip drops takes its IN2 with it. The group name comes off your schema map
+(`IN1grp` in IRIS's 2.3 and 2.5 ADT_A01). DTL and inline processes emit it;
+patch, build and BridgeLink refuse a bundle by name for now.
+
 Path syntax is in `METHOD.md` and is the same shape as the DTL:
 
 ```

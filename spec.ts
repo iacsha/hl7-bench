@@ -400,6 +400,22 @@ export interface Block {
    */
   continuesNumbering?: boolean;
   /**
+   * Segments that travel WITH each occurrence of this repeat, inside the same
+   * schema group: `["IN2"]` on an IN1 block. Rows may then target IN2 as well
+   * as IN1, and an IN2 path read inside the loop means THIS coverage's IN2.
+   *
+   * IN1 and IN2 are one bundle in the schema. Splitting them across two blocks
+   * hands the receiver IN2s that belong to no coverage, and before this the
+   * second coverage's IN2 was unreachable: a separate block read the first IN2
+   * in the message for every coverage.
+   *
+   * A companion is delivered only when the sender's bundle carries one, the
+   * same rule as a seed that finds nothing. Needs `repeat` over this block's own
+   * segment and a target `group`, since a companion outside its group is a
+   * segment belonging to nothing.
+   */
+  bundle?: string[];
+  /**
    * IRIS group name when the target segment sits inside one, e.g.
    * "INSURANCEgrp". Ignored by the JavaScript runner, which has no groups, and
    * load-bearing in the DTL, where `target.{IN1(1):2}` resolves to nothing but
@@ -1091,6 +1107,12 @@ export type Engine = "iris" | "bridgelink";
  */
 function engineProblems(spec: Spec, engine: Engine): string[] {
   if (engine !== "bridgelink") return [];
+  if (bundledBlocks(spec).length > 0) {
+    return [
+      `BridgeLink does not emit a bundle yet (${bundledBlocks(spec).join(", ")}). ` +
+        `The step would drop every companion segment, so it is refused instead.`,
+    ];
+  }
   const bl = spec.bridgelink;
   if (bl === undefined) {
     return [
@@ -1326,6 +1348,15 @@ export function validate(spec: Spec, engine?: Engine): string[] {
     }
 
     if (transform === "patch") problems.push(...patchProblems(spec));
+
+    // Built in the DTL and inline forms first, where the group loop already
+    // scopes a companion. The others refuse by name rather than drop IN2.
+    if ((transform === "patch" || transform === "build") && bundledBlocks(spec).length > 0) {
+      problems.push(
+        `iris.process.transform "${transform}" does not emit a bundle yet (${bundledBlocks(spec).join(", ")}). ` +
+          `Use "inline" or "dtl".`,
+      );
+    }
 
     // A copy starts from the request, which is exactly what "patch" is for.
     if (transform === "build" && spec.iris.create === "copy") {
@@ -1618,6 +1649,8 @@ export function validate(spec: Spec, engine?: Engine): string[] {
       }
     }
 
+    if (block.bundle !== undefined) problems.push(...bundleProblems(block));
+
     for (const row of block.rows) {
       let targetSeg: string;
       try {
@@ -1626,8 +1659,11 @@ export function validate(spec: Spec, engine?: Engine): string[] {
         problems.push(String((e as Error).message));
         continue;
       }
-      if (targetSeg !== block.id) {
-        problems.push(`${row.target} is in the ${block.id} block but targets ${targetSeg}`);
+      if (targetSeg !== block.id && !(block.bundle ?? []).includes(targetSeg)) {
+        problems.push(
+          `${row.target} is in the ${block.id} block but targets ${targetSeg}` +
+            (block.repeat ? `. If ${targetSeg} travels with each ${block.id}, list it in bundle.` : ""),
+        );
       }
 
       for (const p of sourcePathsOf(row.from)) {
@@ -1778,6 +1814,39 @@ export function emptyTables(spec: Spec): string[] {
  * difference would be silent -- the class compiles and sends something
  * plausible. "inline" can say all of these; the message says so.
  */
+/** Why a block's `bundle` cannot be run as written, or nothing. */
+function bundleProblems(block: Block): string[] {
+  const out: string[] = [];
+  const b = block.bundle ?? [];
+  const at = `${block.id}: bundle`;
+  if (!Array.isArray(b) || b.length === 0) return [`${at} is empty. Remove it, or list the segments that travel with each ${block.id}.`];
+  if (!block.repeat || block.repeat.over !== block.id) {
+    out.push(`${at} needs repeat over ${block.id}: a companion travels with each occurrence, so there has to be one.`);
+  }
+  if (!block.group) {
+    out.push(
+      `${at} needs the target group (e.g. group: "INSURANCEgrp"). A companion written outside its group ` +
+        `is a segment that belongs to no ${block.id}.`,
+    );
+  }
+  // Fold merges occurrences, and which merged occurrence's companion travels
+  // is a question with no right answer.
+  if (block.repeat?.fold) out.push(`${at} with repeat.fold: a folded occurrence has no single companion to carry.`);
+  if (block.wholeSegment) {
+    out.push(`${at} with wholeSegment is not built yet. Enumerate the ${block.id} fields, or drop the bundle.`);
+  }
+  for (const id of b) {
+    if (!/^[A-Z][A-Z0-9]{2}$/.test(id)) out.push(`${at} entry "${id}" is not a segment id.`);
+    else if (id === block.id) out.push(`${at} lists ${id}, the block's own segment.`);
+  }
+  return out;
+}
+
+/** Any block carrying a bundle, for engines that do not emit one yet. */
+export function bundledBlocks(spec: Spec): string[] {
+  return spec.blocks.filter((b) => (b.bundle ?? []).length > 0).map((b) => b.id);
+}
+
 export function patchProblems(spec: Spec): string[] {
   const problems: string[] = [];
   const use = `Use iris.process.transform "inline", which builds the message and can say it.`;

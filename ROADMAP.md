@@ -57,16 +57,6 @@ worse than one more paste. Needs either a comment-preserving insert or a loud
 `.bak` and a stated warning. Must refuse to overwrite an existing table of the
 same name without `--replace`.
 
-### More than one occurrence of a grouped bundle
-
-`validate()` requires every row target in a block to match the block id, so IN1
-and IN2 rows cannot share one repeating block. That makes the second insurance
-coverage unreachable: the emitter can do occurrence 1 and nothing further.
-
-IN1 and IN2 are one bundle in the schema. Splitting them across group
-occurrences would hand the receiver an IN2 belonging to no coverage, so the
-block has to carry both or neither.
-
 ---
 
 ## Settled
@@ -333,6 +323,26 @@ demo DTL sent all five NK1 against the bench's three. Every guard is now
 parenthesised and `guards.test.ts` pins it; patch and build processes use their
 own loops and were not affected. The bench could never have caught this, since
 it evaluates in JavaScript. Only running the compiled class did.
+
+### More than one occurrence of a grouped bundle
+
+`bundle: ["IN2"]` on a repeat block lets its rows target the companion segment
+as well as the block's own. On the bench each occurrence carries the companions
+that follow it up to the next segment outside the bundle, which is the schema
+group read off a flat message, and a companion path read inside the loop means
+this occurrence's, empty when it has none rather than the first in the message.
+A companion is delivered right behind its occurrence and only when the sender's
+bundle carried one, the seed rule again. The DTL and inline forms read and write
+it inside the group occurrence (`IN1grp(k1).IN2` to `IN1grp(n1).IN2`) behind a
+presence check, since assigning into an absent IN2 would create it.
+
+Proven in IRIS for Health 2026.1 against the bench on four coverages (with IN2,
+without, skipped, with): DTL and inline process both delivered the bench's
+output line for line, and the 2.5 ADT_A01 group name was read off the schema map
+(`IN1grp`), not assumed.
+
+Not built: a bundle on a `wholeSegment` block, and the patch, build and
+BridgeLink forms. Each refuses by name rather than dropping IN2.
 
 ### Spreadsheet to import file, the settled half
 
