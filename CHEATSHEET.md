@@ -42,6 +42,7 @@ the whole design: one spec, six readers.
 | Edit and run my existing class in the page | `bun gui.ts --script MyProcess.cls messages\yours.hl7` |
 | Give me the DTL | `bun emit.ts -o My.cls` |
 | Give me the business process | `bun emit.ts process -o MyProcess.cls` |
+| What has to happen in QA and PROD? | `bun emit.ts promote -o Promote.md` |
 | Give me the lookup tables as loadable data | `bun emit.ts tables -o Tables.xml` |
 | ...just one table | `bun emit.ts tables --table Facilities` |
 | Turn this spreadsheet into a lookup table | `bun tables.ts Facilities facilities.csv` |

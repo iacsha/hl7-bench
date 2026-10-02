@@ -118,7 +118,10 @@ export const spec: Spec = {
         { target: "MSH-9.1", from: literal("ADT") },
         { target: "MSH-9.2", from: event(), label: "Trigger Event" },
         { target: "MSH-10", from: copy("MSH-10"), label: "Control ID", required: true },
-        { target: "MSH-11", from: copy("MSH-11"), via: [defaultTo("P")] },
+        // Copied, never defaulted: the class is promoted unchanged, so a fallback
+        // here would be the same processing id in DEV and PROD. Required, so an
+        // empty one is logged instead of filled.
+        { target: "MSH-11", from: copy("MSH-11"), label: "Processing ID", required: true },
         { target: "MSH-12", from: literal("2.5") },
       ],
     },

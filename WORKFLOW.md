@@ -960,6 +960,30 @@ never delivered rather than delivered wrong. Note the parentheses: `||` binds
 looser than `&&`, and unparenthesised, that condition would deliver every ADT
 message regardless of trigger.
 
+### Promoting to QA and PROD
+
+```powershell
+bun emit.ts promote -o Promote.md
+```
+
+The same class goes to every namespace unchanged. What has to be repeated per
+namespace is everything that does not travel with it: which classes to compile
+(the DTL only when something calls it), the lookup tables, a custom schema
+category, the routing rule or filter expression, the gate table order, the host
+restart. The checklist is generated from the spec, so it cannot forget a table.
+
+**MSH-11.** A promoted class is byte-identical in every namespace, so a
+constant processing id is the same constant in DEV and PROD. Copy it from the
+source, never default it, and mark the row required so an empty one is logged:
+
+```ts
+{ target: "MSH-11", from: copy("MSH-11"), required: true },
+```
+
+`bun emit.ts` prints a PROCESSING ID warning on every run when a spec writes a
+literal, a `defaultTo` fallback or a stamp there, or copies it without
+`required`.
+
 ### Gating on a lookup table
 
 An interface that runs for some facilities and not others says so with a

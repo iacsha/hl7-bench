@@ -57,16 +57,6 @@ worse than one more paste. Needs either a comment-preserving insert or a loud
 `.bak` and a stated warning. Must refuse to overwrite an existing table of the
 same name without `--replace`.
 
-### Promotion diff
-
-From the spec, emit what differs between environments: the processing id in
-MSH-11, class names, config item names, and which lookup tables have to be
-imported.
-
-The same interface gets promoted through dev, QA and production, and every one
-of those is a hand-repeated edit today. A list generated from the spec is a list
-that cannot forget the table.
-
 ### Vendor mapping document
 
 Export the inventory as something a receiving vendor can read.
@@ -309,6 +299,27 @@ component when only one moved: `PID-5.3 got "Q" want "R"`. A repeating field,
 or one with several components moved, stays whole so nothing is hidden. A
 segment present a different number of times is a count line, not a run of
 ghost fields. The raw lines stay below, for a segment out of order.
+
+### Promotion checklist, not a promotion diff
+
+The entry asked for what differs between environments, assuming class names and
+config items change from DEV to QA to PROD. They do not: the same class is
+promoted unchanged. What differs is what does not travel with a class. So
+`bun emit.ts promote` writes a per-namespace Markdown checklist from the spec:
+classes to compile (the DTL only when a process calls it or no process
+exists), the fingerprint to compare, lookup tables with empties called out,
+schema categories to import or confirm, the routing rule and filter expression
+(with the site wrapper from the style file), gate-table order, the restart,
+and a send-one-of-each check.
+
+**MSH-11 is the one value that must differ, and it is not configured.** A
+byte-identical class writes the same constant everywhere, so a processing id
+literal, `defaultTo` fallback or stamp sends production-flagged messages from
+a test system; a shipped interface fell back to `"P"` in every namespace. The
+rule chosen (2026-10-02): copy from the source, never default, mark the row
+required so an empty one is logged. `processingId()` classifies a spec against
+it, the checklist carries the verdict, and `bun emit.ts` warns on every run.
+The demo spec had the fallback itself and was fixed.
 
 ### Spreadsheet to import file, the settled half
 

@@ -39,6 +39,7 @@ import { emitProcess } from "./emit/process";
 import { emitBridgelink, filterCondition } from "./emit/bridgelink";
 import { buildLookup, specsDeclaring, tableArg } from "./emit/lookup";
 import { emitSchema } from "./emit/schema";
+import { emitPromote, processingId } from "./emit/promote";
 import { fingerprint } from "./fingerprint";
 import { emptyTables, gateTables, validate, type Engine } from "./spec";
 import { loadStyle } from "./style";
@@ -57,7 +58,7 @@ import { logEvent } from "./log";
  * are on the roadmap and not built, so `bridgelink:channel` fails loudly here.
  */
 const ENGINE_ARTIFACTS = {
-  iris: { fallback: "dtl", artifacts: ["dtl", "process", "tables", "schema"] },
+  iris: { fallback: "dtl", artifacts: ["dtl", "process", "tables", "schema", "promote"] },
   bridgelink: { fallback: "transformer", artifacts: ["transformer"] },
 } as const satisfies Record<Engine, { fallback: string; artifacts: readonly string[] }>;
 
@@ -66,6 +67,7 @@ const ARTIFACT_HELP: Record<string, string> = {
   process: "the business process template",
   tables: "lookup tables as an import document",
   schema: "the custom HL7 schema category this spec depends on",
+  promote: "the per-namespace promotion checklist, as Markdown",
   transformer: "the JavaScript transformer step, paste-ready",
 };
 
@@ -228,6 +230,13 @@ if (artifact === "schema") {
   process.exit(0);
 }
 
+if (artifact === "promote") {
+  logEvent("emit", { spec: spec.name, engine, artifact, fingerprint: stamp, result: "ok" });
+  deliver(emitPromote(spec, stamp, loadStyle().filterWrap));
+  if (!outFile) process.stderr.write(`\n(-o Promote.md to keep it beside the class)\n`);
+  process.exit(0);
+}
+
 if (artifact === "tables") {
   let built;
   try {
@@ -386,6 +395,13 @@ if (engine === "bridgelink") {
         `       keeps the old one until restarted.\n`,
     );
   }
+
+  // A promoted class is identical in every namespace, so a constant MSH-11 is
+  // the same constant in DEV and PROD. Said on every run, not only in the
+  // checklist, because the checklist is read at promotion and this is decided
+  // at build.
+  const pid = processingId(spec);
+  if (pid.hazard) process.stderr.write(`\nPROCESSING ID (MSH-11): ${pid.how}\n  ${pid.hazard}\n`);
 }
 
 if (empties.length > 0) {

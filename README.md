@@ -270,6 +270,7 @@ That one object drives everything else:
 | `bun emit.ts` | the IRIS DTL class, ObjectScript and all |
 | `bun emit.ts process` | a business process template that calls it |
 | `bun emit.ts tables` | the lookup table rows as an IRIS import file |
+| `bun emit.ts promote` | the per-namespace promotion checklist, as Markdown |
 
 Change a row and all of them change together, or none of them do. There is no
 second copy to keep in step.
