@@ -79,6 +79,11 @@ textarea, .out, .mono {
   white-space: pre; overflow: auto; tab-size: 2;
 }
 .out .segid { color: var(--seg); font-weight: 600; }
+.cbtn { font-family: var(--mono); }
+.cbtn.on { color: var(--accent); font-weight: 600; }
+.cmtpanel { display: none; margin: 2px 0 6px; }
+.cmtbox textarea.cmt { width: 100%; box-sizing: border-box; flex: none; border: 1px solid var(--border);
+  border-radius: 4px; padding: 6px 8px; color: var(--muted); white-space: pre-wrap; resize: vertical; min-height: 2.8em; }
 .picker { display: none; flex: 0 0 auto; max-height: 50%; overflow: auto;
   border-bottom: 1px solid var(--border); background: var(--panel); padding: 8px 12px; }
 .picker.on { display: block; }
@@ -525,6 +530,74 @@ const btn = (label, title, fn) =>
   el("button", { class: "tiny", type: "button", title, text: label, onclick: fn });
 
 // ---------------------------------------------------------------------------
+// Comments from transform.ts
+// ---------------------------------------------------------------------------
+//
+// The `//` comments written inside the spec literal, read on load and written
+// back on save (speccomments.ts). A row's or block's comment rides on it as
+// "//", so it follows a move or a renamed target; a section's sits on
+// spec["//"] under its path. `above` is the lines over the item, `after` a
+// comment at the end of its line.
+
+/** Which comment boxes are open, kept across redraws by holder object. */
+const openComments = new WeakMap();
+const isOpen = (holder, key) => openComments.get(holder)?.has(key) ?? false;
+function setOpen(holder, key, on) {
+  const s = openComments.get(holder) ?? new Set();
+  if (on) s.add(key); else s.delete(key);
+  openComments.set(holder, s);
+}
+
+/** The comment's text box(es), for holder[key]. */
+function commentFields(holder, key) {
+  const c = holder[key] ?? {};
+  const write = (field, value) => {
+    const next = { ...(holder[key] ?? {}) };
+    if (value.trim() === "") delete next[field]; else next[field] = value;
+    if (!next.above && !next.after) delete holder[key]; else holder[key] = next;
+    markEdited(); schedulePreview();
+  };
+  const area = el("textarea", { class: "cmt", spellcheck: "false", rows: String(Math.max(2, (c.above ?? "").split("\n").length)),
+    placeholder: "Comment written above this line in transform.ts" });
+  // textContent, not value: it sets the default, which a page capture carries
+  // and .value alone does not.
+  area.textContent = c.above ?? "";
+  area.addEventListener("input", () => write("above", area.value));
+  const kids = [area];
+  if (c.after !== undefined) {
+    const after = el("input", { class: "grow", placeholder: "end-of-line comment", title: "Written at the end of this item's line." });
+    after.value = c.after;
+    after.addEventListener("input", () => write("after", after.value));
+    kids.push(el("div", { class: "row" }, [el("span", { class: "tag", text: "end of line //" }), after]));
+  }
+  return el("div", { class: "cmtbox" }, kids);
+}
+
+/**
+ * A `//` button and the panel it opens. The button reads `//•` when there is a
+ * comment, so a comment is visible without opening every row. The caller puts
+ * the panel where it fits: under a row, at the top of a block.
+ */
+function commentToggle(holder, key = "//") {
+  const has = () => !!(holder[key]?.above || holder[key]?.after);
+  const panel = el("div", { class: "cmtpanel" });
+  const button = el("button", { class: `tiny cbtn${has() ? " on" : ""}`, type: "button",
+    title: "Comment kept in transform.ts above this item", text: has() ? "//•" : "//" });
+  const show = (on) => {
+    panel.replaceChildren(...(on ? [commentFields(holder, key)] : []));
+    panel.style.display = on ? "block" : "none";
+  };
+  button.addEventListener("click", () => {
+    const on = !isOpen(holder, key);
+    setOpen(holder, key, on);
+    show(on);
+    if (!on) { button.textContent = has() ? "//•" : "//"; button.classList.toggle("on", has()); }
+  });
+  show(isOpen(holder, key));
+  return { button, panel };
+}
+
+// ---------------------------------------------------------------------------
 // Source and step editors
 // ---------------------------------------------------------------------------
 
@@ -839,9 +912,45 @@ function renderSpec() {
   }
 
   host.appendChild(el("div", { class: "warn" }, [
-    el("div", { text: "Saving from here regenerates the spec literal in transform.ts. Comments written inside that literal are lost. Everything above and below it is kept byte for byte, and the first save of a session leaves a transform.ts.bak beside it." }),
-    el("div", { style: "margin-top:5px", text: "Put the reasoning in a note, a description, or an out-of-scope entry instead. Those print in the mapping document and land in the generated DTL as comments, where the next engineer actually reads them." }),
+    el("div", { text: "Saving from here regenerates the spec literal in transform.ts. Comments inside it are kept: each // button opens the one above that row or segment, and Comments below lists the ones on sections. /** */ blocks come back as // lines. Everything above and below the literal is kept byte for byte, and the first save of a session leaves a transform.ts.bak beside it." }),
+    el("div", { style: "margin-top:5px", text: "A comment is read only by whoever opens transform.ts. Reasoning the receiving team or the IRIS engineer needs belongs in a note, a description or an out-of-scope entry, which print in the mapping document and land in the generated class." }),
   ]));
+
+  // ---- section comments -------------------------------------------------
+  // Comments above a section or a table rather than a row or segment, by path.
+  // An entry here whose path no longer exists is written at the top of the
+  // literal on save, labelled with where it was, rather than dropped.
+  const roots = spec["//"] ?? {};
+  const cmts = el("fieldset", {}, [
+    el("legend", { text: `Comments (${Object.keys(roots).length})` }),
+    el("div", { class: "note", text: "Comments in transform.ts above a section, a key or a table. Row and segment comments are on their // buttons." }),
+  ]);
+  for (const path of Object.keys(roots)) {
+    cmts.appendChild(el("div", { class: "row" }, [
+      el("span", { class: "tag", text: path }),
+      btn("x", "delete this comment", () => {
+        delete roots[path];
+        if (Object.keys(roots).length === 0) delete spec["//"];
+        markEdited(); redraw(); schedulePreview();
+      }),
+    ]));
+    cmts.appendChild(commentFields(roots, path));
+  }
+  const newPath = el("input", { class: "md", placeholder: "gate, iris.sourceGroups, tables.Sex", list: "cmtpaths" });
+  const suggest = el("datalist", { id: "cmtpaths" },
+    [...Object.keys(spec).filter((k) => k !== "//"), "gate.permit", "iris.sourceGroups", "iris.process",
+      ...Object.keys(spec.tables ?? {}).map((t) => `tables.${t}`)].map((v) => el("option", { value: v })));
+  cmts.appendChild(el("div", { class: "row" }, [
+    newPath, suggest,
+    btn("+ comment", "add a comment above this section", () => {
+      const p = newPath.value.trim();
+      if (!p) return;
+      spec["//"] = spec["//"] ?? {};
+      spec["//"][p] = spec["//"][p] ?? { above: "" };
+      markEdited(); redraw();
+    }),
+  ]));
+  host.appendChild(cmts);
 
   // ---- interface -------------------------------------------------------
   host.appendChild(el("fieldset", {}, [
@@ -1073,9 +1182,11 @@ function renderSpec() {
   ]);
 
   spec.blocks.forEach((block, bi) => {
+    const blockCmt = commentToggle(block);
     const head = el("div", { class: "bh" }, [
       text(block, "id", { w: "sm", ph: "PID",
         title: "TARGET segment id. Block order IS the delivered segment order." }),
+      blockCmt.button,
       text(block, "group", { w: "md", optional: true, ph: "IRIS group, e.g. INSURANCEgrp",
         title: "Where the TARGET schema keeps this segment. Wrong or missing, the DTL writes nowhere and says nothing. Read it off the schema browser, do not guess." }),
       text(block, "bundle", { w: "sm", ph: "bundle: IN2",
@@ -1101,6 +1212,7 @@ function renderSpec() {
     ]);
 
     const bodyEl = el("div", { class: "bb" });
+    bodyEl.appendChild(blockCmt.panel);
     bodyEl.appendChild(el("label", { class: "f" }, [
       el("span", { text: "note" }),
       text(block, "note", { w: "grow", optional: true, ph: "why this segment looks the way it does",
@@ -1149,6 +1261,7 @@ function renderSpec() {
     bodyEl.appendChild(repeatRow);
 
     block.rows.forEach((row, ri) => {
+      const rowCmt = commentToggle(row);
       bodyEl.appendChild(el("div", { class: "fieldrow" }, [
         // "target" and the source path are two boxes on one line, and nothing
         // on screen said which was which. Reversing them reads a path that is
@@ -1170,6 +1283,7 @@ function renderSpec() {
           w: "grow", optional: true, ph: "note, printed in the trace and in the DTL",
           title: "Why this row exists. Carried into the mapping document and into the generated class, so the reasoning travels with the code.",
         }),
+        rowCmt.button,
         btn("up", "move this field earlier", () => {
           if (ri === 0) return;
           block.rows.splice(ri - 1, 0, block.rows.splice(ri, 1)[0]);
@@ -1184,6 +1298,7 @@ function renderSpec() {
           block.rows.splice(ri, 1); markEdited(); redraw(); schedulePreview();
         }),
       ]));
+      bodyEl.appendChild(rowCmt.panel);
     });
 
     bodyEl.appendChild(btn("+ field", "add a target field to this segment", () => {

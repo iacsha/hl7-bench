@@ -415,12 +415,17 @@ Three things to know about that write:
 - **Only the spec literal and the `"./spec"` import are regenerated.** Every
   byte above and below is copied through untouched: your doc comment, your
   `transform()` shim, any helper you added.
-- **Comments inside the spec literal do not survive.** Nothing else does either
-  in a data-driven design, and it points the right way: a `//` comment in the
-  spec literal is a copy of your reasoning that only a reader of that one file
-  sees. The same sentence in a `note`, `description` or `outOfScope` prints in
-  the mapping document AND lands in the emitted DTL as a comment the next
-  engineer reads in IRIS. Put it where all three consumers can reach it.
+- **Comments inside the spec literal survive.** The GUI reads them on load and
+  pins each to what it sits above: a row, a segment, or a section such as
+  `gate` or `tables.Sex`. A `//` button on each row and segment opens its
+  comment, a Comments panel lists the section ones, and a save puts every
+  comment back in place. A row's comment moves with the row. `/** */` blocks
+  come back as `//` lines, and a comment whose row was deleted is kept at the
+  top of the literal, labelled with where it was.
+- **A comment is still read only by whoever opens transform.ts.** Reasoning
+  the receiving team or the IRIS engineer needs goes in a `note`,
+  `description` or `outOfScope`, which print in the mapping document and land
+  in the emitted class.
 - **The first write of a session leaves a `transform.ts.bak`** beside the file.
   It is gitignored.
 

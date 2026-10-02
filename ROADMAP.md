@@ -50,11 +50,11 @@ this one remains.
 
 **`tables.ts --into-spec`.** `tables.ts` now says the spec is unchanged and
 names the file to paste into. Writing the table there itself would remove the
-step entirely, through `serialize.ts`, the path a GUI save takes. Not done in
-the same commit because that path rewrites the spec literal wholesale and drops
-comments inside it; a CLI that quietly strips a hand-written spec's comments is
-worse than one more paste. Needs either a comment-preserving insert or a loud
-`.bak` and a stated warning. Must refuse to overwrite an existing table of the
+step entirely, through `serialize.ts`, the path a GUI save takes. Held back at
+first because that path dropped every comment inside the spec literal. It no
+longer does (see "Comments survive a GUI save" under Settled), so the blocker
+is gone and this is ordinary work: extract the comments, add the table,
+`rewriteTransform`. Must refuse to overwrite an existing table of the
 same name without `--replace`.
 
 ---
@@ -343,6 +343,27 @@ output line for line, and the 2.5 ADT_A01 group name was read off the schema map
 
 Not built: a bundle on a `wholeSegment` block, and the patch, build and
 BridgeLink forms. Each refuses by name rather than dropping IN2.
+
+### Comments survive a GUI save
+
+A GUI save regenerates the spec literal from the value, and a value has no
+comments, so every save deleted the reasoning written next to rows. Now
+`speccomments.ts` reads them on load and pins each to what it sits above or
+ends: a property path (`gate`, `iris.sourceGroups`, `tables.DocStatus`) or an
+element named by its `id` or `target` (`blocks[NK1].rows[NK1-2]`, `#2` for a
+repeated id), never by position. Row and block comments ride on the object, so
+a renamed target or a reordered row keeps its comment; section comments sit on
+`spec["//"]`. The save prints the clean literal and the same scanner finds each
+anchor in it. A record with a commented key prints one key per line, so each
+end-of-line comment has a line. An orphan goes to the top, labelled.
+
+Measured on eleven real site specs and the demo: every comment back, the same
+fingerprint, and a second save byte-identical to the first. In the page, a `//`
+toggle per row and segment and a Comments panel, checked in a real browser and
+end to end: a comment edited in the page landed above its row in the saved file.
+
+Found on the way: the serializer printed no `bridgelink` key, so every GUI save
+since the BridgeLink port deleted the channel name and log level. Fixed.
 
 ### Spreadsheet to import file, the settled half
 

@@ -35,9 +35,9 @@
  * Every run writes `transform.ts` before it runs, so what PipeHat picks up is
  * what you just looked at, with no export step. The first write of a session
  * leaves `transform.ts.bak` beside it, because the rewrite replaces the spec
- * literal wholesale and comments inside that literal do not survive it. See the
- * header of `serialize.ts` for why that is the right trade and where the
- * reasoning should live instead.
+ * literal wholesale. Comments inside it are carried across the rewrite by
+ * speccomments.ts: attached on /state, stripped before anything runs the spec,
+ * put back by `rewriteTransform`.
  *
  * Bound to 127.0.0.1 deliberately. That is not decoration: binding 0.0.0.0 is
  * what triggers the Windows Firewall prompt you cannot approve without admin,
@@ -53,7 +53,8 @@ import {
   SOURCE_KINDS, STEP_KINDS, SELECT_KINDS, FOLD_KINDS, KEY_SOURCE_KINDS,
   emptyTables, validate, type Spec,
 } from "./spec";
-import { rewriteTransform } from "./serialize";
+import { endOfObject, rewriteTransform } from "./serialize";
+import { attachComments, extractComments, specLiteral, stripComments } from "./speccomments";
 import { trace, inventory } from "./trace";
 import { emitIris, filterExpression, routingCondition } from "./emit/iris";
 import { emitProcess } from "./emit/process";
@@ -251,6 +252,11 @@ const server = Bun.serve({
       let specError: string | null = null;
       try {
         spec = await loadSpec();
+        // The comments written inside the literal, pinned to what they sit
+        // above, so the page can show them and a save can put them back.
+        const src = read(TRANSFORM);
+        const at = specLiteral(src, endOfObject);
+        if (at) spec = attachComments(structuredClone(spec), extractComments(src.slice(at.open, at.close + 1)));
       } catch (e) {
         specError = e instanceof Error ? (e.stack ?? e.message) : String(e);
       }
@@ -332,14 +338,17 @@ const server = Bun.serve({
     if (url.pathname === "/preview" && req.method === "POST") {
       const b = await body<{ spec?: Spec; message?: string }>(req);
       if (!b?.spec) return json({ error: "No spec in the request." }, 400);
-      const problems = validate(b.spec);
+      // The page sends comments on the spec (speccomments.ts). Everything that
+      // runs it gets the clean copy; only the printer gets the comments.
+      const clean = stripComments(b.spec);
+      const problems = validate(clean);
       let source = "";
       try {
         source = rewriteTransform(read(TRANSFORM), b.spec);
       } catch (e) {
         source = `(could not splice into transform.ts: ${e instanceof Error ? e.message : String(e)})`;
       }
-      return json({ problems, source, ...derive(b.spec, b.message ?? "") });
+      return json({ problems, source, ...derive(clean, b.message ?? "") });
     }
 
     /**
@@ -355,8 +364,9 @@ const server = Bun.serve({
       const message = b.message ?? "";
       if (message.trim() === "") return json({ error: "No message to transform." }, 400);
 
-      const problems = validate(b.spec);
-      const derived = derive(b.spec, message);
+      const clean = stripComments(b.spec);
+      const problems = validate(clean);
+      const derived = derive(clean, message);
 
       // The shape currently on disk, read before anything overwrites it, so
       // the log can say what this save actually changed rather than only what

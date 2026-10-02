@@ -13,13 +13,11 @@
  * your transform, the `transform()` shim at the bottom, any helper you wrote:
  * all untouched.
  *
- * Comments INSIDE the spec literal do not survive. That is not laziness, it is
- * the honest consequence of the value being the source of truth, and it points
- * the right way: a `//` comment in the spec literal is a fourth copy of your
- * reasoning that only a reader of this one file will ever see. The same
- * sentence in a `note`, `description` or `outOfScope` field prints in the
- * mapping document AND lands in the emitted DTL as a comment the next engineer
- * reads in IRIS. Put it where all three consumers can reach it.
+ * Comments INSIDE the spec literal are not part of the value, so this printer
+ * never sees them. `rewriteTransform` carries them: the GUI sends them on the
+ * value (speccomments.ts), they come off before printing and go back into the
+ * printed text by anchor. `specToSource` alone, called by anything else, prints
+ * a literal with no comments in it, exactly as before.
  *
  * The one import statement from "./spec" IS rewritten, because the set of
  * constructors a spec needs changes as you edit it, and a stale import list
@@ -27,6 +25,7 @@
  */
 
 import type { Fold, Row, Select, Source, Spec, Step, Unmapped } from "./spec";
+import { collectComments, reinsertComments, stripComments } from "./speccomments";
 import {
   SOURCE_KINDS, UNMAPPED_KINDS, STEP_KINDS, SELECT_KINDS, FOLD_KINDS,
 } from "./spec";
@@ -165,11 +164,14 @@ function row(r: Row): string {
   return `{ ${parts.join(", ")} }`;
 }
 
-function record(rows: Record<string, string>, indent: string): string {
+function record(rows: Record<string, string>, indent: string, expand = false): string {
   const keys = Object.keys(rows);
   if (keys.length === 0) return "{}";
   const inline = `{ ${keys.map((k) => `${key(k)}: ${q(rows[k])}`).join(", ")} }`;
-  if (inline.length + indent.length <= 96) return inline;
+  // One key per line when any key carries a comment: a line holds one
+  // end-of-line comment, and three trailing notes on a one-line permit table
+  // would leave two with nowhere to go.
+  if (!expand && inline.length + indent.length <= 96) return inline;
   return [
     "{",
     ...keys.map((k) => `${indent}  ${key(k)}: ${q(rows[k])},`),
@@ -182,14 +184,14 @@ function record(rows: Record<string, string>, indent: string): string {
 // ---------------------------------------------------------------------------
 
 /** Print `export const spec: Spec = { ... };` for this spec. */
-export function specToSource(spec: Spec): string {
+export function specToSource(spec: Spec, expand: Set<string> = new Set()): string {
   const out: string[] = ["export const spec: Spec = {"];
   out.push(`  name: ${q(spec.name)},`);
   if (spec.description) out.push(`  description: ${q(spec.description)},`);
 
   out.push("", "  gate: {");
   out.push(`    path: ${q(spec.gate.path)},`);
-  out.push(`    permit: ${record(spec.gate.permit, "    ")},`);
+  out.push(`    permit: ${record(spec.gate.permit, "    ", expand.has("gate.permit"))},`);
   if (spec.gate.require?.length) {
     out.push("    require: [");
     for (const r of spec.gate.require) {
@@ -204,6 +206,17 @@ export function specToSource(spec: Spec): string {
     out.push("    ],");
   }
   out.push("  },");
+
+  // BridgeLink target facts. Missing from this printer when the second engine
+  // arrived, so every GUI save deleted the channel name without a word.
+  if (spec.bridgelink) {
+    const bl = spec.bridgelink;
+    out.push("", "  bridgelink: {");
+    out.push(`    channelName: ${q(bl.channelName)},`);
+    if (bl.log) out.push(`    log: ${q(bl.log)},`);
+    if (bl.note) out.push(`    note: ${q(bl.note)},`);
+    out.push("  },");
+  }
 
   out.push("", "  iris: {");
   if (spec.iris.className) out.push(`    className: ${q(spec.iris.className)},`);
@@ -288,7 +301,7 @@ export function specToSource(spec: Spec): string {
   if (tables.length) {
     out.push("", "  tables: {");
     for (const name of tables) {
-      out.push(`    ${key(name)}: ${record(spec.tables![name], "    ")},`);
+      out.push(`    ${key(name)}: ${record(spec.tables![name], "    ", expand.has(`tables.${name}`))},`);
     }
     out.push("  },");
   }
@@ -463,5 +476,11 @@ export function rewriteTransform(file: string, spec: Spec): string {
   if (!SPEC_IMPORT.test(head)) {
     throw new Error('Could not find an import from "./spec" to update.');
   }
-  return head.replace(SPEC_IMPORT, importLine(spec)) + specToSource(spec) + tail;
+  // Comments ride on the value the GUI sends (see speccomments.ts). They come
+  // off before printing and go back into the printed text by anchor, so a
+  // save keeps them and nothing that prints or imports ever sees one.
+  const comments = collectComments(spec);
+  const clean = stripComments(spec);
+  const expand = new Set(Object.keys(comments).map((p) => p.slice(0, Math.max(0, p.lastIndexOf(".")))));
+  return head.replace(SPEC_IMPORT, importLine(clean)) + reinsertComments(specToSource(clean, expand), comments) + tail;
 }
