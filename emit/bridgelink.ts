@@ -679,9 +679,13 @@ export function filterCondition(spec: Spec): string {
   const events = Object.keys(spec.gate.permit)
     .map((t) => `${e4x(spec.gate.path)} === ${js(t)}`)
     .join(" || ");
-  const required = (spec.gate.require ?? []).map(
-    (r) => `${e4x(r.path)} === ${js(r.equals)}`,
-  );
+  // A filter script has no lookup tables and none of the step's helpers, so a
+  // membership gate carries its keys inline. Key presence, as Exists tests it.
+  const required = (spec.gate.require ?? []).map((r) => {
+    if (r.inTable === undefined) return `${e4x(r.path)} === ${js(r.equals)}`;
+    const keys = Object.keys(spec.tables?.[r.inTable] ?? {}).map((k) => `${js(k)}: 1`).join(", ");
+    return `({${keys}}).hasOwnProperty(${e4x(r.path)})`;
+  });
   // Parenthesised because || binds looser than && and a filter that reads
   // A && B || C lets C through on its own.
   return required.length === 0

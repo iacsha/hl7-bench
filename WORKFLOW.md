@@ -959,6 +959,58 @@ never delivered rather than delivered wrong. Note the parentheses: `||` binds
 looser than `&&`, and unparenthesised, that condition would deliver every ADT
 message regardless of trigger.
 
+### Gating on a lookup table
+
+An interface that runs for some facilities and not others says so with a
+membership requirement instead of an equality:
+
+```ts
+gate: {
+  path: "MSH-9.2",
+  permit: { A01: "A28", A08: "A31" },
+  require: [{ path: "MSH-6.1", inTable: "Dept.ADT.Facility" }],
+},
+tables: { "Dept.ADT.Facility": { RGH: "RGH", HGH: "HGH" } },
+```
+
+The bench refuses a message whose `MSH-6.1` is not a key in the table, and the
+refusal names the table. IRIS gets `Exists("Dept.ADT.Facility",HL7.{MSH:6.1})`
+in the rule and `##class(Ens.Util.FunctionSet).Exists(...)` in the process.
+Membership is the KEY, not the value, so a blank value still admits its code and
+there is no default-on-a-miss argument to get backwards. An undeclared table is
+refused by `bun check.ts`, and an empty one is on the go-live list, because
+either one refuses every message.
+
+### The filter expression, for a router that stores it as a string
+
+Some routers keep their filter as text in a table row and evaluate it per
+message. Nothing compiles that text, so a missing `)` passes the `UPDATE` and
+fails on the host. `emit.ts` prints the same gate as one ObjectScript boolean
+over `pRequest`, with its parens and quotes checked:
+
+```
+(##class(Ens.Util.FunctionSet).Exists("Dept.ADT.Facility",pRequest.GetValueAt("MSH:6.1"))) && ((pRequest.GetValueAt("MSH:9.2")="A01") || (pRequest.GetValueAt("MSH:9.2")="A08"))
+```
+
+Every comparison carries its own parentheses. ObjectScript has no operator
+precedence: `a=b && c=d` is `((a=b)&&c)=d`.
+
+If your site stores the expression inside a wrapper, put the wrapper in your
+style file, with `{expr}` where the expression goes:
+
+```json
+{ "extends": "lean", "filterWrap": "eval = {expr}" }
+```
+
+When the gate reads a table, the deploy order is printed with it: import the
+table, change the filter, restart the host. Out of order, each step fails
+without an error. A router that caches its filters keeps the old one until it
+is restarted.
+
+The paths are symbolic (`MSH:6.1`), which resolve only if the message has a
+DocType by the time it is filtered. If yours does not, use the numeric form
+(`1:6.1` for MSH) by hand.
+
 ### What the class logs once it is running
 
 The generated class carries its own run-time logging, set in the spec so it

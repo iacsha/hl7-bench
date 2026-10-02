@@ -28,7 +28,7 @@ import {
   assertRunnable, // shared with the runner, so both reject the same specs
 } from "../run";
 import {
-  emptyTables, segmentOf, seedGuarded,
+  emptyTables, gateTables, segmentOf, seedGuarded,
   type Spec, type Source, type Step, type Row, type Block, type CommentLevel, type Unmapped,
 } from "../spec";
 import { fingerprint } from "../fingerprint";
@@ -1114,8 +1114,10 @@ export function routingCondition(spec: Spec): string {
   const field = spec.gate.path.replace("-", ":");
   const events = triggers.map((t) => `HL7.{${field}}="${t}"`).join(" || ");
 
-  const required = (spec.gate.require ?? []).map(
-    (r) => `HL7.{${r.path.replace("-", ":")}}="${r.equals}"`,
+  const required = (spec.gate.require ?? []).map((r) =>
+    r.inTable !== undefined
+      ? `Exists(${os(r.inTable)},HL7.{${r.path.replace("-", ":")}})`
+      : `HL7.{${r.path.replace("-", ":")}}="${r.equals}"`,
   );
   if (required.length === 0) return events;
   // Parenthesised because || binds looser than && and a rule that reads
@@ -1123,10 +1125,73 @@ export function routingCondition(spec: Spec): string {
   return [...required, `(${events})`].join(" && ");
 }
 
+/**
+ * The gate as one ObjectScript boolean over `pRequest`.
+ *
+ * For an engine that keeps its filter as a string and evaluates it at run time
+ * -- a routing process reading its conditions from a table row, say -- rather
+ * than in a rule class that compiles. A string like that has no compiler in
+ * front of it: one missing `)` passes the UPDATE that stores it and fails on
+ * the host, per message, after deploy. That happened. So the expression is
+ * built here, from the same gate the bench runs, and `checkExpression` reads
+ * it back before anyone sees it.
+ *
+ * Membership is `##class(Ens.Util.FunctionSet).Exists`, not `Lookup(...)'=""`:
+ * see `GateRequire`. Paths are the symbolic `MSH:9.2` form, which resolves
+ * only when the message carries a DocType by the time it is filtered.
+ */
+export function filterExpression(spec: Spec): string {
+  const read = (path: string) => `pRequest.GetValueAt(${os(path.replace("-", ":"))})`;
+  const events = Object.keys(spec.gate.permit)
+    .map((t) => `(${read(spec.gate.path)}=${os(t)})`)
+    .join(" || ");
+  const required = (spec.gate.require ?? []).map((r) =>
+    r.inTable !== undefined
+      ? `(##class(Ens.Util.FunctionSet).Exists(${os(r.inTable)},${read(r.path)}))`
+      : `(${read(r.path)}=${os(r.equals)})`,
+  );
+  // Every comparison is parenthesised, which the rule above does not need:
+  // ObjectScript has no operator precedence and reads strictly left to right,
+  // so `a=b && c=d` is `((a=b)&&c)=d`. The trigger arms are grouped as well
+  // when there is more than one, so an || cannot swallow the && before it.
+  const group = Object.keys(spec.gate.permit).length > 1 ? `(${events})` : events;
+  const expr = required.length === 0 ? events : [...required, group].join(" && ");
+  checkExpression(expr);
+  return expr;
+}
+
+/**
+ * Throw unless every ObjectScript string literal closes and every paren
+ * outside one balances. A doubled `""` inside a string is a quote, not an end.
+ * Run on generated text, which should never fail it -- the point is that if an
+ * emitter change ever breaks that, it breaks here, on the laptop.
+ */
+export function checkExpression(expr: string): void {
+  let depth = 0;
+  let inString = false;
+  for (let i = 0; i < expr.length; i++) {
+    const c = expr[i];
+    if (inString) {
+      if (c === '"') {
+        if (expr[i + 1] === '"') { i++; continue; }
+        inString = false;
+      }
+      continue;
+    }
+    if (c === '"') { inString = true; continue; }
+    if (c === "(") depth++;
+    if (c === ")" && --depth < 0) throw new Error(`unbalanced ")" at character ${i + 1}: ${expr}`);
+  }
+  if (inString) throw new Error(`a string literal never closes: ${expr}`);
+  if (depth !== 0) throw new Error(`${depth} "(" never closed: ${expr}`);
+}
+
 /** The whole class, ready to paste into Studio or save as a .cls. */
-/** Every table name a `lookup()` row actually reads, in first-seen order. */
+/** Every table name the class calls: the gate's, then `lookup()` rows'. */
 function referencedTables(spec: Spec): string[] {
-  const seen: string[] = [];
+  // A gate table decides delivery, so an empty one belongs on the go-live list
+  // at least as much as a translation table does: it refuses every message.
+  const seen: string[] = [...gateTables(spec)];
   for (const block of spec.blocks) {
     for (const row of block.rows) {
       if (row.from.kind === "lookup" && !seen.includes(row.from.table)) seen.push(row.from.table);

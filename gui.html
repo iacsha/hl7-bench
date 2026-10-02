@@ -859,15 +859,20 @@ function renderSpec() {
   gate.appendChild(el("div", { class: "tag", style: "margin:8px 0 3px", text: "require: also true, or the message is refused" }));
   spec.gate.require = spec.gate.require ?? [];
   spec.gate.require.forEach((r, i) => {
+    const inTable = r.inTable !== undefined;
     gate.appendChild(el("div", { class: "row" }, [
-      text(r, "path", { w: "sm", ph: "MSH-9.1" }),
-      el("span", { class: "tag", text: "equals" }),
-      text(r, "equals", { w: "sm", ph: "ADT" }),
+      text(r, "path", { w: "sm", ph: inTable ? "MSH-6.1" : "MSH-9.1" }),
+      el("span", { class: "tag", text: inTable ? "is a key in table" : "equals" }),
+      inTable ? text(r, "inTable", { w: "md", ph: "Dept.ADT.Facility" }) : text(r, "equals", { w: "sm", ph: "ADT" }),
       btn("x", "remove", () => { spec.gate.require.splice(i, 1); markEdited(); redraw(); schedulePreview(); }),
     ]));
   });
   gate.appendChild(btn("+ requirement", "add an equality every accepted message must satisfy", () => {
     spec.gate.require.push({ path: "", equals: "" });
+    markEdited(); redraw(); schedulePreview();
+  }));
+  gate.appendChild(btn("+ table requirement", "the field must be a key in one of the spec's lookup tables", () => {
+    spec.gate.require.push({ path: "", inTable: "" });
     markEdited(); redraw(); schedulePreview();
   }));
   host.appendChild(gate);

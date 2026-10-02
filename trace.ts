@@ -19,7 +19,7 @@
  */
 
 import { Message } from "./hl7";
-import { describeSource, emptyTables, sourcePathsOf, type Spec } from "./spec";
+import { describeRequire, describeSource, emptyTables, sourcePathsOf, type Spec } from "./spec";
 import { assertRunnable, gate, resolve, seedSource, walk, type Ctx } from "./run";
 import { sheetName, toCsv, toXlsx, type Sheet } from "./sheet";
 import { readdirSync } from "node:fs";
@@ -71,7 +71,7 @@ export function trace(spec: Spec, msg: Message, opts: TraceOptions = {}): string
     `GATE:  ${spec.gate.path} "${trigger}" delivers as ${event}`,
   ];
   for (const req of spec.gate.require ?? []) {
-    out.push(`GATE:  ${req.path} must be "${req.equals}", or the message is refused`);
+    out.push(`GATE:  ${describeRequire(req)}, or the message is refused`);
   }
   if (spec.description) out.push(`NOTE:  ${spec.description}`);
   out.push("");
@@ -242,7 +242,7 @@ export function grid(spec: Spec, msg: Message, opts: TraceOptions = {}): Sheet[]
     ["Gate", `${spec.gate.path} "${trigger}" delivers as ${event}`],
   ];
   for (const req of spec.gate.require ?? []) {
-    about.push(["Gate requires", `${req.path} must be "${req.equals}", or the message is refused`]);
+    about.push(["Gate requires", `${describeRequire(req)}, or the message is refused`]);
   }
   if (spec.description) about.push(["Description", spec.description]);
   if (missing.length > 0) about.push(["Missing required", missing.join(", ")]);
@@ -388,7 +388,7 @@ export function combinedGrid(spec: Spec, inputs: Named[], opts: TraceOptions = {
     about.push(["Gate", `${spec.gate.path} "${trigger}" delivers as ${event}`]);
   }
   for (const req of spec.gate.require ?? []) {
-    about.push(["Gate requires", `${req.path} must be "${req.equals}", or the message is refused`]);
+    about.push(["Gate requires", `${describeRequire(req)}, or the message is refused`]);
   }
   if (spec.description) about.push(["Description", spec.description]);
   taken.forEach((t, i) => about.push(["Message", `${t.name}: ${t.label}, sheet "${tabs[i]}"`]));

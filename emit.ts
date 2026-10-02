@@ -34,13 +34,14 @@
 import { writeFileSync } from "node:fs";
 import { spec, specPath } from "./specfile";
 import { specSource } from "./specpath";
-import { emitIris, newBareRefs, routingCondition } from "./emit/iris";
+import { emitIris, filterExpression, newBareRefs, routingCondition } from "./emit/iris";
 import { emitProcess } from "./emit/process";
 import { emitBridgelink, filterCondition } from "./emit/bridgelink";
 import { buildLookup, specsDeclaring, tableArg } from "./emit/lookup";
 import { emitSchema } from "./emit/schema";
 import { fingerprint } from "./fingerprint";
-import { emptyTables, validate, type Engine } from "./spec";
+import { emptyTables, gateTables, validate, type Engine } from "./spec";
+import { loadStyle } from "./style";
 import { logEvent } from "./log";
 
 // ---------------------------------------------------------------------------
@@ -361,6 +362,28 @@ if (engine === "bridgelink") {
     process.stderr.write(
       `  The process class filters on this too. Two copies of one gate: keep the\n` +
         `  rule's if a routing engine is in front, keep the class's if it is not.\n`,
+    );
+  }
+
+  // The same gate for a router that stores its filter as a string and
+  // evaluates it per message. Nothing compiles that string, so it is built
+  // here and checked here: a missing ")" in a hand-typed one passed the UPDATE
+  // and failed only on the host.
+  const expr = filterExpression(spec);
+  const wrap = loadStyle().filterWrap;
+  process.stderr.write(
+    `\nFILTER EXPRESSION (over pRequest; parens and quotes checked)\n  ${expr}\n` +
+      (wrap ? `  As this site stores it:\n  ${wrap.replace("{expr}", () => expr)}\n` : ""),
+  );
+  const tablesForGate = gateTables(spec);
+  if (tablesForGate.length > 0) {
+    process.stderr.write(
+      `  Deploy in this order. Each step out of order fails without an error:\n` +
+        `    1. Import ${tablesForGate.join(", ")} into the namespace (bun emit.ts tables).\n` +
+        `       A gate table that is not there refuses every message.\n` +
+        `    2. Change the filter or rule.\n` +
+        `    3. Restart the host that holds it. A router that caches its filters\n` +
+        `       keeps the old one until restarted.\n`,
     );
   }
 }

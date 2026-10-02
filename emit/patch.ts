@@ -398,8 +398,15 @@ function houseHead(spec: Spec, st: State): string[] {
   for (const r of spec.gate.require ?? []) {
     const ref = PATCH.value(`source.${dtlPath(r.path, "", groups)}`);
     out.push(
-      `${T}${T}If (${ref} '= ${os(r.equals)}) {`,
-      ...filtered(`${T}${T}${T}`, os(`Message Filtered Out: ${r.path} is not ${r.equals}`)),
+      r.inTable !== undefined
+        ? `${T}${T}If ('##class(Ens.Util.FunctionSet).Exists(${os(r.inTable)},${ref})) {`
+        : `${T}${T}If (${ref} '= ${os(r.equals)}) {`,
+      ...filtered(
+        `${T}${T}${T}`,
+        os(r.inTable !== undefined
+          ? `Message Filtered Out: ${r.path} is not a key in ${r.inTable}`
+          : `Message Filtered Out: ${r.path} is not ${r.equals}`),
+      ),
       `${T}${T}${T}Return tSC`,
       `${T}${T}}`,
     );

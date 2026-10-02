@@ -61,56 +61,6 @@ config item rebuild in one sitting, and the only thing that confirmed it still
 worked was a person reading ten segments and comparing them to ten segments from
 memory.
 
-### Gate on membership in a lookup table
-
-`gate.require` does exact equality only, `{ path, equals }`. An interface that
-should run for some facilities and not others cannot say so.
-
-```ts
-gate: {
-  path: "MSH-9.2",
-  permit: { A01: "A28", A08: "A28" },
-  require: [{ path: "PV1-39", inTable: "PermittedFacilities" }],
-}
-```
-
-emitting `Lookup("PermittedFacilities",HL7.{PV1:39},"") != ""` into the rule
-condition.
-
-The emitted string is the small half. The real payoff is that
-`referencedTables()` would then see the gate's table, so the existing *EMPTY IN
-THE SPEC, a go-live gate* warning fires on an empty allowlist. An empty
-allowlist refuses every message, and refuses it quietly, which is exactly the
-silent failure that warning was written for.
-
-Two things the emitter must not get wrong. A blank value in a row is
-indistinguishable from a missing key, because `Lookup` returns the default for
-both, so the spec should refuse a table row with an empty value when that table
-is used as a gate. And `Lookup` has an optional fourth argument that changes
-what a miss returns; getting it backwards turns an allowlist into a passthrough,
-which fails open.
-
-**Emit `Exists`, not `Lookup != ""`.** `##class(Ens.Util.FunctionSet).Exists(table, key)`
-tests key presence, so a blank value in a row no longer reads as a miss and there
-is no fourth argument to get backwards. Both traps above go away rather than
-being guarded. This form was run as a live router filter on 2026-10-02 and
-behaved: a listed facility passed, an unlisted one was refused.
-
-**Some engines filter outside the rule editor.** A router that reads its filter
-from a SQL table row takes the condition as a string evaluated at runtime. An
-unbalanced paren in that string passes the `UPDATE` and fails only on the host,
-after deploy. That happened on 2026-10-02: one missing `)` after an `Exists(...)`
-clause. So the emitter should also print the bare boolean expression, against
-`pRequest` rather than `HL7`, and check before printing that its parens balance
-and its string literals close. Any wrapper a site puts around that expression
-(a prefix, the table and column it lives in) belongs in the style file
-(`HL7_BENCH_STYLE`), not the tool, so the tracked repo stays site-free.
-
-Print the deploy order with it, because getting the order wrong fails silently:
-import the table, then change the filter, then restart the host. A router that
-caches its filter list keeps the old one until restarted, and a filter whose
-table is not yet imported refuses every message without an error.
-
 ### Run the gate on the bench
 
 The bench emits the rule condition and never evaluates it. So the one question
@@ -314,6 +264,36 @@ probe table off IRIS for Health 2026.1 and diffing (see the header of
 with `tables.ts`, emitted with `emit.ts tables --table`, imported with the
 Import button (not Import Legacy), and used by a live router filter that passed
 a listed code and refused an unlisted one.
+
+### Gate on membership in a lookup table
+
+`gate.require` takes `{ path, inTable }` beside `{ path, equals }`. The bench
+refuses a code that is not a key in the table and names the table. IRIS gets
+`Exists("T",HL7.{...})` in the rule and `##class(Ens.Util.FunctionSet).Exists`
+in the process and patch classes; a channel filter carries the keys inline,
+since a filter script has no tables.
+
+`Exists`, not `Lookup(...) != ""`: membership is key presence, so a blank
+value still admits its code and there is no default-on-a-miss argument to get
+backwards and fail open. That removed both traps the open entry listed rather
+than guarding them, so the "refuse a blank value in a gate table" rule it
+proposed was not needed. An undeclared gate table is a validate() refusal, and
+an empty one is on the class header's go-live list, because both refuse every
+message.
+
+**The filter expression.** `emit.ts` prints the gate as one ObjectScript
+boolean over `pRequest`, for a router that stores its filter as text and
+evaluates it per message. `checkExpression` reads it back for closed strings
+and balanced parens before it is printed. Every comparison is parenthesised,
+because ObjectScript has no operator precedence. A site's wrapper (`eval =
+{expr}`) is `filterWrap` in the style file, so the tracked repo names no
+site's routing convention. When the gate reads a table, the deploy order is
+printed with it. Built 2026-10-02 after a hand-typed filter one `)` short
+passed its UPDATE and failed on the host.
+
+Paths are symbolic, so the expression assumes a DocType by the time the filter
+runs. A numeric `1:6.1` form for a router that sees untyped messages is not
+built; nobody has needed it yet.
 
 ### Spreadsheet to import file, the settled half
 

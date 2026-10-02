@@ -84,6 +84,13 @@ export interface Style {
   header: "generator" | "none";
   /** Overrides iris.comments when set. */
   comments?: CommentLevel;
+  /**
+   * How this site stores a filter expression, with `{expr}` where the
+   * expression goes, e.g. `eval = {expr}`. Printed by `bun emit.ts` beside the
+   * bare expression. A site's routing convention lives here and not in the
+   * tool, so the tracked repo never names one.
+   */
+  filterWrap?: string;
 }
 
 export const PRESETS: Record<string, Style> = {
@@ -137,8 +144,17 @@ export function resolveStyle(raw: Record<string, unknown>, from = "style"): Styl
   for (const [k, v] of Object.entries(raw)) {
     if (k === "extends" || k === "$comment") continue;
     if (k === "name") { out.name = String(v); continue; }
+    // Free text, so not in CHOICES. Without the placeholder the wrap would
+    // print a filter with no expression in it, which reads as a finished one.
+    if (k === "filterWrap") {
+      if (typeof v !== "string" || !v.includes("{expr}")) {
+        throw new Error(`${from}: "filterWrap" must be a string containing {expr}, e.g. "eval = {expr}".`);
+      }
+      out.filterWrap = v;
+      continue;
+    }
     const allowed = CHOICES[k];
-    if (!allowed) throw new Error(`${from}: "${k}" is not a style setting. Known: ${Object.keys(CHOICES).join(", ")}.`);
+    if (!allowed) throw new Error(`${from}: "${k}" is not a style setting. Known: ${[...Object.keys(CHOICES), "filterWrap"].join(", ")}.`);
     if (!allowed.includes(v)) {
       throw new Error(`${from}: "${k}" is ${JSON.stringify(v)}. Use one of: ${allowed.map((a) => JSON.stringify(a)).join(", ")}.`);
     }

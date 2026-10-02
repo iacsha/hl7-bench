@@ -193,7 +193,13 @@ export function specToSource(spec: Spec): string {
   if (spec.gate.require?.length) {
     out.push("    require: [");
     for (const r of spec.gate.require) {
-      out.push(`      { path: ${q(r.path)}, equals: ${q(r.equals)} },`);
+      // Whichever one the row has. Writing equals for an inTable row would save
+      // a gate that compares against "undefined" and refuses everything.
+      out.push(
+        r.inTable !== undefined
+          ? `      { path: ${q(r.path)}, inTable: ${q(r.inTable)} },`
+          : `      { path: ${q(r.path)}, equals: ${q(r.equals)} },`,
+      );
     }
     out.push("    ],");
   }

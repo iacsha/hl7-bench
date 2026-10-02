@@ -244,6 +244,10 @@ against the spec file, not the bench.
   you trust the first.
 - The gate is emitted twice, in the routing rule and in the process filter.
   Decide which one holds it. Both is harmless. Neither is silent.
+- Gate on a facility list with `require: [{ path: "MSH-6.1", inTable: "T" }]`.
+  `bun emit.ts` then prints the filter expression for a router that stores it
+  as text, parens checked, and the deploy order: import the table, change the
+  filter, restart the host.
 - `iris.className` and `iris.process.className` are two classes. The same name
   for both replaces the DTL at compile time and the rule then fails at run time
   complaining about a transform that is right there in the portal.

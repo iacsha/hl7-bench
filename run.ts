@@ -458,6 +458,12 @@ export function gate(spec: Spec, msg: Message): { trigger: string; event: string
   }
   for (const req of spec.gate.require ?? []) {
     const got = msg.get(req.path);
+    if (req.inTable !== undefined) {
+      // Key presence, as Exists tests it. hasOwn, not `in`: a code that
+      // happens to be "constructor" is not in the table.
+      if (Object.hasOwn(spec.tables?.[req.inTable] ?? {}, got)) continue;
+      throw new Error(`${req.path} is "${got || "(empty)"}", which is not a key in table ${req.inTable}`);
+    }
     if (got === req.equals) continue;
     throw new Error(`${req.path} is "${got || "(empty)"}", expected "${req.equals}"`);
   }

@@ -227,7 +227,7 @@ export const spec: Spec = {
   gate: {
     path: "MSH-9.2",
     permit: { A01: "A28", A08: "A31" },
-    require: [{ path: "MSH-9.1", equals: "ADT" }],
+    require: [{ path: "MSH-9.1", equals: "ADT" }],   // or { path, inTable: "Table" }
   },
   iris: {
     className: "Demo.DTL.AdtToDownstream",

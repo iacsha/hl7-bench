@@ -267,8 +267,12 @@ export function emitProcess(spec: Spec, collect?: BareRefs, style?: Style): stri
     );
     for (const r of requires) {
       out.push(
-        `    if ${ref("pRequest", r.path, inline)} '= ${os(r.equals)} {`,
-        `        $$$TRACE(${os(`${r.path} is not `)}_${os(r.equals)}_${os(`, refusing`)})`,
+        r.inTable !== undefined
+          ? `    if '##class(Ens.Util.FunctionSet).Exists(${os(r.inTable)}, ${ref("pRequest", r.path, inline)}) {`
+          : `    if ${ref("pRequest", r.path, inline)} '= ${os(r.equals)} {`,
+        r.inTable !== undefined
+          ? `        $$$TRACE(${os(`${r.path} is not a key in ${r.inTable}, refusing`)})`
+          : `        $$$TRACE(${os(`${r.path} is not `)}_${os(r.equals)}_${os(`, refusing`)})`,
         `        quit $$$OK`,
         `    }`,
       );

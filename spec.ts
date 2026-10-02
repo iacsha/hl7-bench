@@ -594,7 +594,7 @@ export interface Spec {
      * loudly rather than transform whatever arrived. These join the routing
      * rule condition with AND.
      */
-    require?: { path: string; equals: string }[];
+    require?: GateRequire[];
   };
   /**
    * BridgeLink target facts. A SIBLING KEY, NOT AN `engines` MAP: optional and
@@ -1105,6 +1105,23 @@ export function validate(spec: Spec, engine?: Engine): string[] {
 
   if (Object.keys(spec.gate.permit).length === 0) {
     problems.push("gate.permit is empty, so this interface would refuse every message");
+  }
+
+  for (const [i, r] of (spec.gate.require ?? []).entries()) {
+    const has = (k: "equals" | "inTable") => (r as Record<string, unknown>)[k] !== undefined;
+    if (has("equals") === has("inTable")) {
+      problems.push(
+        `gate.require[${i}] (${r.path}): give exactly one of equals or inTable. ` +
+          `Both would be two gates in one line, and neither is no gate at all.`,
+      );
+      continue;
+    }
+    if ("inTable" in r && r.inTable !== undefined && !(r.inTable in (spec.tables ?? {}))) {
+      problems.push(
+        `gate.require[${i}] (${r.path}): inTable names "${r.inTable}", which spec.tables does not declare. ` +
+          `The engine would look in a table that is not there and refuse every message.`,
+      );
+    }
   }
 
   // The custom schema, and the deliverable nobody tracks.
@@ -1636,6 +1653,36 @@ export function validate(spec: Spec, engine?: Engine): string[] {
 }
 
 /** Tables declared but carrying no rows. A warning, never fatal. */
+/**
+ * One extra condition on the gate.
+ *
+ * `equals` is an exact match. `inTable` is membership: the field's value must
+ * be a KEY in that spec table. Membership is tested as key presence, never by
+ * reading the value, which is what `Ens.Util.FunctionSet.Exists` does on the
+ * IRIS side. So a row whose value is blank still admits its code, and there is
+ * no "default on a miss" argument to get backwards and fail open -- both traps
+ * of gating on `Lookup(...) != ""` instead.
+ */
+export type GateRequire =
+  | { path: string; equals: string; inTable?: undefined }
+  | { path: string; inTable: string; equals?: undefined };
+
+/** The gate condition in words, for the trace document and refusals. */
+export function describeRequire(r: GateRequire): string {
+  return r.inTable !== undefined
+    ? `${r.path} must be a key in table ${r.inTable}`
+    : `${r.path} must be "${r.equals}"`;
+}
+
+/** Tables the gate reads, in order. They decide delivery, so they count as used. */
+export function gateTables(spec: Spec): string[] {
+  const out: string[] = [];
+  for (const r of spec.gate.require ?? []) {
+    if (r.inTable !== undefined && !out.includes(r.inTable)) out.push(r.inTable);
+  }
+  return out;
+}
+
 export function emptyTables(spec: Spec): string[] {
   return Object.entries(spec.tables ?? {})
     .filter(([, rows]) => Object.keys(rows).length === 0)
