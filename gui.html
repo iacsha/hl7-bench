@@ -536,8 +536,12 @@ const btn = (label, title, fn) =>
 // The `//` comments written inside the spec literal, read on load and written
 // back on save (speccomments.ts). A row's or block's comment rides on it as
 // "//", so it follows a move or a renamed target; a section's sits on
-// spec["//"] under its path. `above` is the lines over the item, `after` a
+// spec[CK] under its path. `above` is the lines over the item, `after` a
 // comment at the end of its line.
+
+/** The comment key, built from two halves: the inline-module test reads a quoted pair of slashes as a broken string. */
+const CK = "/" + "/";
+const CK_ON = CK + "\u2022";
 
 /** Which comment boxes are open, kept across redraws by holder object. */
 const openComments = new WeakMap();
@@ -578,11 +582,11 @@ function commentFields(holder, key) {
  * comment, so a comment is visible without opening every row. The caller puts
  * the panel where it fits: under a row, at the top of a block.
  */
-function commentToggle(holder, key = "//") {
+function commentToggle(holder, key = CK) {
   const has = () => !!(holder[key]?.above || holder[key]?.after);
   const panel = el("div", { class: "cmtpanel" });
   const button = el("button", { class: `tiny cbtn${has() ? " on" : ""}`, type: "button",
-    title: "Comment kept in transform.ts above this item", text: has() ? "//•" : "//" });
+    title: "Comment kept in transform.ts above this item", text: has() ? CK_ON : CK });
   const show = (on) => {
     panel.replaceChildren(...(on ? [commentFields(holder, key)] : []));
     panel.style.display = on ? "block" : "none";
@@ -591,7 +595,7 @@ function commentToggle(holder, key = "//") {
     const on = !isOpen(holder, key);
     setOpen(holder, key, on);
     show(on);
-    if (!on) { button.textContent = has() ? "//•" : "//"; button.classList.toggle("on", has()); }
+    if (!on) { button.textContent = has() ? CK_ON : CK; button.classList.toggle("on", has()); }
   });
   show(isOpen(holder, key));
   return { button, panel };
@@ -920,7 +924,7 @@ function renderSpec() {
   // Comments above a section or a table rather than a row or segment, by path.
   // An entry here whose path no longer exists is written at the top of the
   // literal on save, labelled with where it was, rather than dropped.
-  const roots = spec["//"] ?? {};
+  const roots = spec[CK] ?? {};
   const cmts = el("fieldset", {}, [
     el("legend", { text: `Comments (${Object.keys(roots).length})` }),
     el("div", { class: "note", text: "Comments in transform.ts above a section, a key or a table. Row and segment comments are on their // buttons." }),
@@ -930,7 +934,7 @@ function renderSpec() {
       el("span", { class: "tag", text: path }),
       btn("x", "delete this comment", () => {
         delete roots[path];
-        if (Object.keys(roots).length === 0) delete spec["//"];
+        if (Object.keys(roots).length === 0) delete spec[CK];
         markEdited(); redraw(); schedulePreview();
       }),
     ]));
@@ -938,15 +942,15 @@ function renderSpec() {
   }
   const newPath = el("input", { class: "md", placeholder: "gate, iris.sourceGroups, tables.Sex", list: "cmtpaths" });
   const suggest = el("datalist", { id: "cmtpaths" },
-    [...Object.keys(spec).filter((k) => k !== "//"), "gate.permit", "iris.sourceGroups", "iris.process",
+    [...Object.keys(spec).filter((k) => k !== CK), "gate.permit", "iris.sourceGroups", "iris.process",
       ...Object.keys(spec.tables ?? {}).map((t) => `tables.${t}`)].map((v) => el("option", { value: v })));
   cmts.appendChild(el("div", { class: "row" }, [
     newPath, suggest,
     btn("+ comment", "add a comment above this section", () => {
       const p = newPath.value.trim();
       if (!p) return;
-      spec["//"] = spec["//"] ?? {};
-      spec["//"][p] = spec["//"][p] ?? { above: "" };
+      spec[CK] = spec[CK] ?? {};
+      spec[CK][p] = spec[CK][p] ?? { above: "" };
       markEdited(); redraw();
     }),
   ]));
