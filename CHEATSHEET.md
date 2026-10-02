@@ -35,6 +35,7 @@ the whole design: one spec, six readers.
 | What does my transform do to this message? | `bun bench.ts messages\in.hl7` |
 | Save that output without a BOM | `bun bench.ts -o messages\out.hl7 messages\in.hl7` |
 | Does it still match every golden file? | `bun check.ts` |
+| Would these messages get through the gate? | `bun gate.ts messages\batch.hl7` |
 | ...just the A01 ones | `bun check.ts a01` |
 | Let me edit the spec in a form instead of typing | `bun gui.ts` (http://127.0.0.1:7317) |
 | ...against a real message, not sample.hl7 | `bun gui.ts messages\yours.hl7` |

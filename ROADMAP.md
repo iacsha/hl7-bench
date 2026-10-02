@@ -61,18 +61,6 @@ config item rebuild in one sitting, and the only thing that confirmed it still
 worked was a person reading ten segments and comparing them to ten segments from
 memory.
 
-### Run the gate on the bench
-
-The bench emits the rule condition and never evaluates it. So the one question
-worth asking before you compile, *would this message get through*, is the one
-question the bench cannot answer.
-
-Print PERMIT or REFUSE for a pasted message, and when refused, say which clause
-did it: the trigger event, a required equality, or a table miss.
-
-The commonest allowlist failure is a facility code typed slightly wrong in the
-table. That is a laptop-sized problem being diagnosed in a dev namespace today.
-
 ### Spreadsheet to import file: the rough edges
 
 Found walking a one-column facility allowlist from a CSV to an imported table on
@@ -294,6 +282,23 @@ passed its UPDATE and failed on the host.
 Paths are symbolic, so the expression assumes a DocType by the time the filter
 runs. A numeric `1:6.1` form for a router that sees untyped messages is not
 built; nobody has needed it yet.
+
+### Run the gate on the bench
+
+`bun gate.ts` prints PERMIT or REFUSE for each message in a file, one per MSH,
+with every clause of the gate under it: the trigger, each equality, each table
+lookup. `explainGate()` in `run.ts` evaluates all of them rather than stopping
+at the first, and `gate()` is now that plus a throw, so the refusal text the
+golden cases assert did not change.
+
+A table miss lists near keys (`nearKeys()`): the same code apart from case or
+space first, then one character added, dropped, changed or swapped, for codes
+of two characters or more. That is the "facility code typed slightly wrong"
+failure the entry was written for.
+
+Fixed on the way: the permit table was indexed directly, so a trigger of
+`constructor` read an inherited property and passed. Key presence now uses
+`hasOwn` there as well as on gate tables.
 
 ### Spreadsheet to import file, the settled half
 

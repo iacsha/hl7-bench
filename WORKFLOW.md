@@ -41,6 +41,7 @@ hooks/pre-push       refuses a push that would publish a real interface.
 bench.ts             stdin to stdout runner
 gui.ts + gui.html    the browser spec editor, 127.0.0.1:7317
 check.ts             the golden gate
+gate.ts              would this message get through, clause by clause
 reads.ts             every source path that resolved to nothing
 tables.ts            a spreadsheet becomes a spec.tables entry
 classify.ts          the in-versus-want diff
@@ -980,6 +981,26 @@ Membership is the KEY, not the value, so a blank value still admits its code and
 there is no default-on-a-miss argument to get backwards. An undeclared table is
 refused by `bun check.ts`, and an empty one is on the go-live list, because
 either one refuses every message.
+
+### Would this message get through?
+
+```powershell
+bun gate.ts messages\batch.hl7
+```
+
+PERMIT or REFUSE for every message in the file, one per MSH, and every clause
+of the gate under it. All clauses are evaluated, so a message with the wrong
+trigger AND an unlisted facility says both. A table miss lists keys that differ
+from the code only by case, space or one character, because a code typed
+slightly wrong is the commonest allowlist failure:
+
+```
+#2  M2  REFUSE
+  FAIL  MSH-6.1 is "RHG", which is not a key in table Dept.ADT.Facility
+        close: "RGH"
+```
+
+Exit 0 when everything is permitted, 1 when anything is refused.
 
 ### The filter expression, for a router that stores it as a string
 

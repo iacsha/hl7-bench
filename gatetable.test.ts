@@ -9,7 +9,12 @@
 import { expect, test, describe } from "bun:test";
 
 import { Message } from "./hl7";
-import { gate } from "./run";
+import { mkdtempSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
+import { explainGate, gate, nearKeys } from "./run";
+import { splitMessages } from "./gate";
 import { specToSource } from "./serialize";
 import { checkExpression, emitIris, filterExpression, routingCondition } from "./emit/iris";
 import { emitProcess } from "./emit/process";
@@ -184,5 +189,99 @@ describe("a site's filter wrapper", () => {
 
   test("without the placeholder it is refused", () => {
     expect(() => resolveStyle({ filterWrap: "eval = " })).toThrow("{expr}");
+  });
+});
+
+// "Would this message get through", answered on the laptop.
+describe("explainGate", () => {
+  const spec = base([facility, { path: "MSH-9.1", equals: "ADT" }], { A01: "A28", A08: "A31" });
+
+  test("a permitted message passes every clause", () => {
+    const v = explainGate(spec, msg("RGH"));
+    expect(v.permit).toBe(true);
+    expect(v.event).toBe("A28");
+    expect(v.clauses.map((c) => c.ok)).toEqual([true, true, true]);
+  });
+
+  test("every clause is evaluated, not just the first that fails", () => {
+    const v = explainGate(spec, msg("XYZ", "A03"));
+    expect(v.permit).toBe(false);
+    expect(v.clauses.map((c) => [c.kind, c.ok])).toEqual([
+      ["trigger", false], ["inTable", false], ["equals", true],
+    ]);
+  });
+
+  test("gate() still throws the first refusal, worded as before", () => {
+    expect(() => gate(spec, msg("XYZ", "A03"))).toThrow(
+      `MSH-9.2 is "A03", which this interface does not handle (handles: A01, A08)`,
+    );
+  });
+
+  test("a trigger that is an inherited property name is not permitted", () => {
+    expect(explainGate(spec, msg("RGH", "constructor")).clauses[0].ok).toBe(false);
+  });
+});
+
+describe("near misses on a table", () => {
+  const keys = ["RGH", "HGH", "UNITY", "MAIN-1"];
+
+  test("case and space come first", () => {
+    expect(nearKeys(keys, " rgh")).toEqual(["RGH", "HGH"]);
+  });
+
+  test("one character changed, dropped, added or swapped", () => {
+    expect(nearKeys(keys, "RGX")).toEqual(["RGH"]);
+    expect(nearKeys(keys, "UNIT")).toEqual(["UNITY"]);
+    expect(nearKeys(keys, "MAIN-12")).toEqual(["MAIN-1"]);
+    expect(nearKeys(keys, "RHG")).toEqual(["RGH"]);
+  });
+
+  test("nothing close is nothing", () => {
+    expect(nearKeys(keys, "ZZZZ")).toEqual([]);
+  });
+
+  test("a one-character code is not near every other one-character code", () => {
+    expect(nearKeys(["A", "B"], "C")).toEqual([]);
+  });
+
+  test("an empty field suggests nothing", () => {
+    expect(nearKeys(keys, "")).toEqual([]);
+  });
+
+  test("the miss carries them, a pass does not", () => {
+    const v = explainGate(base([facility]), msg("rgh"));
+    expect(v.clauses[1].near).toEqual(["RGH", "HGH"]);
+    expect(explainGate(base([facility]), msg("RGH")).clauses[1].near).toBeUndefined();
+  });
+});
+
+// Run from a scratch folder: Bun loads .env from the working folder, and the
+// repo's own .env would point these at a site spec.
+describe("gate.ts", () => {
+  test("a batch splits on MSH, whatever the line endings", () => {
+    const raw = "MSH|a\r\nPID|1\r\n\r\nMSH|b\nPID|2\rMSH|c\r";
+    expect(splitMessages(raw)).toEqual(["MSH|a\rPID|1", "MSH|b\rPID|2", "MSH|c"]);
+  });
+
+  test("permits the demo message and exits 0", () => {
+    const env: Record<string, string> = {};
+    for (const [k, v] of Object.entries(process.env)) if (k !== "HL7_BENCH_TRANSFORM" && v !== undefined) env[k] = v;
+    const p = Bun.spawnSync([process.execPath, join(import.meta.dir, "gate.ts"), join(import.meta.dir, "sample.hl7")], {
+      cwd: tmpdir(), env, stdout: "pipe", stderr: "pipe",
+    });
+    expect(p.stdout.toString()).toContain("PERMIT");
+    expect(p.exitCode).toBe(0);
+  });
+
+  test("refuses with every failing clause and exits 1", () => {
+    const dir = mkdtempSync(join(tmpdir(), "hl7-bench-gate-"));
+    const file = join(dir, "x.hl7");
+    writeFileSync(file, "MSH|^~\\&|A|B|C|D|20261002||ORU^R01|9|P|2.3\r");
+    const env: Record<string, string> = {};
+    for (const [k, v] of Object.entries(process.env)) if (k !== "HL7_BENCH_TRANSFORM" && v !== undefined) env[k] = v;
+    const p = Bun.spawnSync([process.execPath, join(import.meta.dir, "gate.ts"), file], { cwd: dir, env, stdout: "pipe", stderr: "pipe" });
+    expect(p.stdout.toString()).toContain("REFUSE");
+    expect(p.stdout.toString()).toContain(`FAIL  MSH-9.2 is "R01"`);
+    expect(p.exitCode).toBe(1);
   });
 });

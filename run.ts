@@ -448,26 +448,124 @@ function fill(ctx: Ctx, block: Block, out: Segment, result: RunResult): void {
  * the routing rule, so an unhandled event never reaches the transform at all.
  */
 export function gate(spec: Spec, msg: Message): { trigger: string; event: string } {
+  const verdict = explainGate(spec, msg);
+  const refused = verdict.clauses.find((c) => !c.ok);
+  if (refused) throw new Error(refused.why);
+  return { trigger: verdict.trigger, event: verdict.event! };
+}
+
+/** One condition of the gate, as it fell for one message. */
+export interface GateClause {
+  kind: "trigger" | "equals" | "inTable";
+  path: string;
+  /** What the message holds at `path`. */
+  got: string;
+  ok: boolean;
+  /** The sentence for this clause, pass or fail. A failing one is the refusal text. */
+  why: string;
+  /** For a table miss: keys that differ from `got` only by case, space or one character. */
+  near?: string[];
+}
+
+export interface GateVerdict {
+  permit: boolean;
+  trigger: string;
+  /** The event it is delivered as, when the trigger is permitted. */
+  event?: string;
+  clauses: GateClause[];
+}
+
+/**
+ * Every clause of the gate against one message, without stopping at the first
+ * refusal.
+ *
+ * `gate()` throws on the first, which is right for a transform and wrong for
+ * the question "would this get through": a message refused by its trigger may
+ * ALSO carry a facility the table does not list, and finding that out one fix
+ * at a time is a round trip per clause through a dev namespace.
+ *
+ * Key presence uses hasOwn, not `in` or indexing, on the permit table as well:
+ * a trigger that happens to be "constructor" is not a permitted event.
+ */
+export function explainGate(spec: Spec, msg: Message): GateVerdict {
   const trigger = msg.get(spec.gate.path);
-  const event = spec.gate.permit[trigger];
-  if (event === undefined) {
-    const handled = Object.keys(spec.gate.permit).join(", ");
-    throw new Error(
-      `${spec.gate.path} is "${trigger}", which this interface does not handle (handles: ${handled})`,
-    );
-  }
+  const permitted = Object.hasOwn(spec.gate.permit, trigger);
+  const event = permitted ? spec.gate.permit[trigger] : undefined;
+  const handled = Object.keys(spec.gate.permit).join(", ");
+  const clauses: GateClause[] = [{
+    kind: "trigger",
+    path: spec.gate.path,
+    got: trigger,
+    ok: permitted,
+    why: permitted
+      ? `${spec.gate.path} is "${trigger}", delivered as ${event}`
+      : `${spec.gate.path} is "${trigger}", which this interface does not handle (handles: ${handled})`,
+  }];
+
   for (const req of spec.gate.require ?? []) {
     const got = msg.get(req.path);
+    const shown = got || "(empty)";
     if (req.inTable !== undefined) {
-      // Key presence, as Exists tests it. hasOwn, not `in`: a code that
-      // happens to be "constructor" is not in the table.
-      if (Object.hasOwn(spec.tables?.[req.inTable] ?? {}, got)) continue;
-      throw new Error(`${req.path} is "${got || "(empty)"}", which is not a key in table ${req.inTable}`);
+      const table = spec.tables?.[req.inTable] ?? {};
+      const ok = Object.hasOwn(table, got);
+      clauses.push({
+        kind: "inTable",
+        path: req.path,
+        got,
+        ok,
+        why: ok
+          ? `${req.path} is "${got}", a key in table ${req.inTable}`
+          : `${req.path} is "${shown}", which is not a key in table ${req.inTable}`,
+        ...(ok ? {} : { near: nearKeys(Object.keys(table), got) }),
+      });
+      continue;
     }
-    if (got === req.equals) continue;
-    throw new Error(`${req.path} is "${got || "(empty)"}", expected "${req.equals}"`);
+    const ok = got === req.equals;
+    clauses.push({
+      kind: "equals",
+      path: req.path,
+      got,
+      ok,
+      why: ok ? `${req.path} is "${got}"` : `${req.path} is "${shown}", expected "${req.equals}"`,
+    });
   }
-  return { trigger, event };
+
+  return { permit: clauses.every((c) => c.ok), trigger, event, clauses };
+}
+
+/**
+ * Keys a missed code was probably meant to be: the same apart from case or
+ * surrounding space, or one character added, dropped, changed or swapped.
+ *
+ * The commonest allowlist failure is a code typed slightly wrong, in the table
+ * or upstream, and an exact-match miss says nothing about which. Capped, and
+ * only for codes of two or more characters, where one edit is still a near
+ * miss rather than any other code at all.
+ */
+export function nearKeys(keys: string[], got: string, cap = 3): string[] {
+  const g = got.trim().toUpperCase();
+  if (g === "") return [];
+  // Case and space first: those are certainly the same code, where one edit
+  // away is only probably.
+  const same = keys.filter((k) => k.trim().toUpperCase() === g);
+  const edits = g.length < 2 ? [] : keys.filter((k) => oneEdit(k.trim().toUpperCase(), g));
+  return [...same, ...edits].slice(0, cap);
+}
+
+/** Exactly one insert, delete, substitution or adjacent swap apart. */
+function oneEdit(a: string, b: string): boolean {
+  if (a === b || Math.abs(a.length - b.length) > 1) return false;
+  if (a.length === b.length) {
+    const diff: number[] = [];
+    for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) diff.push(i);
+    if (diff.length === 1) return true;
+    return diff.length === 2 && diff[1] === diff[0] + 1 && a[diff[0]] === b[diff[1]] && a[diff[1]] === b[diff[0]];
+  }
+  const [s, l] = a.length < b.length ? [a, b] : [b, a];
+  for (let i = 0; i < l.length; i++) {
+    if (l.slice(0, i) + l.slice(i + 1) === s) return true;
+  }
+  return false;
 }
 
 /**

@@ -264,6 +264,7 @@ That one object drives everything else:
 |---|---|
 | `bun bench.ts` | runs it, and the message comes out |
 | `bun check.ts` | proves it against golden files |
+| `bun gate.ts` | PERMIT or REFUSE per message, every gate clause, near misses on a table |
 | `bun trace.ts` | the field table you hand the receiving team |
 | `bun reads.ts` | every source path that came back with nothing |
 | `bun emit.ts` | the IRIS DTL class, ObjectScript and all |
@@ -794,6 +795,7 @@ fixed. That is usually what you want, right up until it is not.
 | `hl7.ts` | parse, serialize, path lookup |
 | `bench.ts` | the stdin/stdout wrapper |
 | `check.ts` | the golden gate |
+| `gate.ts` | would this message get through: the gate, clause by clause |
 | `serialize.ts` | prints a spec back into `transform.ts`, so the GUI can save |
 | `gui.ts` + `gui.html` | the local browser spec editor |
 | `toolbox.ts` | flat-record extraction and its field trace |
