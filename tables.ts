@@ -34,6 +34,8 @@
  * spaces, which does happen with some free-text department names.
  */
 
+import type { Spec } from "./spec";
+
 // ---------------------------------------------------------------------------
 // CSV
 // ---------------------------------------------------------------------------
@@ -289,6 +291,73 @@ export function renderModule(name: string, rows: Record<string, string>, source:
 }
 
 // ---------------------------------------------------------------------------
+// Into the spec
+// ---------------------------------------------------------------------------
+
+export type IntoSpec =
+  | { source: string; replaced: boolean; comments: number }
+  | { error: string };
+
+/**
+ * The spec file's text with `name` added to (or replaced in) `spec.tables`.
+ *
+ * Goes through the same `rewriteTransform` a GUI save does, with the file's
+ * comments read first and put back after, so a hand-written spec keeps its
+ * reasoning. Refused rather than guessed:
+ *
+ * - the table exists and `replace` was not asked for: overwriting four hundred
+ *   reviewed rows with a new spreadsheet is a decision, not a default;
+ * - a table is not written as an object in the file (it is imported from a
+ *   module, or shorthand): the printer writes the value, so the import would
+ *   be inlined and the module left behind, a quiet change of structure;
+ * - the result does not validate.
+ */
+export async function intoSpec(
+  file: string,
+  spec: Spec,
+  name: string,
+  rows: Record<string, string>,
+  replace: boolean,
+): Promise<IntoSpec> {
+  const { endOfObject, rewriteTransform } = await import("./serialize");
+  const { attachComments, extractComments, specLiteral, stripComments } = await import("./speccomments");
+  const { validate } = await import("./spec");
+
+  const at = specLiteral(file, endOfObject);
+  if (!at) return { error: `Could not find "export const spec = { ... }" in the spec file.` };
+  const literal = file.slice(at.open, at.close + 1);
+
+  const tables = spec.tables ?? {};
+  const exists = Object.hasOwn(tables, name);
+  if (exists && !replace) {
+    return {
+      error:
+        `Table "${name}" is already in the spec with ${Object.keys(tables[name]!).length} row(s). ` +
+        `--replace to overwrite it with this file's rows.`,
+    };
+  }
+  const esc = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  for (const t of Object.keys(tables)) {
+    const written = new RegExp(`(${esc(JSON.stringify(t))}|(^|[\\s{,])${esc(t)})\\s*:\\s*\\{`, "m");
+    if (!written.test(literal)) {
+      return {
+        error:
+          `Table "${t}" is not written out in the spec file (imported from a module, or shorthand). ` +
+          `--into-spec rewrites the literal and would inline it, leaving the module behind. ` +
+          `Use --module for this table too, or paste the block.`,
+      };
+    }
+  }
+
+  const comments = extractComments(literal);
+  const next = attachComments(structuredClone(spec), comments) as Spec;
+  next.tables = { ...(next.tables ?? {}), [name]: rows };
+  const problems = validate(stripComments(next));
+  if (problems.length > 0) return { error: `The spec would not validate:\n  ${problems.join("\n  ")}` };
+  return { source: rewriteTransform(file, next), replaced: exists, comments: Object.keys(comments).length };
+}
+
+// ---------------------------------------------------------------------------
 // CLI
 // ---------------------------------------------------------------------------
 
@@ -331,6 +400,8 @@ if (import.meta.main) {
         `Usage: bun tables.ts <TableName> [options] [file.csv]`,
         ``,
         `  --module          a complete importable .ts file instead of a paste block`,
+        `  --into-spec       write the table into the active spec (comments kept, .bak left)`,
+        `  --replace         with --into-spec: overwrite a table that is already there`,
         `  --delim <c|name>  column separator: a character, or tab/comma/semicolon/pipe`,
         `  --key <n>         1-based key column, default 1`,
         `  --value <n>       1-based value column, default 2`,
@@ -423,6 +494,36 @@ if (import.meta.main) {
   const count = Object.keys(result.rows).length;
   // A named file knows its own name, so --module records it without --from.
   const source = flag("from") ?? (inputSource === "stdin" ? "the piped file" : inputSource);
+
+  if (has("into-spec")) {
+    if (has("module")) {
+      process.stderr.write(`--into-spec writes the rows into the spec; --module writes a separate file. Pick one.\n`);
+      process.exit(2);
+    }
+    const { spec, specPath } = await import("./specfile");
+    const { specSource } = await import("./specpath");
+    const { copyFileSync, readFileSync, writeFileSync } = await import("node:fs");
+    const file = readFileSync(specPath, "utf8");
+    const done = await intoSpec(file, spec, name, result.rows, has("replace"));
+    if ("error" in done) {
+      process.stderr.write(`${done.error}\nNothing written.\n`);
+      process.exit(1);
+    }
+    // Copied every time, not once a session: a CLI has no session, and the
+    // previous .bak is from a write you have already checked.
+    copyFileSync(specPath, `${specPath}.bak`);
+    writeFileSync(specPath, done.source, "utf8");
+    process.stderr.write(
+      `\n${done.replaced ? "Replaced" : "Added"} table ${name}: ${count} row(s) from ${result.read} line(s), ` +
+        `into ${specPath}\n  (the active spec: ${specSource()})\n` +
+        `  ${done.comments} comment(s) in the spec kept. The file before this is ${specPath}.bak.\n` +
+        `Then: bun emit.ts tables --table ${name} -o ${name}.xml\n`,
+    );
+    if (result.trimmed > 0) {
+      process.stderr.write(`${result.trimmed} row(s) had surrounding whitespace removed. --no-trim to keep it.\n`);
+    }
+    process.exit(0);
+  }
 
   process.stdout.write(
     has("module") ? renderModule(name, result.rows, source) : renderTable(name, result.rows),

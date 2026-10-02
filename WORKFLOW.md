@@ -965,12 +965,17 @@ Four hundred facilities in a spreadsheet:
 
 ```powershell
 bun tables.ts Facilities facilities.csv                       # a paste block
+bun tables.ts Facilities --into-spec facilities.csv           # into the active spec
 bun tables.ts Facilities --module facilities.csv > tables.facilities.ts
 bun tables.ts Sex --key 2 --value 3 --delim tab codes.txt
 ```
 
 It writes TypeScript into `spec.tables`, not XML, so the bench and IRIS read the
-same rows. `bun emit.ts tables` then makes the import file. One place to be
+same rows. `--into-spec` puts the table straight into the spec `HL7_BENCH_TRANSFORM`
+names, through the same rewrite a GUI save does, so the comments in the spec
+are kept and the file before it is left as `<spec>.bak`. It refuses a table that
+is already there (`--replace` to overwrite it) and a spec whose tables are
+imported from modules, which the rewrite would inline. `bun emit.ts tables` then makes the import file. One place to be
 wrong instead of two.
 
 It trims keys and values and **reports the count**. A trailing space in a key is

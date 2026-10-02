@@ -9,11 +9,12 @@
 
 import { expect, test, describe } from "bun:test";
 
-import { mkdtempSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { parseCsv, toTable, renderTable, renderModule, identName, tablesEntry, oneColumn, type TableOptions } from "./tables";
+import { parseCsv, toTable, renderTable, renderModule, identName, tablesEntry, oneColumn, intoSpec, type TableOptions } from "./tables";
+import { spec as demo } from "./transform";
 import { specsDeclaring, tableArg } from "./emit/lookup";
 
 const opts = (over: Partial<TableOptions> = {}): TableOptions => ({
@@ -336,5 +337,66 @@ describe("a one-column allowlist", () => {
     const r = toTable([["RGH"], ["RGH"]], opts({ header: false, valueLiteral: "1" }));
     expect(r.errors).toEqual([]);
     expect(r.warnings[0]).toContain("1 repeated row(s) collapsed");
+  });
+});
+
+// --into-spec: the table goes into the active spec through the same rewrite a
+// GUI save does, comments kept, instead of a paste block to place by hand.
+describe("--into-spec", () => {
+  const file = readFileSync(join(import.meta.dir, "transform.ts"), "utf8");
+
+  test("adds the table, keeps the comments, and the result validates", async () => {
+    const r = await intoSpec(file, demo, "Dept.ADT.Facility", { RGH: "RGH", HGH: "HGH" }, false);
+    if ("error" in r) throw new Error(r.error);
+    expect(r.replaced).toBe(false);
+    expect(r.source).toContain(`"Dept.ADT.Facility": { RGH: "RGH", HGH: "HGH" },`);
+    expect(r.comments).toBeGreaterThan(5);
+    expect(r.source).toContain("// firstOf is how you say");
+  });
+
+  test("an existing table is refused without --replace", async () => {
+    const r = await intoSpec(file, demo, "DemoSex", { M: "M" }, false);
+    expect("error" in r && r.error).toContain(`Table "DemoSex" is already in the spec with 2 row(s). --replace`);
+  });
+
+  test("and replaced with it", async () => {
+    const r = await intoSpec(file, demo, "DemoSex", { M: "M" }, true);
+    if ("error" in r) throw new Error(r.error);
+    expect(r.replaced).toBe(true);
+    expect(r.source).toContain(`DemoSex: { M: "M" },`);
+  });
+
+  // The printer writes values. A table imported from a module would be
+  // inlined and the module left behind.
+  test("a table imported from a module is refused, not inlined", async () => {
+    const shorthand = file.replace(`DemoSex: { M: "MALE", F: "FEMALE" },`, `DemoSex,`);
+    const r = await intoSpec(shorthand, demo, "New", { A: "A" }, false);
+    expect("error" in r && r.error).toContain(`Table "DemoSex" is not written out in the spec file`);
+  });
+
+  test("end to end: the CLI writes the spec and a .bak, and the bench reads the table", () => {
+    const spec = join(import.meta.dir, "zz-into-spec.local.ts");
+    const csv = join(tmpdir(), `into-${Date.now()}.csv`);
+    writeFileSync(spec, file);
+    writeFileSync(csv, "Code\nRGH\nHGH\n");
+    try {
+      const env: Record<string, string> = {};
+      for (const [k, v] of Object.entries(process.env)) if (k !== "HL7_BENCH_TRANSFORM" && v !== undefined) env[k] = v;
+      env.HL7_BENCH_TRANSFORM = spec;
+      const run = (args: string[]) =>
+        Bun.spawnSync([process.execPath, join(import.meta.dir, "tables.ts"), ...args], { cwd: tmpdir(), env, stdout: "pipe", stderr: "pipe" });
+      const p = run(["Dept.ADT.Facility", "--into-spec", csv]);
+      expect(p.stderr.toString()).toContain("Added table Dept.ADT.Facility: 2 row(s)");
+      expect(readFileSync(spec, "utf8")).toContain(`"Dept.ADT.Facility": { RGH: "RGH", HGH: "HGH" },`);
+      expect(readFileSync(`${spec}.bak`, "utf8")).toBe(file);
+      const again = run(["Dept.ADT.Facility", "--into-spec", csv]);
+      expect(again.exitCode).toBe(1);
+      expect(again.stderr.toString()).toContain("Nothing written.");
+      expect(run(["X", "--into-spec", "--module", csv]).stderr.toString()).toContain("Pick one.");
+    } finally {
+      rmSync(spec, { force: true });
+      rmSync(`${spec}.bak`, { force: true });
+      rmSync(csv, { force: true });
+    }
   });
 });

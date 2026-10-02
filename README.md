@@ -465,6 +465,7 @@ four hundred rows in Excel and are otherwise retyped by hand.
 
 ```powershell
 Get-Content facilities.csv -Raw | bun tables.ts Facilities
+bun tables.ts Facilities --into-spec facilities.csv   # writes it into the active spec
 bun tables.ts Facilities --module facilities.csv > tables.facilities.ts
 bun tables.ts Sex --key 2 --value 3 --delim tab codes.txt
 ```

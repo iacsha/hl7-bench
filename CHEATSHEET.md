@@ -47,6 +47,7 @@ the whole design: one spec, six readers.
 | ...just one table | `bun emit.ts tables --table Facilities` |
 | Turn this spreadsheet into a lookup table | `bun tables.ts Facilities facilities.csv` |
 | ...or drop it on the form | `+ table from CSV` in `bun gui.ts` |
+| ...straight into the active spec | `bun tables.ts Facilities --into-spec facilities.csv` |
 | ...as its own importable module | `bun tables.ts Facilities --module facilities.csv > tables.facilities.ts` |
 | ...one column of codes (an allowlist) | `bun tables.ts Facilities facilities.csv` -- detected, each code maps to itself |
 | ...allowlist storing a flag instead | `bun tables.ts Facilities --value-literal 1 facilities.csv` |

@@ -42,20 +42,7 @@ two profilers that will disagree about what counts as populated.
 
 ## Open
 
-### Spreadsheet to import file: the rough edges
-
-Found walking a one-column facility allowlist from a CSV to an imported table on
-2026-10-02. Each one cost a round trip. The rest are settled (see Settled);
-this one remains.
-
-**`tables.ts --into-spec`.** `tables.ts` now says the spec is unchanged and
-names the file to paste into. Writing the table there itself would remove the
-step entirely, through `serialize.ts`, the path a GUI save takes. Held back at
-first because that path dropped every comment inside the spec literal. It no
-longer does (see "Comments survive a GUI save" under Settled), so the blocker
-is gone and this is ordinary work: extract the comments, add the table,
-`rewriteTransform`. Must refuse to overwrite an existing table of the
-same name without `--replace`.
+Nothing open. Add the next thing here when real work turns it up.
 
 ---
 
@@ -367,7 +354,7 @@ since the BridgeLink port deleted the channel name and log level. Fixed.
 
 ### Spreadsheet to import file, the settled half
 
-The rough edges found on 2026-10-02, fixed in two commits:
+The rough edges found on 2026-10-02, all fixed:
 
 - **An unknown `--table` names the spec it read** and why that file
   (`specSource()` in `specpath.ts`: `.env.local`, `.env`, the shell, or the
@@ -389,6 +376,13 @@ The rough edges found on 2026-10-02, fixed in two commits:
   allowlist, because that is the wrong `--delim` gluing columns together, and
   the likely delimiter is named. The active delimiter is exempt: if it survived
   into a cell it was quoted on purpose.
+- **`tables.ts --into-spec`** writes the table into the active spec through
+  `rewriteTransform`, the GUI save's path, with the spec's comments read first
+  and put back (`intoSpec()`). A `.bak` of the file before it every time. It
+  refuses an existing table without `--replace`, a spec whose tables are
+  imported from modules (the rewrite would inline them and orphan the module),
+  a result that does not validate, and `--module` beside it. Possible only once
+  comments survived a rewrite.
 - **Same-value repeats collapse into one warning** with a count and the first
   ten keys. A repeat with a different value is still refused, one line per key.
 
