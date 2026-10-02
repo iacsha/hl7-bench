@@ -10,6 +10,7 @@
  * that case.
  */
 
+import { existsSync, readFileSync } from "node:fs";
 import { isAbsolute, join, resolve } from "node:path";
 
 /** The spec that ships with the tool. Synthetic, tracked, safe to publish. */
@@ -33,3 +34,26 @@ export const specIsExternal = specPath !== DEFAULT_SPEC_PATH;
 
 /** What the variable was set to, for error messages that can be acted on. */
 export const specOverride = override;
+
+/**
+ * Where `specPath` came from, in words, for an error that has to name the file.
+ *
+ * Bun loads `.env` into the environment before any code runs, so the variable
+ * alone cannot tell a `.env` line from a shell setting. Reading the file back
+ * can. This exists because a table was pasted into one spec while `.env` named
+ * a sibling, and "No table named" said nothing about which file it had read:
+ * three round trips to see what one line would have shown.
+ *
+ * `.env.local` is checked first because Bun lets it win over `.env`.
+ */
+export function specSource(cwd = process.cwd()): string {
+  if (!override) return "the default; HL7_BENCH_TRANSFORM is not set";
+  for (const file of [".env.local", ".env"]) {
+    const path = join(cwd, file);
+    if (!existsSync(path)) continue;
+    const m = readFileSync(path, "utf8").match(/^\s*HL7_BENCH_TRANSFORM\s*=\s*(.*?)\s*$/m);
+    const value = m?.[1].replace(/^(["'])(.*)\1$/, "$2").trim();
+    if (value === override) return `HL7_BENCH_TRANSFORM in ${path}`;
+  }
+  return "HL7_BENCH_TRANSFORM set in the shell";
+}

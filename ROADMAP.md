@@ -90,6 +90,27 @@ is used as a gate. And `Lookup` has an optional fourth argument that changes
 what a miss returns; getting it backwards turns an allowlist into a passthrough,
 which fails open.
 
+**Emit `Exists`, not `Lookup != ""`.** `##class(Ens.Util.FunctionSet).Exists(table, key)`
+tests key presence, so a blank value in a row no longer reads as a miss and there
+is no fourth argument to get backwards. Both traps above go away rather than
+being guarded. This form was run as a live router filter on 2026-10-02 and
+behaved: a listed facility passed, an unlisted one was refused.
+
+**Some engines filter outside the rule editor.** A router that reads its filter
+from a SQL table row takes the condition as a string evaluated at runtime. An
+unbalanced paren in that string passes the `UPDATE` and fails only on the host,
+after deploy. That happened on 2026-10-02: one missing `)` after an `Exists(...)`
+clause. So the emitter should also print the bare boolean expression, against
+`pRequest` rather than `HL7`, and check before printing that its parens balance
+and its string literals close. Any wrapper a site puts around that expression
+(a prefix, the table and column it lives in) belongs in the style file
+(`HL7_BENCH_STYLE`), not the tool, so the tracked repo stays site-free.
+
+Print the deploy order with it, because getting the order wrong fails silently:
+import the table, then change the filter, then restart the host. A router that
+caches its filter list keeps the old one until restarted, and a filter whose
+table is not yet imported refuses every message without an error.
+
 ### Run the gate on the bench
 
 The bench emits the rule condition and never evaluates it. So the one question
@@ -102,14 +123,31 @@ did it: the trigger event, a required equality, or a table miss.
 The commonest allowlist failure is a facility code typed slightly wrong in the
 table. That is a laptop-sized problem being diagnosed in a dev namespace today.
 
-### Verify the lookup document shape against a real export
+### Spreadsheet to import file: the rough edges
 
-`emit/lookup.ts` writes `<lookupTable><entry table= key=>value</entry></lookupTable>`,
-which is the documented shape and has never been imported into an actual
-namespace from this tool. Export an existing table out of the portal, diff the
-two, and either confirm it or fix it once.
+Found walking a one-column facility allowlist from a CSV to an imported table on
+2026-10-02. Each one cost a round trip. Four are settled (see Settled); these
+remain.
 
-Until that happens the emitter is right on paper. That is not the same thing.
+**`tables.ts --into-spec`.** `tables.ts` now says the spec is unchanged and
+names the file to paste into. Writing the table there itself would remove the
+step entirely, through `serialize.ts`, the path a GUI save takes. Not done in
+the same commit because that path rewrites the spec literal wholesale and drops
+comments inside it; a CLI that quietly strips a hand-written spec's comments is
+worse than one more paste. Needs either a comment-preserving insert or a loud
+`.bak` and a stated warning. Must refuse to overwrite an existing table of the
+same name without `--replace`.
+
+**A one-column CSV is an allowlist.** Today it needs `--key 1 --value 1`, which
+works but nobody would guess. Treat a file whose every row has one column as
+key = value, say so on stderr, and add `--value-literal <v>` for a site that
+stores a flag such as `1` instead.
+
+**Collapse same-value duplicate warnings.** Sixteen harmless duplicates printed
+sixteen lines and buried the summary. One line instead: `16 duplicate key(s)
+with the same value collapsed: DE, DO, DQ, ...`, capped. A duplicate with a
+different value stays a refusal, one line per key, since each is a real
+disagreement.
 
 ### Promotion diff
 
@@ -280,7 +318,32 @@ resolved. It writes TypeScript, not XML, on purpose: straight to XML would put
 the rows where the bench cannot read them, and the bench and IRIS would disagree
 exactly where you were relying on them to agree.
 
-Not yet verified against a real portal export. See Open.
+**Verified against a real export.** The document is the portal's own Export
+shape, one `<Document name="<Table>.LUT">` per table, checked by exporting a
+probe table off IRIS for Health 2026.1 and diffing (see the header of
+`emit/lookup.ts`). Confirmed end to end on 2026-10-02: a 62-row allowlist built
+with `tables.ts`, emitted with `emit.ts tables --table`, imported with the
+Import button (not Import Legacy), and used by a live router filter that passed
+a listed code and refused an unlisted one.
+
+### Spreadsheet to import file, the settled half
+
+Four of the rough edges found on 2026-10-02, fixed together:
+
+- **An unknown `--table` names the spec it read** and why that file
+  (`specSource()` in `specpath.ts`: `.env.local`, `.env`, the shell, or the
+  default), and names any sibling `transform*.ts` that does declare the table
+  (`specsDeclaring()` in `emit/lookup.ts`, a text search, so a spec that does
+  not compile can still be found).
+- **`tables.ts` says the spec is unchanged**, names the active spec, and prints
+  the `emit.ts tables --table` that follows.
+- **`--table` as PowerShell completes it.** A leading `.\` or `./` is dropped;
+  a `.csv`, `.txt`, `.tsv` or `.xlsx` is refused with the name it probably
+  meant, not stripped, since file and table names only usually match
+  (`tableArg()`).
+- **`--module` with a dotted name** exports an identifier (`identName()`) and
+  wires it in under the real name: `tables: { "A.B.C": ABC }`. It used to write
+  `export const "A.B.C"`, which does not parse, for every IRIS-style name.
 
 ### Source-side group paths and DocType
 

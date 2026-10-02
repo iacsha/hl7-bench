@@ -32,11 +32,12 @@
  */
 
 import { writeFileSync } from "node:fs";
-import { spec } from "./specfile";
+import { spec, specPath } from "./specfile";
+import { specSource } from "./specpath";
 import { emitIris, newBareRefs, routingCondition } from "./emit/iris";
 import { emitProcess } from "./emit/process";
 import { emitBridgelink, filterCondition } from "./emit/bridgelink";
-import { buildLookup } from "./emit/lookup";
+import { buildLookup, specsDeclaring, tableArg } from "./emit/lookup";
 import { emitSchema } from "./emit/schema";
 import { fingerprint } from "./fingerprint";
 import { emptyTables, validate, type Engine } from "./spec";
@@ -131,7 +132,13 @@ function deliver(text: string): void {
 }
 const tableFlag = (() => {
   const i = argv.indexOf("--table");
-  return i === -1 ? undefined : argv[i + 1];
+  if (i === -1 || argv[i + 1] === undefined) return undefined;
+  const got = tableArg(argv[i + 1]);
+  if ("error" in got) {
+    process.stderr.write(`${got.error}\n`);
+    process.exit(2);
+  }
+  return got.name;
 })();
 
 // `iris` on its own has always meant the DTL and still does, so nobody's shell
@@ -225,7 +232,17 @@ if (artifact === "tables") {
   try {
     built = buildLookup(spec, tableFlag);
   } catch (e) {
+    // The only throw is an unknown --table. Which file was read, and why, is
+    // what turns "no such table" from a puzzle into a one-line fix.
     process.stderr.write(`${(e as Error).message}\n`);
+    process.stderr.write(`  spec read: ${specPath}\n  because:   ${specSource()}\n`);
+    const elsewhere = tableFlag === undefined ? [] : specsDeclaring(tableFlag, specPath);
+    if (elsewhere.length > 0) {
+      process.stderr.write(
+        `\n"${tableFlag}" is declared in ${elsewhere.join(", ")}, beside it.\n` +
+          `Move the table into the spec above, or point HL7_BENCH_TRANSFORM at that file.\n`,
+      );
+    }
     process.exit(2);
   }
 

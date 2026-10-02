@@ -9,7 +9,12 @@
 
 import { expect, test, describe } from "bun:test";
 
-import { parseCsv, toTable, renderTable, renderModule, type TableOptions } from "./tables";
+import { mkdtempSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
+import { parseCsv, toTable, renderTable, renderModule, identName, tablesEntry, type TableOptions } from "./tables";
+import { specsDeclaring, tableArg } from "./emit/lookup";
 
 const opts = (over: Partial<TableOptions> = {}): TableOptions => ({
   key: 1,
@@ -205,5 +210,67 @@ describe("end to end, the way it is actually used", () => {
     expect(r.rows).toEqual({ "001": "MOUNT ST. MARY'S, WEST", "002": "GENERAL" });
     expect(r.trimmed).toBe(1);
     expect(renderTable("Facilities", r.rows)).toContain(`"001": "MOUNT ST. MARY'S, WEST",`);
+  });
+});
+
+// Dotted names are the IRIS convention, and `--module` wrote
+// `export const "A.B.C": ...` for every one of them, which does not parse.
+describe("a dotted table name in a module", () => {
+  test("the export is an identifier and the module parses", () => {
+    const mod = renderModule("Dept.ADT.Facility", { DO: "DO" }, "f.csv");
+    expect(mod).toContain(`export const DeptADTFacility: Record<string, string> = {`);
+    expect(() => new Bun.Transpiler({ loader: "ts" }).transformSync(mod)).not.toThrow();
+  });
+
+  test("the usage hint wires it in under the real name", () => {
+    const mod = renderModule("Dept.ADT.Facility", { DO: "DO" }, "f.csv");
+    expect(mod).toContain(`tables: { "Dept.ADT.Facility": DeptADTFacility },`);
+  });
+
+  test("a plain name keeps the shorthand", () => {
+    expect(tablesEntry("Facilities")).toBe("Facilities");
+  });
+
+  test("names that cannot start an identifier still make one", () => {
+    expect(identName("2026.Codes")).toBe("_2026Codes");
+    expect(identName("...")).toBe("Table");
+  });
+});
+
+describe("--table as typed", () => {
+  test("a leading .\\ or ./ is not part of the name", () => {
+    expect(tableArg(".\\Dept.ADT.Facility")).toEqual({ name: "Dept.ADT.Facility" });
+    expect(tableArg("./Sex")).toEqual({ name: "Sex" });
+  });
+
+  test("a dotted name is not mistaken for a file", () => {
+    expect(tableArg("Dept.ADT.Facility")).toEqual({ name: "Dept.ADT.Facility" });
+  });
+
+  test("a spreadsheet file is refused, with the name it probably meant", () => {
+    const got = tableArg(".\\Dept.ADT.Facility.csv");
+    expect("error" in got && got.error).toContain("--table Dept.ADT.Facility");
+  });
+});
+
+// The wrong-file case: the table exists, just not in the spec being read.
+describe("which sibling spec declares a table", () => {
+  const dir = mkdtempSync(join(tmpdir(), "hl7-bench-siblings-"));
+  const active = join(dir, "transform.active.local.ts");
+  writeFileSync(active, `tables: { "Dept.ADT.Other": {} }`);
+  writeFileSync(join(dir, "transform.old.local.ts"), `tables: {\n  "Dept.ADT.Facility": { DO: "DO" },\n}`);
+  writeFileSync(join(dir, "transform.bare.local.ts"), `tables: { Sex: { M: "MALE" } }`);
+  writeFileSync(join(dir, "tables.facility.ts"), `export const x = { "Dept.ADT.Facility": 1 }`);
+
+  test("a quoted name is found in the sibling, not in a module of rows", () => {
+    expect(specsDeclaring("Dept.ADT.Facility", active)).toEqual(["transform.old.local.ts"]);
+  });
+
+  test("a bare identifier key is found too", () => {
+    expect(specsDeclaring("Sex", active)).toEqual(["transform.bare.local.ts"]);
+  });
+
+  test("the active spec is never offered as the other file", () => {
+    expect(specsDeclaring("Dept.ADT.Other", active)).toEqual([]);
   });
 });

@@ -63,6 +63,8 @@
  * gets refused as though it were never listed.
  */
 
+import { readdirSync, readFileSync } from "node:fs";
+import { dirname, join, resolve } from "node:path";
 import type { Spec } from "../spec";
 
 // ---------------------------------------------------------------------------
@@ -118,6 +120,57 @@ export interface LookupResult {
 }
 
 // ---------------------------------------------------------------------------
+
+/**
+ * `--table` as typed, made into a table name or refused with the reason.
+ *
+ * PowerShell tab completion turns `Dept<TAB>` into `.\Dept.ADT.Facility.csv`,
+ * and both that and the bare `.\Name` were taken as table names and reported
+ * as missing. The `.\` is stripped, because no table name starts with one. A
+ * `.csv` is refused, not stripped: the file name and the table name are often
+ * the same, but nothing makes them so, and guessing would emit a table the
+ * person never named.
+ */
+export function tableArg(raw: string): { name: string } | { error: string } {
+  const name = raw.replace(/^\.[\\/]/, "");
+  if (/\.(csv|txt|tsv|xlsx?)$/i.test(name)) {
+    return {
+      error:
+        `--table takes the table name, not the source file: "${raw}".\n` +
+        `The name is the first argument you gave tables.ts, e.g. --table ${name.replace(/\.[^.]+$/, "")}`,
+    };
+  }
+  return { name };
+}
+
+/**
+ * Sibling spec files that declare `table`, for when the active spec does not.
+ *
+ * A text search, not a load: loading a spec runs it, and the point is to find
+ * the file you edited by mistake, which may not even compile. Only the spec's
+ * own folder and only `transform*.ts`, so a module of rows or a test fixture
+ * cannot be offered as the spec to switch to.
+ */
+export function specsDeclaring(table: string, specPath: string): string[] {
+  const dir = dirname(specPath);
+  const quoted = JSON.stringify(table) + ":";
+  const bare = new RegExp(`(^|[\\s{,])${table.replace(/[$]/g, "\\$")}\\s*:`, "m");
+  const isIdent = /^[A-Za-z_$][A-Za-z0-9_$]*$/.test(table);
+  let files: string[];
+  try {
+    files = readdirSync(dir);
+  } catch {
+    return [];
+  }
+  return files
+    .filter((f) => /^transform.*\.ts$/.test(f) && !f.endsWith(".test.ts"))
+    .filter((f) => resolve(dir, f) !== resolve(specPath))
+    .filter((f) => {
+      const text = readFileSync(join(dir, f), "utf8");
+      return text.includes(quoted) || (isIdent && bare.test(text));
+    })
+    .sort();
+}
 
 /**
  * Build the import document for some or all of the spec's tables.
