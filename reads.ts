@@ -37,7 +37,7 @@
 
 import { Message } from "./hl7";
 import {
-  describeSource, segmentOf, sourcePathsOf,
+  describeSource, parsePath, segmentOf, sourcePathsOf,
   type Block, type Row, type Spec,
 } from "./spec";
 import { assertRunnable, gate, readPath, resolve, segFor, walk, type Ctx } from "./run";
@@ -80,6 +80,27 @@ function heading(block: Block, n: number, total: number): string {
 }
 
 /**
+ * Whether `path` names a field beyond the end of every occurrence it could be
+ * read from, and the widest field count seen.
+ *
+ * Inside a repeat or a bundle that is the one scoped segment. Outside, it is
+ * every occurrence in the message, so a field that exists on any of them is
+ * never called past the end: the claim is only made when no occurrence could
+ * have answered.
+ */
+function beyond(ctx: Ctx, path: string): { over: boolean; carries: number } {
+  const id = segmentOf(path);
+  const scoped =
+    (ctx.current && ctx.repeatOver === id) || ctx.companions?.ids.includes(id);
+  const segs = scoped
+    ? [segFor(ctx, path)].filter((s) => s !== undefined)
+    : ctx.msg.segments.filter((s) => s.id === id);
+  if (segs.length === 0) return { over: false, carries: 0 };
+  const carries = Math.max(...segs.map((s) => s.fieldCount));
+  return { over: parsePath(path).field > carries, carries };
+}
+
+/**
  * Why one row delivered nothing, in the most actionable form available.
  *
  * Ordered by what you would chase first. An absent segment outranks an empty
@@ -99,6 +120,25 @@ function diagnose(ctx: Ctx, row: Row): { why: string; absent: boolean } {
     return {
       absent: true,
       why: `no ${which} in this message, so IRIS has nothing to resolve`,
+    };
+  }
+
+  // A field number past the last field the segment carries reads as "" in IRIS
+  // with no error, exactly like a field the sender left blank. They are not the
+  // same problem: blank is a sender question, past the end is a wrong field
+  // number. Seen on a radiology DFT feed, where "OBX-22 to TXA-4" was asked for and OBX stops
+  // at 17. Outranks every kind below, because no table, step or literal can
+  // explain a read of a field that does not exist.
+  const past = paths
+    .map((p) => ({ p, ...beyond(ctx, p) }))
+    .filter((x) => x.over);
+  if (past.length > 0) {
+    const edges = [...new Set(past.map((x) => `${segmentOf(x.p)} carries ${x.carries} fields`))];
+    return {
+      absent: false,
+      why:
+        `${past.map((x) => x.p).join(", ")} past the end: ${edges.join(", ")} in this message. ` +
+        `A wrong field number, not a quiet sender`,
     };
   }
 

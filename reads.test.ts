@@ -162,18 +162,18 @@ describe("why each row came back empty", () => {
 
   test("an empty field says which path was empty", () => {
     const spec = base({
-      blocks: [{ id: "PID", rows: [{ target: "PID-11", from: copy("PID-11") }] }],
+      blocks: [{ id: "PID", rows: [{ target: "PID-4", from: copy("PID-4") }] }],
     });
-    expect(whyFor(spec)).toContain("PID-11");
+    expect(whyFor(spec)).toContain("PID-4");
     expect(whyFor(spec)).toContain("empty");
   });
 
   test("firstOf with everything empty lists all the paths tried", () => {
     const spec = base({
-      blocks: [{ id: "PID", rows: [{ target: "PID-3", from: firstOf("PID-11", "PID-13") }] }],
+      blocks: [{ id: "PID", rows: [{ target: "PID-3", from: firstOf("PID-4", "PID-6") }] }],
     });
-    expect(whyFor(spec)).toContain("PID-11");
-    expect(whyFor(spec)).toContain("PID-13");
+    expect(whyFor(spec)).toContain("PID-4");
+    expect(whyFor(spec)).toContain("PID-6");
   });
 
   // The one that looks like a broken table and is not: the key was read fine,
@@ -190,9 +190,9 @@ describe("why each row came back empty", () => {
 
   test("a lookup whose KEY field is empty says so instead of blaming the table", () => {
     const spec = base({
-      blocks: [{ id: "PID", rows: [{ target: "PID-8", from: lookup("Sex", "PID-11", blank()) }] }],
+      blocks: [{ id: "PID", rows: [{ target: "PID-8", from: lookup("Sex", "PID-4", blank()) }] }],
     });
-    expect(whyFor(spec)).toContain("PID-11 is empty");
+    expect(whyFor(spec)).toContain("PID-4 is empty");
   });
 
   test("pickRepeat that matched nothing names the component and the value", () => {
@@ -347,5 +347,67 @@ describe("the rendered report", () => {
   // because a clean run is exactly when someone would take it for a full check.
   test("the groups caveat is printed unconditionally", () => {
     expect(renderReads(base(), on(base()))).toContain("Groups are not checked");
+  });
+});
+
+// A field number past the end of the segment reads as "" in IRIS, the same as a
+// field the sender left blank. Seen on a radiology DFT feed: "OBX-22 to TXA-4" was asked for and
+// the feed's OBX stops at 17. The report has to tell the two apart, or a wrong
+// field number gets chased as a sender question.
+describe("a field past the end of the segment", () => {
+  const OBX = [
+    "MSH|^~\\&|SENDAPP|SENDFAC|RECVAPP|RECVFAC|20260924143900||DFT^P03|MSG0002|P|2.5",
+    "PID|1||MRN9^^^MR||DOE^JOHN||19800101|M",
+    "OBX|1|TX|71045||line one||||||F|||20260930|20260930235141^PT^20261001025141^|F|",
+    "OBX|2|TX|71045||line two||||||F|||20260930|20260930235141^PT^20261001025141^|F|",
+  ].join("\r\n");
+  const dft = (rows: Spec["blocks"][number]["rows"], extra: Partial<Spec["blocks"][number]> = {}) =>
+    base({
+      gate: { path: "MSH-9.2", permit: { P03: "T02" } },
+      blocks: [{ id: "TXA", rows, ...extra }],
+    });
+  const whyFor = (spec: Spec, raw = OBX) => on(spec, raw).empty[0].why;
+
+  test("names the field, the segment's real width, and calls it a wrong field number", () => {
+    const why = whyFor(dft([{ target: "TXA-4", from: fromFirst("OBX", "OBX-22", "OBX-22") }]));
+    expect(why).toContain("OBX-22 past the end");
+    expect(why).toContain("OBX carries 17 fields");
+    expect(why).toContain("wrong field number");
+  });
+
+  test("a blank field inside the segment is still just empty", () => {
+    const why = whyFor(dft([{ target: "TXA-4", from: copy("OBX-4") }]));
+    expect(why).not.toContain("past the end");
+    expect(why).toContain("OBX-4 empty");
+  });
+
+  test("a component of a past-end field is past the end too", () => {
+    expect(whyFor(dft([{ target: "TXA-4", from: copy("OBX-22.1") }]))).toContain("OBX-22.1 past the end");
+  });
+
+  // The claim is only made when no occurrence could have answered. If any OBX
+  // in the message reaches field 20, OBX-20 is a sender question, not a typo.
+  test("one wider occurrence anywhere in the message withdraws the claim", () => {
+    const wider = OBX + "\r\nOBX|3|TX|71045||line three||||||F|||20260930||F||||";
+    const why = whyFor(dft([{ target: "TXA-4", from: copy("OBX-20") }]), wider);
+    expect(why).not.toContain("past the end");
+  });
+
+  test("inside a repeat it measures the occurrence being walked", () => {
+    const spec = base({
+      gate: { path: "MSH-9.2", permit: { P03: "T02" } },
+      blocks: [{
+        id: "OBX",
+        repeat: { over: "OBX", max: 5 },
+        rows: [{ target: "OBX-5", from: copy("OBX-22") }],
+      }],
+    });
+    const r = on(spec, OBX);
+    expect(r.empty).toHaveLength(2);
+    for (const e of r.empty) expect(e.why).toContain("OBX carries 17 fields");
+  });
+
+  test("an absent segment still outranks past the end", () => {
+    expect(whyFor(dft([{ target: "TXA-4", from: copy("ZZZ-22") }]))).toContain("no ZZZ in this message");
   });
 });
