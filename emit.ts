@@ -354,7 +354,7 @@ if (artifact === "process") {
 // get told what has to sit in front of the artifact just generated.
 if (engine === "bridgelink") {
   process.stderr.write(
-    `\nCHANNEL SOURCE FILTER\n  ${filterCondition(spec)}\n` +
+    `\nCHANNEL SOURCE FILTER (one JavaScript rule)\n${filterCondition(spec).replace(/^/gm, "  ")}\n` +
       `  Paste this into the channel's Source Filter. The step does NOT gate:\n` +
       `  a message this interface does not handle should never be transformed\n` +
       `  at all, rather than transformed into something else.\n`,

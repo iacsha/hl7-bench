@@ -14,6 +14,7 @@ import { runSpec } from "./run";
 import { trace, inventory } from "./trace";
 import { emitIris, dtlPath, routingCondition } from "./emit/iris";
 import { emitProcess } from "./emit/process";
+import { emitBridgelink, filterCondition } from "./emit/bridgelink";
 
 // ---------------------------------------------------------------------------
 // Fixtures
@@ -1107,6 +1108,88 @@ describe("every vocabulary kind is handled by every backend", () => {
       expect(describeFold(FOLD_SAMPLES[kind])).not.toBe("");
     });
   }
+
+  // -------------------------------------------------------------------------
+  // BridgeLink. The step runs on Rhino, which nothing here can run, so the bar
+  // is the one a channel deploy applies first: the script must PARSE. Neither
+  // the step nor the filter uses an E4X literal (every node is new XML('...')),
+  // so plain JavaScript parses them exactly as Rhino would. A line of the
+  // filter once leaked out of the step's header comment as live code; the
+  // engine refused the deploy with "invalid return", and this catches that.
+  //
+  // What the step DOES is bridgelink-check.ts against conformance/spec.ts,
+  // in a real engine.
+  // -------------------------------------------------------------------------
+
+  const aimed = (spec: Spec): Spec => ({ ...spec, bridgelink: { channelName: "Test Channel" } });
+
+  /** Parses as a JavaScript Filter/Transformer body, or throws with the reason. */
+  const parses = (body: string) => {
+    expect(() => new Function("msg", "tmp", "logger", `function step() {\n${body}\n}`)).not.toThrow();
+  };
+
+  for (const kind of SOURCE_KINDS) {
+    test(`emit/bridgelink.ts handles ${kind}`, () => {
+      const out = emitBridgelink(aimed(specFor(SAMPLES[kind])));
+      if (kind === "todo") expect(out).toContain("TODO IN1-4");
+      else expect(out).toContain("benchSet(segIN1, 'IN1', 4,");
+      parses(out);
+    });
+  }
+
+  for (const kind of STEP_KINDS) {
+    test(`emit/bridgelink.ts handles the ${kind} step`, () => {
+      const out = emitBridgelink(aimed(specFor(copy("IN1-2"), [STEP_SAMPLES[kind]])));
+      const plain = emitBridgelink(aimed(specFor(copy("IN1-2"))));
+      expect(out.replace(/^\/\/ Spec fingerprint: .*$/m, "")).not.toBe(plain.replace(/^\/\/ Spec fingerprint: .*$/m, ""));
+      parses(out);
+    });
+  }
+
+  const blRepeat = (extra: Partial<Repeat>) =>
+    emitBridgelink(aimed(repeatFor(extra))).replace(/^\/\/ Spec fingerprint: .*$/m, "");
+
+  for (const kind of SELECT_KINDS) {
+    test(`emit/bridgelink.ts handles select ${kind}`, () => {
+      expect(blRepeat({ select: SELECT_SAMPLES[kind] })).not.toBe(blRepeat({}));
+      parses(blRepeat({ select: SELECT_SAMPLES[kind] }));
+    });
+  }
+
+  for (const kind of FOLD_KINDS) {
+    test(`emit/bridgelink.ts handles fold ${kind}`, () => {
+      expect(blRepeat({ fold: FOLD_SAMPLES[kind] })).not.toBe(blRepeat({}));
+      parses(blRepeat({ fold: FOLD_SAMPLES[kind] }));
+    });
+  }
+
+  test("emit/bridgelink.ts seeds a wholeSegment block, and skips it when absent", () => {
+    const out = emitBridgelink(aimed(base({
+      blocks: [
+        { id: "MSH", wholeSegment: true, rows: [{ target: "MSH-3", from: literal("BENCH") }] },
+        { id: "PV2", wholeSegment: true, rows: [{ target: "PV2-3", from: copy("PV2-3") }] },
+      ],
+    })));
+    expect(out).toContain("function benchSeed(");
+    expect(out).toMatch(/if \(seed\d+ !== null\) \{/);
+    parses(out);
+  });
+
+  test("emit/bridgelink.ts continues numbering from the earlier block", () => {
+    const out = emitBridgelink(aimed(base({
+      blocks: [
+        { id: "IN1", repeat: { over: "IN1" }, rows: [{ target: "IN1-1", from: counter() }] },
+        { id: "IN1", continuesNumbering: true, rows: [{ target: "IN1-1", from: counter() }] },
+      ],
+    })));
+    expect(out).toContain("var benchCount = {};");
+    expect(out).toContain("(benchCount['IN1'] || 0) + 1");
+    parses(out);
+  });
+
+  test("the BridgeLink source filter parses", () => {
+    parses(filterCondition(base({ gate: { path: "MSH-9.2", permit: { A01: "A28" }, require: [{ path: "MSH-11", equals: "T" }] } })));
+  });
 });
 
 // ---------------------------------------------------------------------------

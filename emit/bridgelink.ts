@@ -42,8 +42,8 @@
 import { fingerprint } from "../fingerprint";
 import { assertRunnable } from "../run";
 import {
-  emptyTables, parsePath,
-  type Spec, type Source, type Step, type Row, type Block,
+  emptyTables, parsePath, seedGuarded, describeSelect, describeFold,
+  type Spec, type Source, type Step, type Row, type Block, type Select,
 } from "../spec";
 
 // ---------------------------------------------------------------------------
@@ -200,10 +200,17 @@ function benchOrd(name) {
  */
 function benchInsert(parent, name) {
   // A node holding loose text cannot also hold numbered children: the text
-  // would serialize alongside them. Reachable only when one spec assigns both
-  // a field and one of that field's components.
+  // would serialize alongside them. The text IS the first piece -- the same
+  // trap benchDown reads around -- so it moves into .1 rather than vanishing.
+  // Reachable whenever a seeded segment carries "SMITH" in PID-5 and a row
+  // writes PID-5.2: clearing it would deliver "^JOHN".
   if (parent.hasSimpleContent() && parent.toString() !== '') {
+    var text = parent.toString();
+    var first = name.substring(0, name.lastIndexOf('.')) + '.1';
     parent.setChildren(new XMLList());
+    parent.appendChild(new XML('<' + first + '/>'));
+    parent.child(first)[0].setChildren(text);
+    if (name === first) { return; }
   }
   var mine = benchOrd(name);
   var kids = parent.children();
@@ -228,15 +235,43 @@ function benchAt(parent, name, index) {
   return kids[index - 1];
 }
 
-/** Write a path numerically. Creates every level it needs. */
-function benchSet(seg, id, field, rep, comp, sub, value) {
-  var node = benchAt(seg, id + '.' + field, rep);
-  if (comp !== 0) {
-    node = benchAt(node, id + '.' + field + '.' + comp, 1);
-    if (sub !== 0) {
-      node = benchAt(node, id + '.' + field + '.' + comp + '.' + sub, 1);
+/**
+ * Put a value into a node, split the way the parser would have split it.
+ *
+ * A value carrying separators -- TXA-22 written whole from sameAs("TXA-5") as
+ * "1234^N^M" -- written as one text node is a field with ONE component as far
+ * as E4X is concerned. The next write to TXA-22.19 then counts from that one
+ * node and lands two places to the right of where the bench puts it. Measured
+ * on BridgeLink 26.9.0. Splitting at write time gives the shape the inbound
+ * parser produces, so every later read and write counts the same way.
+ */
+function benchFill(node, base, value, sep, next) {
+  if (sep === '' || value.indexOf(sep) === -1) { node.setChildren(value); return; }
+  node.setChildren(new XMLList());
+  var parts = value.split(sep);
+  for (var i = 0; i < parts.length; i++) {
+    var name = base + '.' + (i + 1);
+    node.appendChild(new XML('<' + name + '/>'));
+    var kid = node.child(name)[0];
+    if (next !== '' && parts[i].indexOf(next) !== -1) {
+      benchFill(kid, name, parts[i], next, '');
+    } else {
+      kid.setChildren(parts[i]);
     }
   }
+}
+
+/** Write a path numerically. Creates every level it needs. */
+function benchSet(seg, id, field, rep, comp, sub, value) {
+  var base = id + '.' + field;
+  var node = benchAt(seg, base, rep);
+  // MSH-1 and MSH-2 ARE the separators, so they are never split on them.
+  if (id === 'MSH' && field <= 2) { node.setChildren(value); return; }
+  if (comp === 0) { benchFill(node, base, value, benchComp, benchSub); return; }
+  base = base + '.' + comp;
+  node = benchAt(node, base, 1);
+  if (sub === 0) { benchFill(node, base, value, benchSub, ''); return; }
+  node = benchAt(node, base + '.' + sub, 1);
   node.setChildren(value);
 }
 
@@ -324,6 +359,65 @@ function benchDefault(v, d) {
 }
 `.trimEnd();
 
+const SEED_RUNTIME = `
+/**
+ * A target segment seeded from a source segment, whole, appended to the
+ * outbound message. A deep copy: the rows overwrite fields on top of it, and
+ * writing into the source node itself would change what later reads see.
+ */
+function benchSeed(root, src) {
+  var copy = src.copy();
+  root.appendChild(copy);
+  var kids = root.child(copy.localName());
+  return kids[kids.length() - 1];
+}
+`.trimEnd();
+
+const RANK_RUNTIME = `
+/**
+ * Order two values the way the bench does: empty lowest, numeric when BOTH
+ * are digits only, text otherwise. Digits only on purpose -- Number() also
+ * accepts "02", " 2" and "0x10", and the bench and the IRIS side agree with it
+ * on none of them.
+ */
+function benchRank(a, b) {
+  if (a === b) { return 0; }
+  if (a === '') { return -1; }
+  if (b === '') { return 1; }
+  if (/^\\d+$/.test(a) && /^\\d+$/.test(b)) { return parseInt(a, 10) - parseInt(b, 10); }
+  return a < b ? -1 : 1;
+}
+`.trimEnd();
+
+const SAMEAS_RUNTIME = `
+/** Every target an earlier row wrote, by target path, as written. */
+var benchW = {};
+
+/**
+ * What an earlier row made of a target. Written whole, that value; written as
+ * components, the components put back together in position, empties included,
+ * so TXA-5.1/.2/.3 reads back as the composite TXA-5 now holds.
+ */
+function benchSameAs(target) {
+  if (Object.prototype.hasOwnProperty.call(benchW, target)) { return benchW[target]; }
+  var parts = [];
+  var top = 0;
+  for (var k in benchW) {
+    if (!Object.prototype.hasOwnProperty.call(benchW, k)) { continue; }
+    if (k.indexOf(target + '.') !== 0) { continue; }
+    var rest = k.substring(target.length + 1);
+    if (!/^\\d+$/.test(rest)) { continue; }
+    var n = parseInt(rest, 10);
+    parts[n - 1] = benchW[k];
+    if (n > top) { top = n; }
+  }
+  if (top === 0) { return ''; }
+  var out = [];
+  for (var i = 0; i < top; i++) { out.push(parts[i] === undefined ? '' : parts[i]); }
+  return out.join(benchComp);
+}
+`.trimEnd();
+
 // ---------------------------------------------------------------------------
 // Sources
 // ---------------------------------------------------------------------------
@@ -335,13 +429,19 @@ interface Scope {
   sourceVar?: string;
   /** Local holding the target segment being filled. */
   targetVar: string;
-  /** Local holding the OUTPUT ordinal, when inside a repeat. */
+  /** Local holding this segment's OUTPUT ordinal, what counter() reads. */
   counterVar?: string;
 }
 
 interface State {
   spec: Spec;
   temp: number;
+  /** A sameAs() row reads back what earlier rows wrote, so every row records it. */
+  record: boolean;
+  /** Some block continues numbering, so every block reports its count. */
+  counts: boolean;
+  /** Plain blocks emitted so far: names their locals apart from the temps. */
+  blocks: number;
 }
 
 function level(spec: Spec): "off" | "warn" | "trace" {
@@ -394,13 +494,20 @@ function sourceCode(
       // The key is read into a local rather than read twice. `passthrough`
       // makes the fallback the key itself, so the obvious inline form would
       // walk the message a second time for the same value.
+      //
+      // `from` supersedes `path` when the key needs finding first (the NK1
+      // whose NK1-1 is 2). Every KeySource kind is also a Source kind, so it
+      // goes through this same function, one level deep by the spec's rule.
       const k = `key${st.temp++}`;
-      const pre = [`var ${k} = ${readExpr(from.path, scope)};`];
+      const key = from.from
+        ? sourceCode(st, from.from, scope)
+        : { expr: readExpr(from.path!, scope), pre: [] as string[] };
+      const pre = [...(key.pre ?? []), `var ${k} = ${key.expr};`];
       if (level(st.spec) !== "off") {
         // Asked as "is it in the table", not as "did the lookup come back
         // empty". With `passthrough` and `constant` the fallback IS a real
         // value, so a miss and a hit are indistinguishable by result.
-        const where = from.path === scope.targetVar ? from.path : from.path;
+        const where = from.path ?? from.from!.kind;
         const head = js(`${from.table} has no row for "`);
         const tail = js(`" (from ${where})`);
         pre.push(
@@ -488,8 +595,49 @@ function sourceCode(
       };
     }
 
+    case "fromWhere": {
+      // The sibling of fromFirst for "the NK1 whose NK1-1 is 2": first match
+      // wins, and none found is empty. Reads the message, never the repeat.
+      const v = `where${st.temp++}`;
+      const lv = `${v}List`;
+      const iv = `${v}i`;
+      const nv = `${v}Seg`;
+      const wp = parsePath(from.where);
+      const rp = parsePath(from.read);
+      const read = (p: ReturnType<typeof parsePath>) =>
+        `benchGet(${nv}, ${js(p.segment)}, ${p.field}, ${p.repeat}, ` +
+        `${p.component}, ${p.subcomponent})`;
+      return {
+        expr: v,
+        pre: [
+          `var ${v} = '';`,
+          `var ${lv} = benchAll(msg, ${js(from.segment)});`,
+          `for (var ${iv} = 0; ${iv} < ${lv}.length(); ${iv}++) {`,
+          `  var ${nv} = ${lv}[${iv}];`,
+          `  if (${read(wp)} === ${js(from.equals)}) {`,
+          `    ${v} = ${read(rp)};`,
+          `    break;`,
+          `  }`,
+          `}`,
+        ],
+      };
+    }
+
+    case "sameAs":
+      // Read back from benchW, which every row writes into after its steps
+      // ran. Not from the target XML: reading E4X back is a second,
+      // differently-shaped read of the thing just written.
+      return { expr: `benchSameAs(${js(from.target)})` };
+
     case "todo":
       return { expr: null };
+
+    default: {
+      // No tsc gates this repo, so an unhandled kind is caught here at emit
+      // time rather than as `undefined` in a channel.
+      const kind: never = from;
+      throw new Error(`emit/bridgelink.ts has no case for source kind "${(kind as Source).kind}"`);
+    }
   }
 }
 
@@ -514,6 +662,15 @@ function stepCode(expr: string, step: Step): string {
       return `benchStrip(${expr}, ${js(step.chars)})`;
     case "defaultTo":
       return `benchDefault(${expr}, ${js(step.value)})`;
+    case "prefix":
+      // Verbatim, delimiter included. A "^" here is a component separator only
+      // because the message declares "^"; the spec type says so, and so does
+      // the bench, which writes the same text.
+      return `${js(step.text)} + (${expr})`;
+    default: {
+      const kind: never = step;
+      throw new Error(`emit/bridgelink.ts has no case for step kind "${(kind as Step).kind}"`);
+    }
   }
 }
 
@@ -548,6 +705,7 @@ function emitRow(st: State, row: Row, scope: Scope, indent: string, out: string[
     `${indent}benchSet(${scope.targetVar}, ${js(p.segment)}, ${p.field}, ` +
       `${p.repeat}, ${p.component}, ${p.subcomponent}, ${v});`,
   );
+  if (st.record) out.push(`${indent}benchW[${js(row.target)}] = ${v};`);
 
   const lvl = level(st.spec);
   const label = row.label ?? row.target;
@@ -570,6 +728,27 @@ function emitRow(st: State, row: Row, scope: Scope, indent: string, out: string[
   }
 }
 
+/**
+ * Where a block's output ordinals start. Zero, or the count the nearest
+ * earlier block with this id reached, read at run time because a repeat
+ * delivers a different number of segments for every message.
+ */
+function startExpr(st: State, block: Block): string {
+  if (!block.continuesNumbering) return "0";
+  return `(benchCount[${js(block.id)}] || 0)`;
+}
+
+/**
+ * The statement that opens the target segment: a copy of the source when the
+ * block seeds, an empty segment otherwise.
+ */
+function openSegment(block: Block, targetVar: string, seedFrom: string | null): string {
+  if (block.wholeSegment && seedFrom) {
+    return `var ${targetVar} = benchSeed(out, ${seedFrom});`;
+  }
+  return `var ${targetVar} = benchNewSeg(out, ${js(block.id)}, benchDelims);`;
+}
+
 function emitBlock(st: State, block: Block, out: string[]): void {
   out.push("");
   if (block.note) out.push(`// ${comment(block.note)}`);
@@ -585,75 +764,189 @@ function emitBlock(st: State, block: Block, out: string[]): void {
   }
 
   const targetVar = segVarFor(block.id);
-  out.push(`var ${targetVar} = benchNewSeg(out, ${js(block.id)}, benchDelims);`);
-  const scope: Scope = { targetVar };
-  for (const row of block.rows) emitRow(st, row, scope, "", out);
+  const n = ++st.blocks;
+  const ord = `ord${n}`;
+  const scope: Scope = { targetVar, counterVar: ord };
+  out.push(`var ${ord} = ${startExpr(st, block)} + 1;`);
+
+  if (!block.wholeSegment) {
+    out.push(openSegment(block, targetVar, null));
+    for (const row of block.rows) emitRow(st, row, scope, "", out);
+  } else {
+    const src = `seed${n}`;
+    out.push(`var ${src} = benchSeg(msg, ${js(block.id)});`);
+    if (seedGuarded(st.spec, block)) {
+      // A seed that finds nothing delivers nothing, rows included: they exist
+      // to overwrite fields on a copy, and there is no copy. The bench and both
+      // IRIS forms agree on this, measured, so the channel does too.
+      out.push(
+        `// ${block.id} is seeded whole from the source. No ${block.id} in, no ${block.id} out.`,
+        `if (${src} !== null) {`,
+        `  ${openSegment(block, targetVar, src)}`,
+      );
+      for (const row of block.rows) emitRow(st, row, scope, "  ", out);
+      out.push(`}`);
+    } else {
+      // MSH, or listed in iris.alwaysPresent: a claim that it is always there.
+      // When the claim is false the bench delivers a bare segment, so this does.
+      out.push(
+        `// ${block.id} is seeded whole from the source, and assumed always present.`,
+        `var ${targetVar} = ${src} !== null ? benchSeed(out, ${src}) : benchNewSeg(out, ${js(block.id)}, benchDelims);`,
+      );
+      for (const row of block.rows) emitRow(st, row, scope, "", out);
+    }
+  }
+  if (st.counts) out.push(`benchCount[${js(block.id)}] = ${ord};`);
 }
 
+/**
+ * A repeat, as the bench runs it: every stage a separate pass, in the order
+ * that is load-bearing.
+ *
+ *     all  ->  skipWhenEmpty  ->  select  ->  fold  ->  max
+ *
+ * One loop with every guard in it is shorter and only right while there is no
+ * select or fold: `highest` cannot decide before it has seen every occurrence,
+ * and `max` counts what is delivered AFTER folding, not what arrived.
+ */
 function emitRepeat(st: State, block: Block, index: number, out: string[]): void {
   const r = block.repeat!;
-  const k = `k${index + 1}`;
-  const n = `n${index + 1}`;
-  const cur = `cur${index + 1}`;
-  const list = `src${index + 1}`;
+  const i = index + 1;
+  const all = `all${i}`;
+  const list = `src${i}`;
+  const k = `k${i}`;
+  const cur = `cur${i}`;
+  const n = `n${i}`;
   const targetVar = segVarFor(block.id);
+  const get = (seg: string, path: string) => {
+    const p = parsePath(path);
+    return `benchGet(${seg}, ${js(p.segment)}, ${p.field}, ${p.repeat}, ${p.component}, ${p.subcomponent})`;
+  };
 
   out.push("");
   if (block.note) out.push(`// ${comment(block.note)}`);
   out.push(
-    `// ${comment(block.id)}: numbered by OUTPUT ordinal (${n}), not by source repeat (${k}).`,
+    `// ${comment(block.id)}: numbered by OUTPUT ordinal (${n}), not by source position.`,
     `//      A skipped occurrence must not leave a hole in the set ids.`,
-    `var ${n} = 0;`,
-    `var ${list} = benchAll(msg, ${js(r.over)});`,
-    `for (var ${k} = 0; ${k} < ${list}.length(); ${k}++) {`,
-    `  var ${cur} = ${list}[${k}];`,
+    `var ${all} = benchAll(msg, ${js(r.over)});`,
+    `var ${list} = [];`,
   );
 
-  const scope: Scope = {
-    repeatOver: r.over,
-    sourceVar: cur,
-    targetVar,
-    counterVar: n,
-  };
-
+  // Stage 1: skip.
   const guards: string[] = [];
   if (r.skipWhenEmpty) {
-    const p = parsePath(r.skipWhenEmpty);
-    guards.push(
-      `benchGet(${cur}, ${js(p.segment)}, ${p.field}, ${p.repeat}, ` +
-        `${p.component}, ${p.subcomponent}) !== ''`,
-    );
+    guards.push(`${get(`${all}[${k}]`, r.skipWhenEmpty)} !== ''`);
     if (r.skipValues?.length) {
       guards.push(
-        `[${r.skipValues.map(js).join(", ")}].indexOf(benchGet(${cur}, ${js(p.segment)}, ${p.field}, ` +
-          `${p.repeat}, ${p.component}, ${p.subcomponent})) < 0`,
+        `[${r.skipValues.map(js).join(", ")}].indexOf(${get(`${all}[${k}]`, r.skipWhenEmpty)}) < 0`,
       );
     }
   }
-  // Counted on the OUTPUT, so occurrences past the cap are dropped after the
-  // skip rule has run, which is the order the runner uses.
-  if (r.max !== undefined) guards.push(`${n} < ${r.max}`);
+  out.push(
+    `for (var ${k} = 0; ${k} < ${all}.length(); ${k}++) {`,
+    guards.length
+      ? `  if (${guards.join(" && ")}) { ${list}.push(${all}[${k}]); }`
+      : `  ${list}.push(${all}[${k}]);`,
+    `}`,
+  );
 
-  const body: string[] = [];
-  const bodyIndent = guards.length ? "    " : "  ";
-  body.push(`${bodyIndent}${n} = ${n} + 1;`);
-  body.push(`${bodyIndent}var ${targetVar} = benchNewSeg(out, ${js(block.id)}, benchDelims);`);
-  for (const row of block.rows) emitRow(st, row, scope, bodyIndent, body);
-
-  if (guards.length) {
-    out.push(`  if (${guards.join(" && ")}) {`, ...body, `  }`);
-  } else {
-    out.push(...body);
+  // Stage 2: select.
+  if (r.select) {
+    const keep = `keep${i}`;
+    const j = `j${i}`;
+    out.push(`// select: ${comment(describeSelect(r.select))}`);
+    switch (r.select.kind) {
+      case "equals":
+        out.push(
+          `var ${keep} = [];`,
+          `for (var ${j} = 0; ${j} < ${list}.length; ${j}++) {`,
+          `  if (${get(`${list}[${j}]`, r.select.path)} === ${js(r.select.value)}) { ${keep}.push(${list}[${j}]); }`,
+          `}`,
+          `${list} = ${keep};`,
+        );
+        break;
+      case "highest": {
+        const top = `top${i}`;
+        out.push(
+          `if (${list}.length > 0) {`,
+          `  var ${top} = ${get(`${list}[0]`, r.select.path)};`,
+          `  for (var ${j} = 1; ${j} < ${list}.length; ${j}++) {`,
+          `    if (benchRank(${get(`${list}[${j}]`, r.select.path)}, ${top}) > 0) { ${top} = ${get(`${list}[${j}]`, r.select.path)}; }`,
+          `  }`,
+          `  var ${keep} = [];`,
+          `  for (var ${j} = 0; ${j} < ${list}.length; ${j}++) {`,
+          `    if (${get(`${list}[${j}]`, r.select.path)} === ${top}) { ${keep}.push(${list}[${j}]); }`,
+          `  }`,
+          `  ${list} = ${keep};`,
+          `}`,
+        );
+        break;
+      }
+      default: {
+        const kind: never = r.select;
+        throw new Error(`emit/bridgelink.ts has no case for select kind "${(kind as Select).kind}"`);
+      }
+    }
   }
 
+  // Stage 3: fold.
+  if (r.fold) {
+    switch (r.fold.kind) {
+      case "continuation": {
+        const f = r.fold;
+        const p = parsePath(f.path);
+        const held = `held${i}`;
+        const merged = `fold${i}`;
+        const j = `f${i}`;
+        const line = `line${i}`;
+        out.push(
+          `// fold: ${comment(describeFold(f))}`,
+          `var ${merged} = [];`,
+          `var ${held} = null;`,
+          `for (var ${j} = 0; ${j} < ${list}.length; ${j}++) {`,
+          `  var ${line} = ${get(`${list}[${j}]`, f.path)};`,
+          `  if (${held} !== null && ${line}.charAt(0) === ' ') {`,
+          `    benchSet(${held}, ${js(p.segment)}, ${p.field}, ${p.repeat}, ${p.component}, ${p.subcomponent}, ` +
+            `${get(held, f.path)} + ${js(f.join)} + ${line});`,
+          `    continue;`,
+          `  }`,
+          `  if (${held} !== null) { ${merged}.push(${held}); }`,
+          // A copy, so the merge never writes into the inbound message.
+          `  ${held} = ${list}[${j}].copy();`,
+          `}`,
+          `if (${held} !== null) { ${merged}.push(${held}); }`,
+          `${list} = ${merged};`,
+        );
+        break;
+      }
+      default: {
+        const kind: never = r.fold.kind;
+        throw new Error(`emit/bridgelink.ts has no case for fold kind "${kind}"`);
+      }
+    }
+  }
+
+  // Stage 4: max, then deliver.
+  const d = `d${i}`;
+  const bound = r.max !== undefined ? `${d} < ${list}.length && ${d} < ${r.max}` : `${d} < ${list}.length`;
+  out.push(
+    `var ${n} = ${startExpr(st, block)};`,
+    `for (var ${d} = 0; ${bound}; ${d}++) {`,
+    `  var ${cur} = ${list}[${d}];`,
+    `  ${n} = ${n} + 1;`,
+    `  ${openSegment(block, targetVar, cur)}`,
+  );
+  const scope: Scope = { repeatOver: r.over, sourceVar: cur, targetVar, counterVar: n };
+  for (const row of block.rows) emitRow(st, row, scope, "  ", out);
   out.push(`}`);
+  if (st.counts) out.push(`benchCount[${js(block.id)}] = ${n};`);
 }
 
 // ---------------------------------------------------------------------------
 // The channel's half of the job
 // ---------------------------------------------------------------------------
 
-/** A path as plain E4X, for code that runs without the helpers above. */
+/** A path as E4X, read through the filter's own text helper. */
 function e4x(path: string): string {
   const p = parsePath(path);
   let s = `msg[${js(p.segment)}][${js(`${p.segment}.${p.field}`)}]`;
@@ -661,8 +954,35 @@ function e4x(path: string): string {
   if (p.subcomponent !== 0) {
     s += `[${js(`${p.segment}.${p.field}.${p.component}.${p.subcomponent}`)}]`;
   }
-  return `${s}.toString()`;
+  return `benchGateText(${s})`;
 }
+
+/**
+ * The filter's one helper. A filter script runs without the transformer's
+ * runtime, so it carries its own copy of the only read it needs.
+ *
+ * Measured on BridgeLink 26.9.0, not assumed: the HL7 v2 parser puts even a
+ * one-piece field's value in a .1 child, `<MSH.11><MSH.11.1>T</MSH.11.1></MSH.11>`.
+ * A bare `.toString()` on that returns MARKUP, so a gate on MSH-11 compared
+ * markup against 'T' and filtered every message. This flattens instead, joined
+ * with the message's own separators, which is what the bench means by the path.
+ */
+const GATE_RUNTIME = [
+  `function benchGateText(list) {`,
+  `  if (list.length() === 0) { return ''; }`,
+  `  var enc = msg['MSH']['MSH.2'].toString();`,
+  `  var flat = function (n) {`,
+  `    if (!n.hasComplexContent()) { return n.toString(); }`,
+  `    var nm = n.name() === null ? '' : n.name().toString();`,
+  `    var sep = nm.split('.').length > 2 ? (enc.charAt(3) || '&') : (enc.charAt(0) || '^');`,
+  `    var parts = [];`,
+  `    var kids = n.children();`,
+  `    for (var i = 0; i < kids.length(); i++) { parts.push(flat(kids[i])); }`,
+  `    return parts.join(sep);`,
+  `  };`,
+  `  return flat(list[0]);`,
+  `}`,
+];
 
 /**
  * The SOURCE FILTER this step expects in front of it.
@@ -672,11 +992,8 @@ function e4x(path: string): string {
  * into something else. Same decision as the IRIS routing rule, printed here for
  * the same reason -- it is a step you would otherwise forget.
  *
- * Written as plain E4X because a filter script does not have the helpers this
- * emitter puts at the top of the transformer. That is safe for a gate on a
- * component of MSH-9, which always arrives with its separators; it is the one
- * place in the generated channel where the component trap is not handled for
- * you, so gate on something structured.
+ * A whole filter script: one helper, then one `return`. Paste it as a single
+ * JavaScript rule. See GATE_RUNTIME for why even this needs a helper.
  */
 export function filterCondition(spec: Spec): string {
   if (spec.gate.enabled === false) {
@@ -694,9 +1011,10 @@ export function filterCondition(spec: Spec): string {
   });
   // Parenthesised because || binds looser than && and a filter that reads
   // A && B || C lets C through on its own.
-  return required.length === 0
+  const ret = required.length === 0
     ? `return ${events};`
     : `return ${required.join(" && ")} && (${events});`;
+  return [...GATE_RUNTIME, ret].join("\n");
 }
 
 // ---------------------------------------------------------------------------
@@ -760,8 +1078,14 @@ export function emitBridgelink(spec: Spec): string {
   assertRunnable(spec, "bridgelink");
 
   const bl = spec.bridgelink!;
-  const st: State = { spec, temp: 1 };
   const used = kindsUsed(spec);
+  const st: State = {
+    spec,
+    temp: 1,
+    record: used.sources.has("sameAs"),
+    counts: spec.blocks.some((b) => b.continuesNumbering),
+    blocks: 0,
+  };
   const tables = referencedTables(spec);
   const empties = emptyTables(spec).filter((t) => tables.includes(t));
   const lvl = level(spec);
@@ -802,7 +1126,9 @@ export function emitBridgelink(spec: Spec): string {
         ]
       : [
           `// Source filter this step expects in front of it:`,
-          `//   ${filterCondition(spec)}`,
+          // One comment line per script line: the filter is several lines now,
+          // and a bare newline here leaked its `return` into the step as code.
+          ...filterCondition(spec).split("\n").map((l) => `//   ${l}`),
         ]),
   ];
 
@@ -834,6 +1160,17 @@ export function emitBridgelink(spec: Spec): string {
   if (used.sources.has("lookup")) out.push(LOOKUP_RUNTIME);
   if (used.steps.has("stripDelims") || used.steps.has("stripChars")) out.push(STRIP_RUNTIME);
   if (used.steps.has("defaultTo")) out.push(DEFAULT_RUNTIME);
+  if (spec.blocks.some((b) => b.wholeSegment)) out.push(SEED_RUNTIME);
+  if (spec.blocks.some((b) => b.repeat?.select?.kind === "highest")) out.push(RANK_RUNTIME);
+  if (st.record) out.push(SAMEAS_RUNTIME);
+  if (st.counts) {
+    out.push(
+      ``,
+      `// Segments delivered so far, per id, so a block that continues numbering`,
+      `// picks up after the last one rather than overwriting set id 1.`,
+      `var benchCount = {};`,
+    );
+  }
 
   out.push("");
   if (tables.length > 0) out.push(...tablesLiteral(spec, tables));

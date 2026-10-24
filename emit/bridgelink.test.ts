@@ -236,11 +236,16 @@ describe("repeats", () => {
     // second delivered segment is 2 even when it came from the third IN1.
     const out = spec();
     expect(out).toContain("var v_IN1_1 = String(n1);");
-    expect(out).toContain("for (var k1 = 0; k1 < src1.length(); k1++)");
+    expect(out).toContain("for (var k1 = 0; k1 < all1.length(); k1++)");
+    expect(out).toContain("n1 = n1 + 1;");
   });
 
   test("the cap counts what was delivered, after the skip rule ran", () => {
-    expect(spec()).toContain("if (benchGet(cur1, 'IN1', 2, 1, 0, 0) !== '' && n1 < 2)");
+    // Skip is its own pass; the cap bounds the DELIVERY loop over what survived.
+    const out = spec();
+    expect(out).toContain("if (benchGet(all1[k1], 'IN1', 2, 1, 0, 0) !== '') { src1.push(all1[k1]); }");
+    expect(out).toContain("d1 < src1.length && d1 < 2");
+    expect(out.indexOf("src1.push(")).toBeLessThan(out.indexOf("d1 < 2"));
   });
 
   test("a path naming the repeated segment reads the CURRENT occurrence", () => {
@@ -391,7 +396,7 @@ describe("filterCondition", () => {
     const c = filterCondition(base());
     expect(c).toContain("'A01'");
     expect(c).toContain("'A08'");
-    expect(c.startsWith("return ")).toBe(true);
+    expect(c.split("\n").pop()!.startsWith("return ")).toBe(true);
   });
 
   test("a require is ANDed and the events are parenthesised", () => {
@@ -400,8 +405,9 @@ describe("filterCondition", () => {
     const c = filterCondition(
       base({ gate: { path: "MSH-9.2", permit: { A01: "A28", A08: "A31" }, require: [{ path: "MSH-4", equals: "SENDFAC" }] } }),
     );
-    expect(c).toContain("&& (");
-    expect(c.indexOf("&&")).toBeLessThan(c.indexOf("||"));
+    const ret = c.split("\n").pop()!;
+    expect(ret).toContain("&& (");
+    expect(ret.indexOf("&&")).toBeLessThan(ret.indexOf("||"));
   });
 
   test("a gate declared upstream returns the declaration, not a condition", () => {
@@ -410,8 +416,13 @@ describe("filterCondition", () => {
     expect(c).not.toContain("return ");
   });
 
-  test("a filter reads plain E4X, because a filter script has no helpers", () => {
-    expect(filterCondition(base())).toContain("msg['MSH']['MSH.9']['MSH.9.2'].toString()");
+  test("a filter reads through its own helper, because the parser nests even one piece", () => {
+    // BridgeLink 26.9.0 parses MSH-11 "T" as <MSH.11><MSH.11.1>T</MSH.11.1></MSH.11>,
+    // and a bare toString() on that is markup. Measured: it filtered every message.
+    const c = filterCondition(base());
+    expect(c).toContain("function benchGateText(list)");
+    expect(c).toContain("benchGateText(msg['MSH']['MSH.9']['MSH.9.2'])");
+    expect(c.split("\n").pop()).not.toContain(".toString()");
   });
 });
 
