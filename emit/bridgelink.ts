@@ -501,6 +501,25 @@ function benchXPlace(root, parents, name, seed) {
 }
 `.trimEnd();
 
+const COMPANION_RUNTIME = `
+/**
+ * The companions that travel with one occurrence: the first segment of each
+ * listed id after it, up to the next segment outside the bundle. The schema's
+ * group occurrence (IN1grp(k)), read off the flat sibling list the HL7 XML
+ * holds, and the same walk the bench makes.
+ */
+function benchCompanions(occ, ids) {
+  var found = {};
+  var kids = msg.children();
+  for (var i = occ.childIndex() + 1; i < kids.length(); i++) {
+    var id = kids[i].localName();
+    if (ids.indexOf(id) < 0) { break; }
+    if (!found.hasOwnProperty(id)) { found[id] = kids[i]; }
+  }
+  return found;
+}
+`.trimEnd();
+
 const SEED_RUNTIME = `
 /**
  * A target segment seeded from a source segment, whole, appended to the
@@ -575,6 +594,8 @@ interface Scope {
   targetRecord: string;
   /** Local holding this segment's OUTPUT ordinal, what counter() reads. */
   counterVar?: string;
+  /** Inside a bundled repeat: the local holding this occurrence's companions. */
+  companions?: { varName: string; ids: string[] };
 }
 
 interface State {
@@ -675,7 +696,21 @@ function readExpr(path: string, scope: Scope): string {
   if (scope.sourceVar && scope.repeatOver && inRecord(path, scope.repeatOver)) {
     return readOn(scope.sourceVar, path, scope.repeatOver);
   }
+  const c = companionNode(path, scope);
+  if (c) return readOn(c, path, parsePath(path).segment);
   return readDoc(path);
+}
+
+/**
+ * This occurrence's companion for an HL7 path, or undefined when the path is
+ * not a companion's. Absent in the message reads as null, so a path into a
+ * coverage with no IN2 is empty rather than the first IN2 in the message.
+ */
+function companionNode(path: string, scope: Scope): string | undefined {
+  if (!scope.companions || path.startsWith("/")) return undefined;
+  const id = parsePath(path).segment;
+  if (!scope.companions.ids.includes(id)) return undefined;
+  return `(${scope.companions.varName}[${js(id)}] || null)`;
 }
 
 /**
@@ -751,7 +786,7 @@ function sourceCode(
       const segExpr =
         scope.sourceVar && scope.repeatOver === p.segment
           ? scope.sourceVar
-          : `benchSeg(msg, ${js(p.segment)})`;
+          : (companionNode(from.path, scope) ?? `benchSeg(msg, ${js(p.segment)})`);
       const at = (comp: number) =>
         `benchGet(${sv}, ${js(p.segment)}, ${p.field}, ${iv}, ${comp}, 0)`;
       const take =
@@ -1142,8 +1177,27 @@ function emitRepeat(st: State, block: Block, index: number, out: string[]): void
     `  ${n} = ${n} + 1;`,
     `  ${openSegment(block, targetVar, cur)}`,
   );
-  const scope: Scope = { repeatOver: r.over, sourceVar: cur, targetVar, targetRecord: block.id, counterVar: n };
-  for (const row of block.rows) emitRow(st, row, scope, "  ", out);
+  const ids = block.bundle ?? [];
+  const cmp = `cmp${i}`;
+  const scope: Scope = {
+    repeatOver: r.over, sourceVar: cur, targetVar, targetRecord: block.id, counterVar: n,
+    ...(ids.length ? { companions: { varName: cmp, ids } } : {}),
+  };
+  if (ids.length) out.push(`  var ${cmp} = benchCompanions(${cur}, [${ids.map(js).join(", ")}]);`);
+  for (const row of block.rows.filter((x) => inRecord(x.target, block.id))) emitRow(st, row, scope, "  ", out);
+  // Each companion right behind its own occurrence, and only when the sender's
+  // bundle carried one: the bench's rule, and the DTL's presence check.
+  for (const id of ids) {
+    const rows = block.rows.filter((x) => !x.target.startsWith("/") && parsePath(x.target).segment === id);
+    if (rows.length === 0) continue;
+    const cv = segVarFor(id);
+    out.push(
+      `  if (${cmp}.hasOwnProperty(${js(id)})) {`,
+      `    var ${cv} = benchNewSeg(out, ${js(id)}, benchDelims);`,
+    );
+    for (const row of rows) emitRow(st, row, { ...scope, targetVar: cv, targetRecord: id }, "    ", out);
+    out.push(`  }`);
+  }
   out.push(`}`);
   if (st.counts) out.push(`benchCount[${js(block.id)}] = ${n};`);
 }
@@ -1423,6 +1477,7 @@ export function emitBridgelink(spec: Spec): string {
   if (used.steps.has("stripDelims") || used.steps.has("stripChars")) out.push(STRIP_RUNTIME);
   if (used.steps.has("defaultTo")) out.push(DEFAULT_RUNTIME);
   if (st.src === "xml" || st.tgt === "xml") out.push(XML_RUNTIME);
+  if (spec.blocks.some((b) => (b.bundle ?? []).length > 0)) out.push(COMPANION_RUNTIME);
   if (spec.blocks.some((b) => b.wholeSegment)) out.push(SEED_RUNTIME);
   if (spec.blocks.some((b) => b.repeat?.select?.kind === "highest")) out.push(RANK_RUNTIME);
   if (st.record) out.push(SAMEAS_RUNTIME);

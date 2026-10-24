@@ -19,8 +19,8 @@
  * on purpose. They are built field by field (`seg()` below) so a field number
  * in a comment and a field number on the wire cannot drift apart.
  *
- * Out of the vocabulary on purpose: `bundle`, which BridgeLink refuses by name.
- * Add it here when that refusal goes.
+ * `bundle` lives in conformance/bundle.ts: it refuses wholeSegment, and this
+ * spec seeds its IN1 repeat.
  */
 
 import {

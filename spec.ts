@@ -1253,12 +1253,6 @@ function engineProblems(spec: Spec, engine: Engine): string[] {
         ]
       : [];
   }
-  if (bundledBlocks(spec).length > 0) {
-    return [
-      `BridgeLink does not emit a bundle yet (${bundledBlocks(spec).join(", ")}). ` +
-        `The step would drop every companion segment, so it is refused instead.`,
-    ];
-  }
   const bl = spec.bridgelink;
   if (bl === undefined) {
     return [

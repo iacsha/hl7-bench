@@ -17,6 +17,7 @@ deployed channel and compared line for line with the bench's own output:
 | Run | Result |
 |---|---|
 | `conformance/spec.ts`: every source, step, repeat stage and block option | 5/5 agree |
+| `conformance/bundle.ts`: IN1 with its IN2 (with, without, skipped) | 2/2 agree |
 | Six real site specs (ADT passthrough, DFT to MDM with select and fold) | 9/9 agree |
 | `bridgelink:channel` file stamped 4.5.0, imported into 26.9.0 | imported, deployed, transformed |
 | Same channel with an MLLP listener and an MLLP sender | deployed, STARTED |
@@ -63,9 +64,8 @@ export const spec: Spec = {
 };
 ```
 
-`WORKFLOW.md` covers the whole vocabulary. Every item in it works on
-BridgeLink except `bundle`, which is refused by name rather than dropping the
-companion segments.
+`WORKFLOW.md` covers the whole vocabulary, and every item in it works on
+BridgeLink, `bundle` included.
 
 ## The loop
 

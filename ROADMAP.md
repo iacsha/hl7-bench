@@ -60,12 +60,6 @@ emitter, the serializer, schemacheck and the GUI, in a repo with no typechecker
 to catch the one that was missed. Deferred, not refused: the two lines are
 documented in BRIDGELINK.md.
 
-### `bundle` on BridgeLink
-
-Refused by name. In the HL7 v2 XML a companion is a following sibling, so the
-bench's "companions up to the next segment outside the bundle" reads directly;
-nothing is unknown, it is just not built.
-
 ### Lookup tables outside the step
 
 The step inlines its tables, so a table change is a channel redeploy. A code
@@ -75,6 +69,15 @@ the channel. Not built until somebody needs to change a table without a deploy.
 ---
 
 ## Settled
+
+### `bundle` on BridgeLink
+
+Each occurrence finds its companions as following siblings in the HL7 v2 XML,
+up to the first segment outside the bundle, which is the bench's walk; reads
+of a companion inside the loop mean this occurrence's, null when it has none;
+a companion is written right behind its occurrence and only when the sender's
+bundle carried one. `conformance/bundle.ts` (with, without, skipped, with)
+agrees 2/2 on BridgeLink 26.9.0. Patch and build still refuse by name.
 
 ### XML messages, on the bench and in BridgeLink
 

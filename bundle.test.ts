@@ -10,6 +10,7 @@
 // riding with its renumbered IN1(3).
 
 import { expect, test, describe } from "bun:test";
+import { emitBridgelink } from "./emit/bridgelink";
 import { readFileSync } from "node:fs";
 
 import { Message } from "./hl7";
@@ -104,11 +105,18 @@ describe("validate", () => {
     expect(problems({ bundle: ["in2"] })).toContain(`entry "in2" is not a segment id`);
   });
 
-  test("patch, build and BridgeLink refuse by name rather than drop IN2", () => {
+  test("patch and build refuse by name rather than drop IN2", () => {
     for (const transform of ["patch", "build"] as const) {
       expect(problems({}, { process: { className: "P.X", sendTo: "T", transform } })).toContain(`"${transform}" does not emit a bundle yet`);
     }
-    expect(validate(spec(), "bridgelink").join("\n")).toContain("BridgeLink does not emit a bundle yet");
+  });
+
+  test("BridgeLink emits the bundle: companions found per occurrence, written behind it", () => {
+    // Proven in the engine by conformance/bundle.ts (2026-10-24, 2/2 on 26.9.0).
+    const out = emitBridgelink({ ...spec(), bridgelink: { channelName: "T" } });
+    expect(out).toContain("function benchCompanions(occ, ids)");
+    expect(out).toContain("benchCompanions(cur1, ['IN2'])");
+    expect(out).toContain("if (cmp1.hasOwnProperty('IN2')) {");
   });
 
   test("a well-formed bundle is valid", () => {
