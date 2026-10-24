@@ -223,6 +223,22 @@ function derive(spec: Spec, raw: string) {
       emptyTables: emptyTables(spec),
     };
   }
+  if (!spec.iris || (spec.iris.sourceDocType.trim() === "" && spec.iris.targetDocType.trim() === "")) {
+    const none = "(This spec has no iris key, so it is not aimed at IRIS. Fill in the IRIS DocTypes on the\n" +
+      " left to see the DTL here; the BridgeLink tab has the channel.)";
+    const msg2 = (() => { try { return new Message(raw); } catch { return null; } })();
+    return {
+      iris: none, routing: "", filter: "", process: none,
+      bridgelink: spec.bridgelink
+        ? attempt(() =>
+            `SOURCE FILTER (one JavaScript rule)\n\n${filterCondition(spec)}\n\n${"-".repeat(64)}\n\n` +
+              `TRANSFORMER (one JavaScript step)\n\n${emitBridgelink(spec)}`)
+        : "",
+      trace: msg2 ? attempt(() => trace(spec, msg2)) : "(the message did not parse)",
+      inventory: msg2 ? attempt(() => inventory(spec, msg2)) : "",
+      emptyTables: emptyTables(spec),
+    };
+  }
   return {
     iris: attempt(() => emitIris(spec)),
     routing: attempt(() => routingCondition(spec)),
@@ -597,7 +613,7 @@ const server = Bun.serve({
       const result = runSource({
         source: b.source,
         message: b.message ?? read(MESSAGE),
-        docType: (b.docType || "").trim() || spec.iris.sourceDocType,
+        docType: (b.docType || "").trim() || (spec.iris?.sourceDocType ?? ""),
         method: (b.method || "").trim() || undefined,
       });
       return json({ ...result, ms: Math.round(performance.now() - t0) });

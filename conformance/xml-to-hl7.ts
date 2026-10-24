@@ -23,7 +23,6 @@ export const spec: Spec = {
   description: "Synthetic: an XML order delivered as an ADT.",
   gate: { path: "/Order/Header/Type", permit: { NEW: "A04", UPD: "A08" } },
   bridgelink: { channelName: "hl7-bench xml to hl7", log: "warn" },
-  iris: { sourceDocType: "2.5:ADT_A01", targetDocType: "2.5:ADT_A01" },
   tables: { Relation: { spouse: "SPO", father: "FTH" } },
   blocks: [
     {

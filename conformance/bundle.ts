@@ -18,7 +18,6 @@ export const spec: Spec = {
   description: "Synthetic: IN1 with its IN2, one bundle per coverage.",
   gate: { path: "MSH-9.2", permit: { A01: "A01" } },
   bridgelink: { channelName: "hl7-bench bundle", log: "warn" },
-  iris: { sourceDocType: "2.5:ADT_A01", targetDocType: "2.5:ADT_A01" },
   blocks: [
     { id: "MSH", rows: [{ target: "MSH-3", from: literal("BENCH") }, { target: "MSH-9.1", from: literal("ADT") }, { target: "MSH-9.2", from: event() }] },
     { id: "PID", rows: [{ target: "PID-3", from: copy("PID-3.1") }] },

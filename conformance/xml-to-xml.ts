@@ -34,8 +34,6 @@ export const spec: Spec = {
 
   bridgelink: { channelName: "hl7-bench xml conformance", log: "warn" },
 
-  // Required by the spec type; nothing on the BridgeLink side reads it.
-  iris: { sourceDocType: "2.5:ADT_A01", targetDocType: "2.5:ADT_A01" },
 
   tables: {
     Sex: { M: "MALE", F: "FEMALE" },

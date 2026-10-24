@@ -220,20 +220,24 @@ export function specToSource(spec: Spec, expand: Set<string> = new Set()): strin
     out.push("  },");
   }
 
+  // A BridgeLink-only spec has no iris key, and a GUI save must not grow one:
+  // the block is printed only when it says something.
+  const iris = spec.iris ?? { sourceDocType: "", targetDocType: "" };
+  const irisAt = out.length;
   out.push("", "  iris: {");
-  if (spec.iris.className) out.push(`    className: ${q(spec.iris.className)},`);
-  out.push(`    sourceDocType: ${q(spec.iris.sourceDocType)},`);
-  out.push(`    targetDocType: ${q(spec.iris.targetDocType)},`);
-  if (spec.iris.create) out.push(`    create: ${q(spec.iris.create)},`);
-  if (spec.iris.log) out.push(`    log: ${q(spec.iris.log)},`);
+  if (iris.className) out.push(`    className: ${q(iris.className)},`);
+  out.push(`    sourceDocType: ${q(iris.sourceDocType)},`);
+  out.push(`    targetDocType: ${q(iris.targetDocType)},`);
+  if (iris.create) out.push(`    create: ${q(iris.create)},`);
+  if (iris.log) out.push(`    log: ${q(iris.log)},`);
   // Written back or a GUI save silently puts every presence guard back.
-  if (spec.iris.alwaysPresent?.length) {
-    out.push(`    alwaysPresent: [${spec.iris.alwaysPresent.map(q).join(", ")}],`);
+  if (iris.alwaysPresent?.length) {
+    out.push(`    alwaysPresent: [${iris.alwaysPresent.map(q).join(", ")}],`);
   }
 
   // The schema category, one structure per line because the definitions are
   // long and a diff on one of them should show which structure moved.
-  const sch = spec.iris.schema;
+  const sch = iris.schema;
   if (sch) {
     out.push("    schema: {");
     out.push(`      category: ${q(sch.category)},`);
@@ -261,19 +265,19 @@ export function specToSource(spec: Spec, expand: Set<string> = new Set()): strin
   //                  sendTo, which is the one fact in a spec that cannot be
   //                  derived from the mapping
   //   externalSchemas a declared dependency stops being declared
-  const ext = spec.iris.externalSchemas;
+  const ext = iris.externalSchemas;
   if (ext?.length) {
     out.push("    externalSchemas: [");
     for (const e of ext) out.push(`      { category: ${q(e.category)}, note: ${q(e.note)} },`);
     out.push("    ],");
   }
 
-  const groups = Object.entries(spec.iris.sourceGroups ?? {});
+  const groups = Object.entries(iris.sourceGroups ?? {});
   if (groups.length) {
     out.push(`    sourceGroups: { ${groups.map(([k, v]) => `${key(k)}: ${q(v)}`).join(", ")} },`);
   }
 
-  const proc = spec.iris.process;
+  const proc = iris.process;
   if (proc) {
     out.push("    process: {");
     out.push(`      className: ${q(proc.className)},`);
@@ -298,6 +302,10 @@ export function specToSource(spec: Spec, expand: Set<string> = new Set()): strin
   }
 
   out.push("  },");
+  const irisSaysNothing = Object.values(iris).every(
+    (v) => v === undefined || v === "" || (Array.isArray(v) && v.length === 0),
+  );
+  if (irisSaysNothing) out.splice(irisAt);
 
   const tables = Object.keys(spec.tables ?? {});
   if (tables.length) {

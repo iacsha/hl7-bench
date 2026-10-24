@@ -20,7 +20,6 @@ export const spec: Spec = {
   description: "Synthetic: an ADT reshaped into an XML registration document.",
   gate: { path: "MSH-9.2", permit: { A01: "ADMIT", A08: "UPDATE" } },
   bridgelink: { channelName: "hl7-bench hl7 to xml", log: "warn" },
-  iris: { sourceDocType: "2.5:ADT_A01", targetDocType: "2.5:ADT_A01" },
   tables: { Sex: { M: "male", F: "female" } },
   blocks: [
     {

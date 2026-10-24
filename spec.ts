@@ -491,7 +491,7 @@ export interface Block {
  */
 export function seedGuarded(spec: Spec, block: Block): boolean {
   if (!block.wholeSegment || block.repeat || block.id === "MSH") return false;
-  return !(spec.iris.alwaysPresent ?? []).includes(block.id);
+  return !(spec.iris?.alwaysPresent ?? []).includes(block.id);
 }
 
 /** A source field worth documenting whether or not it is mapped. */
@@ -655,7 +655,12 @@ export interface Spec {
     listenPort?: number;
     sendTo?: { host: string; port: number };
   };
-  iris: {
+  /**
+   * IRIS target facts. Optional: a spec aimed only at BridgeLink leaves it out,
+   * and `validate(spec, "iris")` refuses to emit for IRIS without it. The IRIS
+   * emitters run only behind that check, so they read it as present.
+   */
+  iris?: {
     /** Class name for the generated DTL. Defaults to a name built from `name`. */
     className?: string;
     sourceDocType: string;
@@ -1246,6 +1251,15 @@ export type Engine = "iris" | "bridgelink";
  */
 function engineProblems(spec: Spec, engine: Engine): string[] {
   if (engine === "iris") {
+    // Optional for a BridgeLink-only spec, and the one thing IRIS cannot do
+    // without: the DocTypes are what every path resolves against.
+    if (!spec.iris || spec.iris.sourceDocType.trim() === "" || spec.iris.targetDocType.trim() === "") {
+      return [
+        `This spec has no iris key, or an empty DocType in it, so it has not been aimed at IRIS. ` +
+          `Add iris: { sourceDocType: "2.5:ADT_A01", targetDocType: "2.5:ADT_A01" } with the ` +
+          `schema names out of your namespace.`,
+      ];
+    }
     return sourceFormat(spec) === "xml" || targetFormat(spec) === "xml"
       ? [
           `This spec reads or writes XML, and the IRIS emitters write HL7 v2 DTLs and processes ` +
@@ -1281,10 +1295,15 @@ function engineProblems(spec: Spec, engine: Engine): string[] {
   return problems;
 }
 
-export function validate(spec: Spec, engine?: Engine): string[] {
+export function validate(given: Spec, engine?: Engine): string[] {
   const problems: string[] = [];
 
-  if (engine) problems.push(...engineProblems(spec, engine));
+  if (engine) problems.push(...engineProblems(given, engine));
+
+  // The IRIS checks below read spec.iris throughout. A spec with no iris key
+  // is checked through a neutral one that every IRIS rule passes, so it is
+  // judged on everything else; aiming it at IRIS is refused above, by name.
+  const spec: Spec = given.iris ? given : { ...given, iris: { sourceDocType: "", targetDocType: "" } };
   problems.push(...formatProblems(spec));
 
   if (Object.keys(spec.gate.permit).length === 0) {

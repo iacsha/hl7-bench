@@ -52,14 +52,6 @@ yet, which is the first unknown. Next format after XML: a new reader in the
 same message surface (get, all, seg on the message; get, set, clone on a
 record), not a new tool.
 
-### `iris` optional for a BridgeLink-only spec
-
-A BridgeLink-only spec still carries `iris: { sourceDocType, targetDocType }`,
-two lines nothing on that side reads. Making the key optional touches every IRIS
-emitter, the serializer, schemacheck and the GUI, in a repo with no typechecker
-to catch the one that was missed. Deferred, not refused: the two lines are
-documented in BRIDGELINK.md.
-
 ### Lookup tables outside the step
 
 The step inlines its tables, so a table change is a channel redeploy. The
@@ -77,6 +69,15 @@ message mid-lookup.
 ---
 
 ## Settled
+
+### `iris` optional
+
+A spec aimed only at BridgeLink leaves the key out. validate() checks it
+through a neutral iris that every IRIS rule passes, so it is judged on
+everything else, and `validate(spec, "iris")` refuses an IRIS emit without it
+(or with an empty DocType) by name. The IRIS emitters only run behind that
+check, so none of them changed. The serializer prints the block only when it
+says something, and the GUI edits an empty one it never writes back.
 
 ### The channel's connectors, proven over MLLP
 

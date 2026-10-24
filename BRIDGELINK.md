@@ -56,9 +56,8 @@ export const spec: Spec = {
     sendTo: { host: "receiver.example", port: 7001 },
   },
 
-  // Required by the spec type even for a BridgeLink-only interface. Two
-  // stock DocTypes are enough; nothing on this side reads them.
-  iris: { sourceDocType: "2.5:ADT_A01", targetDocType: "2.5:ADT_A01" },
+  // No iris key: this spec is not aimed at IRIS. Add one with the DocTypes
+  // when it is, and the same spec emits the DTL as well.
 
   blocks: [
     { id: "MSH", wholeSegment: true, rows: [{ target: "MSH-3", from: literal("BENCH") }] },

@@ -360,3 +360,11 @@ describe("the process class has a tab", () => {
     expect(js).toContain("FILTER EXPRESSION (over pRequest; parens and quotes checked)");
   });
 });
+
+// The tests above read gui.ts as text, so a syntax error in it passed all of
+// them while the server would not start. Found 2026-10-24 by starting it: an
+// unparenthesised `a || b ?? c`. Transpiling is the cheapest check that it parses.
+test("gui.ts parses", async () => {
+  const src = await Bun.file(new URL("./gui.ts", import.meta.url)).text();
+  expect(() => new Bun.Transpiler({ loader: "ts" }).transformSync(src)).not.toThrow();
+});

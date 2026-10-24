@@ -1895,6 +1895,9 @@ async function load() {
   }
 
   spec = recovered ?? res.spec;
+  // A BridgeLink-only spec has no iris key. The IRIS fields edit an empty one,
+  // and the serializer leaves it out of the file again while it stays empty.
+  if (!spec.iris) spec.iris = { sourceDocType: "", targetDocType: "" };
 
   // A recovered draft is unsaved work by definition, so the page opens dirty.
   // Marking it clean would let "Reload from disk" discard it without the
