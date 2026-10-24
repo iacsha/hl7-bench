@@ -215,6 +215,8 @@ export function specToSource(spec: Spec, expand: Set<string> = new Set()): strin
     out.push(`    channelName: ${q(bl.channelName)},`);
     if (bl.log) out.push(`    log: ${q(bl.log)},`);
     if (bl.note) out.push(`    note: ${q(bl.note)},`);
+    if (bl.listenPort !== undefined) out.push(`    listenPort: ${bl.listenPort},`);
+    if (bl.sendTo) out.push(`    sendTo: { host: ${q(bl.sendTo.host)}, port: ${bl.sendTo.port} },`);
     out.push("  },");
   }
 

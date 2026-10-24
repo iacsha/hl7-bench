@@ -37,6 +37,7 @@ import { specSource } from "./specpath";
 import { emitIris, filterExpression, newBareRefs, routingCondition } from "./emit/iris";
 import { emitProcess } from "./emit/process";
 import { emitBridgelink, filterCondition } from "./emit/bridgelink";
+import { emitChannel, channelId } from "./emit/channel";
 import { buildLookup, specsDeclaring, tableArg } from "./emit/lookup";
 import { emitSchema } from "./emit/schema";
 import { emitPromote, processingId } from "./emit/promote";
@@ -54,12 +55,12 @@ import { logEvent } from "./log";
  * differ: there is no business process in a channel and no DTL class in one
  * either. A shared list would make `bridgelink:process` an accepted argument
  * that then emitted an IRIS class, a worse failure than an unknown-artifact
- * message. BridgeLink lists ONE artifact on purpose: `channel` and `tables`
- * are on the roadmap and not built, so `bridgelink:channel` fails loudly here.
+ * message. BridgeLink has no `tables` artifact: the step inlines them, and
+ * `bridgelink:tables` fails loudly here rather than emitting something else.
  */
 const ENGINE_ARTIFACTS = {
   iris: { fallback: "dtl", artifacts: ["dtl", "process", "tables", "schema", "promote"] },
-  bridgelink: { fallback: "transformer", artifacts: ["transformer"] },
+  bridgelink: { fallback: "transformer", artifacts: ["transformer", "channel"] },
 } as const satisfies Record<Engine, { fallback: string; artifacts: readonly string[] }>;
 
 const ARTIFACT_HELP: Record<string, string> = {
@@ -69,6 +70,7 @@ const ARTIFACT_HELP: Record<string, string> = {
   schema: "the custom HL7 schema category this spec depends on",
   promote: "the per-namespace promotion checklist, as Markdown",
   transformer: "the JavaScript transformer step, paste-ready",
+  channel: "the whole channel (filter, step, connectors), for Import Channel",
 };
 
 const ENGINES = Object.keys(ENGINE_ARTIFACTS) as Engine[];
@@ -308,6 +310,12 @@ let out: string;
 try {
   out =
     artifact === "transformer" ? emitBridgelink(spec)
+    : artifact === "channel"
+      ? emitChannel(spec, {
+          id: channelId(spec.bridgelink!.channelName),
+          listenPort: spec.bridgelink!.listenPort,
+          sendTo: spec.bridgelink!.sendTo,
+        })
     : artifact === "process" ? emitProcess(spec, bare)
     : emitIris(spec, bare);
 } catch (e) {
@@ -353,7 +361,14 @@ if (artifact === "process") {
 // a channel puts it in the Source Filter. Whichever engine you asked for, you
 // get told what has to sit in front of the artifact just generated.
 if (engine === "bridgelink") {
-  process.stderr.write(
+  if (artifact === "channel") {
+    process.stderr.write(
+      `\nCHANNEL: import with Channels > Import Channel. The source filter and the\n` +
+        `  step are both inside it. Connectors: ${spec.bridgelink!.listenPort !== undefined ? `MLLP listener on ${spec.bridgelink!.listenPort}` : "Channel Reader"} in, ` +
+        `${spec.bridgelink!.sendTo ? `MLLP to ${spec.bridgelink!.sendTo.host}:${spec.bridgelink!.sendTo.port}` : "Channel Writer to none"} out.\n` +
+        `  Re-importing the same channel name updates it: the id is derived from the name.\n`,
+    );
+  } else process.stderr.write(
     `\nCHANNEL SOURCE FILTER (one JavaScript rule)\n${filterCondition(spec).replace(/^/gm, "  ")}\n` +
       `  Paste this into the channel's Source Filter. The step does NOT gate:\n` +
       `  a message this interface does not handle should never be transformed\n` +

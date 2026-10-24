@@ -644,6 +644,14 @@ export interface Spec {
     log?: "off" | "warn" | "trace";
     /** One line for the step's header comment. */
     note?: string;
+    /**
+     * Where `bun emit.ts bridgelink:channel` listens and sends, MLLP both ways.
+     * Absent means a Channel Reader in and a Channel Writer to none: a channel
+     * that imports, deploys and transforms, and is wired up in the
+     * Administrator. Same role `iris.process.sendTo` plays on the other side.
+     */
+    listenPort?: number;
+    sendTo?: { host: string; port: number };
   };
   iris: {
     /** Class name for the generated DTL. Defaults to a name built from `name`. */
@@ -1122,12 +1130,23 @@ function engineProblems(spec: Spec, engine: Engine): string[] {
         `Emitting without it would produce a step whose header cannot say which channel it belongs to.`,
     ];
   }
-  return bl.channelName.trim() === ""
-    ? [
-        `bridgelink.channelName is empty. It names the channel this step is pasted into, ` +
-          `and it is the one fact the spec cannot derive from anything else it holds.`,
-      ]
-    : [];
+  const problems: string[] = [];
+  if (bl.channelName.trim() === "") {
+    problems.push(
+      `bridgelink.channelName is empty. It names the channel this step is pasted into, ` +
+        `and it is the one fact the spec cannot derive from anything else it holds.`,
+    );
+  }
+  // A port the engine cannot bind fails at DEPLOY, after the import looked fine.
+  const port = (p: unknown) => Number.isInteger(p) && (p as number) >= 1 && (p as number) <= 65535;
+  if (bl.listenPort !== undefined && !port(bl.listenPort)) {
+    problems.push(`bridgelink.listenPort ${bl.listenPort} is not a TCP port (1-65535).`);
+  }
+  if (bl.sendTo !== undefined) {
+    if (bl.sendTo.host.trim() === "") problems.push(`bridgelink.sendTo.host is empty.`);
+    if (!port(bl.sendTo.port)) problems.push(`bridgelink.sendTo.port ${bl.sendTo.port} is not a TCP port (1-65535).`);
+  }
+  return problems;
 }
 
 export function validate(spec: Spec, engine?: Engine): string[] {

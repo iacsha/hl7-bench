@@ -198,6 +198,18 @@ describe("the serializer", () => {
     expect(back.iris.log).toBe("off");
   });
 
+  test("the BridgeLink connectors survive, or a GUI save rewires the channel", async () => {
+    // The same trap as the channel name before it: a key the printer forgets
+    // loads fine and is simply gone, and the next emitted channel listens on
+    // nothing and sends nowhere.
+    const back = await roundTrip(base({
+      bridgelink: { channelName: "ADT out", log: "off", listenPort: 6661, sendTo: { host: "recv.example", port: 7001 } },
+    }));
+    expect(back.bridgelink).toEqual({
+      channelName: "ADT out", log: "off", listenPort: 6661, sendTo: { host: "recv.example", port: 7001 },
+    });
+  });
+
   test("what comes back still validates and still runs", async () => {
     const back = await roundTrip(rich());
     expect(validate(back)).toEqual([]);
