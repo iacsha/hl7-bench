@@ -35,7 +35,7 @@
  */
 
 import { emitBridgelink, filterCondition } from "./bridgelink";
-import type { Spec } from "../spec";
+import { sourceFormat, targetFormat, type Spec, type Format } from "../spec";
 
 /** Where the channel takes messages from and sends them to. */
 export interface ChannelOptions {
@@ -114,13 +114,43 @@ function hl7v2Properties(tag: string, v: string): string {
 </${tag}>`;
 }
 
-function transformer(tag: string, v: string, steps: string): string {
+/**
+ * The XML data type, namespaces KEPT. Measured on BridgeLink 26.9.0: Strip
+ * Namespaces removes the xmlns declarations and leaves the prefixes, so a
+ * prefixed document no longer parses and every message errors. The step
+ * matches by local name instead, which is what the bench does.
+ */
+function xmlProperties(tag: string, v: string): string {
+  const p = "com.mirth.connect.plugins.datatypes.xml";
+  return `<${tag} class="${p}.XMLDataTypeProperties" version="${v}">
+  <serializationProperties class="${p}.XMLSerializationProperties" version="${v}">
+    <stripNamespaces>false</stripNamespaces>
+  </serializationProperties>
+  <batchProperties class="${p}.XMLBatchProperties" version="${v}">
+    <splitType>Element_Name</splitType>
+    <elementName></elementName>
+    <level>1</level>
+    <query></query>
+    <batchScript></batchScript>
+  </batchProperties>
+</${tag}>`;
+}
+
+function dataType(f: Format): string {
+  return f === "xml" ? "XML" : "HL7V2";
+}
+
+function properties(f: Format, tag: string, v: string): string {
+  return f === "xml" ? xmlProperties(tag, v) : hl7v2Properties(tag, v);
+}
+
+function transformer(tag: string, v: string, steps: string, from: Format = "hl7v2", to: Format = "hl7v2"): string {
   return `<${tag} version="${v}">
   <elements>${steps}</elements>
-  <inboundDataType>HL7V2</inboundDataType>
-  <outboundDataType>HL7V2</outboundDataType>
-  ${hl7v2Properties("inboundProperties", v)}
-  ${hl7v2Properties("outboundProperties", v)}
+  <inboundDataType>${dataType(from)}</inboundDataType>
+  <outboundDataType>${dataType(to)}</outboundDataType>
+  ${properties(from, "inboundProperties", v)}
+  ${properties(to, "outboundProperties", v)}
 </${tag}>`;
 }
 
@@ -281,7 +311,9 @@ export function emitChannel(spec: Spec, o: ChannelOptions): string {
   // An upstream gate prints as a comment, not a rule. A rule whose script is a
   // comment returns undefined, which the filter reads as "reject everything".
   const rules = spec.gate.enabled === false ? "" : jsRule(v, "hl7-bench gate", gate);
-  const src = sourceProperties(v, o);
+  const src = sourceFormat(spec);
+  const tgt = targetFormat(spec);
+  const srcConn = sourceProperties(v, o);
   const dst = destinationProperties(v, o);
   const description =
     o.description ??
@@ -296,12 +328,12 @@ export function emitChannel(spec: Spec, o: ChannelOptions): string {
   <sourceConnector version="${v}">
     <metaDataId>0</metaDataId>
     <name>sourceConnector</name>
-    ${src.props}
-    ${transformer("transformer", v, jsStep(v, "hl7-bench transform", step))}
+    ${srcConn.props}
+    ${transformer("transformer", v, jsStep(v, "hl7-bench transform", step), src, tgt)}
     <filter version="${v}">
       <elements>${rules}</elements>
     </filter>
-    <transportName>${src.transport}</transportName>
+    <transportName>${srcConn.transport}</transportName>
     <mode>SOURCE</mode>
     <enabled>true</enabled>
     <waitForPrevious>true</waitForPrevious>
@@ -311,8 +343,8 @@ export function emitChannel(spec: Spec, o: ChannelOptions): string {
       <metaDataId>1</metaDataId>
       <name>Destination 1</name>
       ${dst.props}
-      ${transformer("transformer", v, "")}
-      ${transformer("responseTransformer", v, "")}
+      ${transformer("transformer", v, "", tgt, tgt)}
+      ${transformer("responseTransformer", v, "", tgt, tgt)}
       <filter version="${v}">
         <elements/>
       </filter>

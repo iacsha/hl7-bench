@@ -110,7 +110,51 @@ refuse. To prove your server against the whole vocabulary:
 HL7_BENCH_TRANSFORM=conformance/spec.ts bun bridgelink-check.ts
 ```
 
-## Three engine facts the step handles for you
+## XML interfaces
+
+The same vocabulary works over XML, in either direction or both. An XML path
+starts with `/` and is written from the document element. An HL7 path never
+starts with `/`, so that leading slash is the only way the bench tells them
+apart. The gate path's syntax sets the format the spec reads, and the block
+ids set the format it writes:
+
+| Spec | Gate path | Block ids |
+|---|---|---|
+| XML to XML | `/Order/Header/Type` | `/Order/Person`, `/Order/Kin/Person` |
+| HL7 to XML | `MSH-9.2` | `/Registration/Patient` |
+| XML to HL7 | `/Order/Header/Type` | `MSH`, `PID`, `NK1` |
+
+```ts
+{ target: "/Registration/Patient/@mrn", from: copy("PID-3.1") }
+{ id: "/Order/Kin/Person", repeat: { over: "/Order/Contacts/Contact",
+    skipWhenEmpty: "/Order/Contacts/Contact/Name" }, rows: [...] }
+```
+
+- **Paths.** `/Order/Items/Item[2]/Code` reads the second Item;
+  `/Order/Patient/@id` reads an attribute, which can only be the last step.
+  A step with no index means the first match on a read and every match on a
+  walk.
+- **Records.** A block delivers one element, or one per occurrence when it
+  repeats. Rows write under it, and parents are created once, the first time
+  a record needs them. Inside a repeat over `/Order/Contacts/Contact`, a path
+  under that prefix means this occurrence's Contact, the same rule as PID-3
+  inside a PID loop.
+- **Text.** An element's value is all its text, CDATA and entities decoded.
+  A leading space is kept, so `fold` still finds continuation lines.
+- **Namespaces are matched by local name** on both sides, and the delivered
+  document carries none. A prefixed root or a default namespace reads the same
+  as plain names.
+- **HL7 only:** `pickRepeat` (use `fromWhere` on the record), `bundle`, and
+  `wholeSegment` across formats. Each is refused by name.
+- **Cases** are `<name>.in.xml`, `<name>.want.xml` and `<name>.reject.xml`
+  beside the `.hl7` ones. Each file uses the format of its own side, and XML is
+  compared in canonical form.
+
+Proven on BridgeLink 26.9.0, comparing namespaces strictly:
+`conformance/xml-to-xml.ts` 5/5, `hl7-to-xml.ts` 3/3, `xml-to-hl7.ts` 3/3.
+IRIS emits HL7 v2 only and refuses an XML spec by name.
+
+## Engine facts the step handles for you
 
 Each was found by running the step, not by reading it.
 
@@ -121,7 +165,14 @@ Each was found by running the step, not by reading it.
    as one text node, then write TXA-22.19 on top, and the component lands two
    places to the right. Writes are split on the message's separators, the way
    the parser splits them.
-3. **The separators come from MSH.** A sender declaring `#` as its component
+3. **XML namespaces fight both ways.** With the XML data type's Strip
+   Namespaces on, BridgeLink removes the `xmlns:ns` declaration and leaves the
+   prefix, so `<ns:Order>` no longer parses. With it off, `child('Header')`
+   misses a namespaced child, and elements the step builds inherit the
+   inbound default namespace. The channel keeps namespaces. The step matches
+   names locally, resets the default namespace, and rebuilds seeded records
+   without one.
+4. **The separators come from MSH.** A sender declaring `#` as its component
    separator is handled. Any fixed text you write with `prefix("ADT^")` is
    yours to get right, on both engines.
 
@@ -131,4 +182,6 @@ Each was found by running the step, not by reading it.
   the channel; nothing is edited in the Administrator.
 - **Groups do not exist in this XML.** `group` matters only to the IRIS DTL,
   and the step says so in a comment.
-- **XML-to-XML interfaces.** The spec speaks HL7 v2 paths only. See ROADMAP.md.
+- **XML in the GUI form, the mapping document and IRIS.** The GUI previews
+  the BridgeLink tab and runs the bench on XML. Its form, `trace.ts` and the
+  IRIS emitters are HL7 v2 only. See ROADMAP.md.

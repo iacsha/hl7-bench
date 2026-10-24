@@ -44,7 +44,9 @@ import { assertRunnable } from "../run";
 import {
   emptyTables, parsePath, seedGuarded, describeSelect, describeFold,
   type Spec, type Source, type Step, type Row, type Block, type Select,
+  sourceFormat, targetFormat, inRecord, type Format,
 } from "../spec";
+import { parseXmlPath, rootOf, type XStep } from "../xml";
 
 // ---------------------------------------------------------------------------
 // Strings
@@ -362,6 +364,143 @@ function benchDefault(v, d) {
 }
 `.trimEnd();
 
+const XML_RUNTIME = `
+// --- XML reads and writes ----------------------------------------------------
+//
+// A path arrives as STEPS, [name, index], spelled out by the generator, so
+// nothing here parses a path at run time. Index 0 means the first match on a
+// read and every match on a walk, which is what a step with no [n] means.
+//
+// Every name is matched by LOCAL name, never through child('x'). Measured on
+// BridgeLink 26.9.0: the XML data type's Strip Namespaces removes the xmlns
+// declarations and leaves the prefixes, so <ns:Order> no longer parses; with
+// it off the document parses and child('Header') then misses a prefixed or
+// default-namespaced child. Local names are what the bench matches, so both
+// read the same tree whatever namespaces the sender uses.
+
+/** Child elements with this local name, as an array, in document order. */
+function benchXKids(node, name) {
+  var out = [];
+  var kids = node.elements();
+  for (var i = 0; i < kids.length(); i++) {
+    if (kids[i].localName() === name) { out.push(kids[i]); }
+  }
+  return out;
+}
+
+/** The element a path's steps reach from node, or null. */
+function benchXOne(node, steps) {
+  for (var i = 0; i < steps.length && node !== null; i++) {
+    var kids = benchXKids(node, steps[i][0]);
+    var at = steps[i][1] === 0 ? 0 : steps[i][1] - 1;
+    node = kids.length > at ? kids[at] : null;
+  }
+  return node;
+}
+
+/** Every element a path's steps reach from node, in document order, as an array. */
+function benchXAll(node, steps) {
+  var at = node === null ? [] : [node];
+  for (var i = 0; i < steps.length; i++) {
+    var next = [];
+    for (var j = 0; j < at.length; j++) {
+      var kids = benchXKids(at[j], steps[i][0]);
+      if (steps[i][1] === 0) {
+        for (var k = 0; k < kids.length; k++) { next.push(kids[k]); }
+      } else if (kids.length >= steps[i][1]) {
+        next.push(kids[steps[i][1] - 1]);
+      }
+    }
+    at = next;
+  }
+  return at;
+}
+
+/**
+ * An element's text: every descendant text node, concatenated, which is what
+ * XPath string() and the bench mean. toString() on an element with children
+ * returns MARKUP, the same trap as on the HL7 side.
+ */
+function benchXText(node) {
+  if (node.hasSimpleContent()) { return node.toString(); }
+  var s = '';
+  var kids = node.children();
+  for (var i = 0; i < kids.length(); i++) {
+    var kind = kids[i].nodeKind();
+    if (kind === 'text') { s += kids[i].toString(); }
+    else if (kind === 'element') { s += benchXText(kids[i]); }
+  }
+  return s;
+}
+
+/** An attribute by local name, or ''. */
+function benchXAttr(node, name) {
+  var all = node.attributes();
+  for (var i = 0; i < all.length(); i++) {
+    if (all[i].localName() === name) { return all[i].toString(); }
+  }
+  return '';
+}
+
+/** Read a path off node: an attribute when attr is not '', the text otherwise. */
+function benchXGet(node, steps, attr) {
+  var at = benchXOne(node, steps);
+  if (at === null) { return ''; }
+  return attr !== '' ? benchXAttr(at, attr) : benchXText(at);
+}
+
+/** Write a path under node, creating each step it needs. */
+function benchXSet(node, steps, attr, value) {
+  for (var i = 0; i < steps.length; i++) {
+    var want = steps[i][1] === 0 ? 1 : steps[i][1];
+    while (benchXKids(node, steps[i][0]).length < want) { node.appendChild(new XML('<' + steps[i][0] + '/>')); }
+    node = benchXKids(node, steps[i][0])[want - 1];
+  }
+  if (attr !== '') { node['@' + attr] = value; } else { node.setChildren(value); }
+}
+
+/**
+ * A record rebuilt by local name, with no namespace anywhere in it. What the
+ * bench delivers for a seed, since it reads every name local. A plain copy()
+ * carries the sender's xmlns into the delivered document: measured on a
+ * default-namespace order, <Items xmlns="urn:..."> where the bench has <Items>.
+ * Text goes in through setChildren, never as markup, so "<normal>" stays text.
+ */
+function benchXBare(node) {
+  var out = new XML('<' + node.localName() + '/>');
+  var attrs = node.attributes();
+  for (var i = 0; i < attrs.length(); i++) { out['@' + attrs[i].localName()] = attrs[i].toString(); }
+  if (node.hasSimpleContent()) {
+    var text = node.toString();
+    if (text !== '') { out.setChildren(text); }
+    return out;
+  }
+  var kids = node.children();
+  for (var j = 0; j < kids.length(); j++) {
+    if (kids[j].nodeKind() === 'element') { out.appendChild(benchXBare(kids[j])); }
+    else if (kids[j].nodeKind() === 'text') { out.appendChild(kids[j].toString()); }
+  }
+  return out;
+}
+
+/**
+ * Append a record under its parent path, creating each parent once, and hand
+ * back the appended node. Re-read from the parent rather than trusting the
+ * reference passed in, because appendChild may attach a copy.
+ */
+function benchXPlace(root, parents, name, seed) {
+  var at = root;
+  for (var i = 0; i < parents.length; i++) {
+    var want = parents[i][1] === 0 ? 1 : parents[i][1];
+    while (benchXKids(at, parents[i][0]).length < want) { at.appendChild(new XML('<' + parents[i][0] + '/>')); }
+    at = benchXKids(at, parents[i][0])[want - 1];
+  }
+  at.appendChild(seed === null ? new XML('<' + name + '/>') : benchXBare(seed));
+  var kids = benchXKids(at, name);
+  return kids[kids.length - 1];
+}
+`.trimEnd();
+
 const SEED_RUNTIME = `
 /**
  * A target segment seeded from a source segment, whole, appended to the
@@ -432,6 +571,8 @@ interface Scope {
   sourceVar?: string;
   /** Local holding the target segment being filled. */
   targetVar: string;
+  /** The block id that local is: a segment id, or an XML record path. */
+  targetRecord: string;
   /** Local holding this segment's OUTPUT ordinal, what counter() reads. */
   counterVar?: string;
 }
@@ -445,10 +586,81 @@ interface State {
   counts: boolean;
   /** Plain blocks emitted so far: names their locals apart from the temps. */
   blocks: number;
+  /** What the step reads and writes. */
+  src: Format;
+  tgt: Format;
 }
 
 function level(spec: Spec): "off" | "warn" | "trace" {
   return spec.bridgelink?.log ?? "warn";
+}
+
+// ---------------------------------------------------------------------------
+// The dialect: one read, one write, one walk, per format
+//
+// Every place below that touches a message goes through these, so a source
+// kind is written once and works over HL7 and XML alike. An XML path becomes
+// steps relative to the node it is read from: the document element for an
+// absolute read, the occurrence for a read inside a repeat.
+// ---------------------------------------------------------------------------
+
+/** XML steps as an ES5 array literal: [['Name', 0], ['Family', 0]]. */
+function stepsLit(steps: XStep[]): string {
+  return `[${steps.map((x) => `[${js(x.name)}, ${x.index ?? 0}]`).join(", ")}]`;
+}
+
+/** An XML path's steps under a record, or under the document element. */
+function xmlRel(path: string, record?: string): { steps: string; attr: string } {
+  const p = parseXmlPath(path);
+  const skip = record ? parseXmlPath(record).steps.length : 1;
+  return { steps: stepsLit(p.steps.slice(skip)), attr: js(p.attr ?? "") };
+}
+
+/** Read `path` off `node`, which is an occurrence of `record`. */
+function readOn(node: string, path: string, record: string): string {
+  if (path.startsWith("/")) {
+    const r = xmlRel(path, record);
+    return `benchXGet(${node}, ${r.steps}, ${r.attr})`;
+  }
+  const p = parsePath(path);
+  return `benchGet(${node}, ${js(p.segment)}, ${p.field}, ${p.repeat}, ${p.component}, ${p.subcomponent})`;
+}
+
+/** Read `path` off the whole message: the first occurrence it names. */
+function readDoc(path: string): string {
+  if (path.startsWith("/")) {
+    const r = xmlRel(path);
+    return `benchXGet(benchXDoc, ${r.steps}, ${r.attr})`;
+  }
+  const p = parsePath(path);
+  return readOn(`benchSeg(msg, ${js(p.segment)})`, path, p.segment);
+}
+
+/** Write `value` at `path` on `node`, an occurrence of `record`. A statement. */
+function writeOn(node: string, path: string, record: string, value: string): string {
+  if (path.startsWith("/")) {
+    const r = xmlRel(path, record);
+    return `benchXSet(${node}, ${r.steps}, ${r.attr}, ${value});`;
+  }
+  const p = parsePath(path);
+  return (
+    `benchSet(${node}, ${js(p.segment)}, ${p.field}, ${p.repeat}, ` +
+    `${p.component}, ${p.subcomponent}, ${value});`
+  );
+}
+
+/** Every occurrence of a record, and how to count them. */
+function walkDoc(record: string): { list: string; len: (v: string) => string } {
+  if (record.startsWith("/")) {
+    return { list: `benchXAll(benchXDoc, ${xmlRel(record).steps})`, len: (v) => `${v}.length` };
+  }
+  return { list: `benchAll(msg, ${js(record)})`, len: (v) => `${v}.length()` };
+}
+
+/** The first occurrence of a record, or null. */
+function firstDoc(record: string): string {
+  if (record.startsWith("/")) return `benchXOne(benchXDoc, ${xmlRel(record).steps})`;
+  return `benchSeg(msg, ${js(record)})`;
 }
 
 /**
@@ -460,15 +672,10 @@ function level(spec: Spec): "off" | "warn" | "trace" {
  * be copies of coverage one.
  */
 function readExpr(path: string, scope: Scope): string {
-  const p = parsePath(path);
-  const seg =
-    scope.sourceVar && scope.repeatOver === p.segment
-      ? scope.sourceVar
-      : `benchSeg(msg, ${js(p.segment)})`;
-  return (
-    `benchGet(${seg}, ${js(p.segment)}, ${p.field}, ${p.repeat}, ` +
-    `${p.component}, ${p.subcomponent})`
-  );
+  if (scope.sourceVar && scope.repeatOver && inRecord(path, scope.repeatOver)) {
+    return readOn(scope.sourceVar, path, scope.repeatOver);
+  }
+  return readDoc(path);
 }
 
 /**
@@ -577,20 +784,17 @@ function sourceCode(
       const lv = `${v}List`;
       const iv = `${v}i`;
       const nv = `${v}Seg`;
-      const ne = parsePath(from.nonEmpty);
-      const pp = parsePath(from.path);
-      const read = (p: ReturnType<typeof parsePath>) =>
-        `benchGet(${nv}, ${js(p.segment)}, ${p.field}, ${p.repeat}, ` +
-        `${p.component}, ${p.subcomponent})`;
+      const w = walkDoc(from.segment);
+      const read = (p: string) => readOn(nv, p, from.segment);
       return {
         expr: v,
         pre: [
           `var ${v} = '';`,
-          `var ${lv} = benchAll(msg, ${js(from.segment)});`,
-          `for (var ${iv} = 0; ${iv} < ${lv}.length(); ${iv}++) {`,
+          `var ${lv} = ${w.list};`,
+          `for (var ${iv} = 0; ${iv} < ${w.len(lv)}; ${iv}++) {`,
           `  var ${nv} = ${lv}[${iv}];`,
-          `  if (${read(ne)} !== '') {`,
-          `    ${v} = ${read(pp)};`,
+          `  if (${read(from.nonEmpty)} !== '') {`,
+          `    ${v} = ${read(from.path)};`,
           `    break;`,
           `  }`,
           `}`,
@@ -605,20 +809,17 @@ function sourceCode(
       const lv = `${v}List`;
       const iv = `${v}i`;
       const nv = `${v}Seg`;
-      const wp = parsePath(from.where);
-      const rp = parsePath(from.read);
-      const read = (p: ReturnType<typeof parsePath>) =>
-        `benchGet(${nv}, ${js(p.segment)}, ${p.field}, ${p.repeat}, ` +
-        `${p.component}, ${p.subcomponent})`;
+      const w = walkDoc(from.segment);
+      const read = (p: string) => readOn(nv, p, from.segment);
       return {
         expr: v,
         pre: [
           `var ${v} = '';`,
-          `var ${lv} = benchAll(msg, ${js(from.segment)});`,
-          `for (var ${iv} = 0; ${iv} < ${lv}.length(); ${iv}++) {`,
+          `var ${lv} = ${w.list};`,
+          `for (var ${iv} = 0; ${iv} < ${w.len(lv)}; ${iv}++) {`,
           `  var ${nv} = ${lv}[${iv}];`,
-          `  if (${read(wp)} === ${js(from.equals)}) {`,
-          `    ${v} = ${read(rp)};`,
+          `  if (${read(from.where)} === ${js(from.equals)}) {`,
+          `    ${v} = ${read(from.read)};`,
           `    break;`,
           `  }`,
           `}`,
@@ -702,12 +903,8 @@ function emitRow(st: State, row: Row, scope: Scope, indent: string, out: string[
   // the value AFTER its steps ran, and reading the target back out of E4X to
   // ask would be a second, differently-shaped read of the thing we just wrote.
   const v = varFor(row.target);
-  const p = parsePath(row.target);
   out.push(`${indent}var ${v} = ${value};`);
-  out.push(
-    `${indent}benchSet(${scope.targetVar}, ${js(p.segment)}, ${p.field}, ` +
-      `${p.repeat}, ${p.component}, ${p.subcomponent}, ${v});`,
-  );
+  out.push(`${indent}${writeOn(scope.targetVar, row.target, scope.targetRecord, v)}`);
   if (st.record) out.push(`${indent}benchW[${js(row.target)}] = ${v};`);
 
   const lvl = level(st.spec);
@@ -746,6 +943,14 @@ function startExpr(st: State, block: Block): string {
  * block seeds, an empty segment otherwise.
  */
 function openSegment(block: Block, targetVar: string, seedFrom: string | null): string {
+  if (block.id.startsWith("/")) {
+    // Placed under its parent path, parents made once. The document element
+    // is `out` itself, so the parents are the steps between it and the record.
+    const steps = parseXmlPath(block.id).steps;
+    const parents = stepsLit(steps.slice(1, -1));
+    const seed = block.wholeSegment && seedFrom ? seedFrom : "null";
+    return `var ${targetVar} = benchXPlace(out, ${parents}, ${js(steps[steps.length - 1].name)}, ${seed});`;
+  }
   if (block.wholeSegment && seedFrom) {
     return `var ${targetVar} = benchSeed(out, ${seedFrom});`;
   }
@@ -769,7 +974,7 @@ function emitBlock(st: State, block: Block, out: string[]): void {
   const targetVar = segVarFor(block.id);
   const n = ++st.blocks;
   const ord = `ord${n}`;
-  const scope: Scope = { targetVar, counterVar: ord };
+  const scope: Scope = { targetVar, targetRecord: block.id, counterVar: ord };
   out.push(`var ${ord} = ${startExpr(st, block)} + 1;`);
 
   if (!block.wholeSegment) {
@@ -777,7 +982,7 @@ function emitBlock(st: State, block: Block, out: string[]): void {
     for (const row of block.rows) emitRow(st, row, scope, "", out);
   } else {
     const src = `seed${n}`;
-    out.push(`var ${src} = benchSeg(msg, ${js(block.id)});`);
+    out.push(`var ${src} = ${firstDoc(block.id)};`);
     if (seedGuarded(st.spec, block)) {
       // A seed that finds nothing delivers nothing, rows included: they exist
       // to overwrite fields on a copy, and there is no copy. The bench and both
@@ -794,7 +999,9 @@ function emitBlock(st: State, block: Block, out: string[]): void {
       // When the claim is false the bench delivers a bare segment, so this does.
       out.push(
         `// ${block.id} is seeded whole from the source, and assumed always present.`,
-        `var ${targetVar} = ${src} !== null ? benchSeed(out, ${src}) : benchNewSeg(out, ${js(block.id)}, benchDelims);`,
+        block.id.startsWith("/")
+          ? openSegment(block, targetVar, src)
+          : `var ${targetVar} = ${src} !== null ? benchSeed(out, ${src}) : benchNewSeg(out, ${js(block.id)}, benchDelims);`,
       );
       for (const row of block.rows) emitRow(st, row, scope, "", out);
     }
@@ -821,17 +1028,15 @@ function emitRepeat(st: State, block: Block, index: number, out: string[]): void
   const cur = `cur${i}`;
   const n = `n${i}`;
   const targetVar = segVarFor(block.id);
-  const get = (seg: string, path: string) => {
-    const p = parsePath(path);
-    return `benchGet(${seg}, ${js(p.segment)}, ${p.field}, ${p.repeat}, ${p.component}, ${p.subcomponent})`;
-  };
+  const get = (seg: string, path: string) => readOn(seg, path, r.over);
+  const w = walkDoc(r.over);
 
   out.push("");
   if (block.note) out.push(`// ${comment(block.note)}`);
   out.push(
     `// ${comment(block.id)}: numbered by OUTPUT ordinal (${n}), not by source position.`,
     `//      A skipped occurrence must not leave a hole in the set ids.`,
-    `var ${all} = benchAll(msg, ${js(r.over)});`,
+    `var ${all} = ${w.list};`,
     `var ${list} = [];`,
   );
 
@@ -846,7 +1051,7 @@ function emitRepeat(st: State, block: Block, index: number, out: string[]): void
     }
   }
   out.push(
-    `for (var ${k} = 0; ${k} < ${all}.length(); ${k}++) {`,
+    `for (var ${k} = 0; ${k} < ${w.len(all)}; ${k}++) {`,
     guards.length
       ? `  if (${guards.join(" && ")}) { ${list}.push(${all}[${k}]); }`
       : `  ${list}.push(${all}[${k}]);`,
@@ -897,7 +1102,6 @@ function emitRepeat(st: State, block: Block, index: number, out: string[]): void
     switch (r.fold.kind) {
       case "continuation": {
         const f = r.fold;
-        const p = parsePath(f.path);
         const held = `held${i}`;
         const merged = `fold${i}`;
         const j = `f${i}`;
@@ -909,8 +1113,7 @@ function emitRepeat(st: State, block: Block, index: number, out: string[]): void
           `for (var ${j} = 0; ${j} < ${list}.length; ${j}++) {`,
           `  var ${line} = ${get(`${list}[${j}]`, f.path)};`,
           `  if (${held} !== null && ${line}.charAt(0) === ' ') {`,
-          `    benchSet(${held}, ${js(p.segment)}, ${p.field}, ${p.repeat}, ${p.component}, ${p.subcomponent}, ` +
-            `${get(held, f.path)} + ${js(f.join)} + ${line});`,
+          `    ${writeOn(held, f.path, r.over, `${get(held, f.path)} + ${js(f.join)} + ${line}`)}`,
           `    continue;`,
           `  }`,
           `  if (${held} !== null) { ${merged}.push(${held}); }`,
@@ -939,7 +1142,7 @@ function emitRepeat(st: State, block: Block, index: number, out: string[]): void
     `  ${n} = ${n} + 1;`,
     `  ${openSegment(block, targetVar, cur)}`,
   );
-  const scope: Scope = { repeatOver: r.over, sourceVar: cur, targetVar, counterVar: n };
+  const scope: Scope = { repeatOver: r.over, sourceVar: cur, targetVar, targetRecord: block.id, counterVar: n };
   for (const row of block.rows) emitRow(st, row, scope, "  ", out);
   out.push(`}`);
   if (st.counts) out.push(`benchCount[${js(block.id)}] = ${n};`);
@@ -1002,6 +1205,7 @@ export function filterCondition(spec: Spec): string {
   if (spec.gate.enabled === false) {
     return `// gate declared upstream: ${comment(spec.gate.upstream ?? "WHERE? gate.upstream is empty")}`;
   }
+  if (sourceFormat(spec) === "xml") return xmlFilter(spec);
   const events = Object.keys(spec.gate.permit)
     .map((t) => `${e4x(spec.gate.path)} === ${js(t)}`)
     .join(" || ");
@@ -1018,6 +1222,59 @@ export function filterCondition(spec: Spec): string {
     ? `return ${events};`
     : `return ${required.join(" && ")} && (${events});`;
   return [...GATE_RUNTIME, ret].join("\n");
+}
+
+/**
+ * The gate over an XML message. Same shape as the HL7 filter -- one helper,
+ * one return -- reading by steps from the document element, and refusing a
+ * document whose element is not the one the gate names.
+ */
+function xmlFilter(spec: Spec): string {
+  const root = rootOf([spec.gate.path]);
+  const at = (path: string) => {
+    const p = parseXmlPath(path);
+    return `benchGateAt(${stepsLit(p.steps.slice(1))}, ${js(p.attr ?? "")})`;
+  };
+  const events = Object.keys(spec.gate.permit).map((t) => `${at(spec.gate.path)} === ${js(t)}`).join(" || ");
+  const required = (spec.gate.require ?? []).map((r) => {
+    if (r.inTable === undefined) return `${at(r.path)} === ${js(r.equals)}`;
+    const keys = Object.keys(spec.tables?.[r.inTable] ?? {}).map((k) => `${js(k)}: 1`).join(", ");
+    return `({${keys}}).hasOwnProperty(${at(r.path)})`;
+  });
+  const ret = required.length === 0
+    ? `return ${events};`
+    : `return ${required.join(" && ")} && (${events});`;
+  return [
+    `function benchGateAt(steps, attr) {`,
+    `  var n = msg.localName() === ${js(root)} ? msg : null;`,
+    // Local names throughout; see benchXKids in the step for why.
+    `  for (var i = 0; i < steps.length && n !== null; i++) {`,
+    `    var kids = n.elements();`,
+    `    var hits = [];`,
+    `    for (var j = 0; j < kids.length(); j++) { if (kids[j].localName() === steps[i][0]) { hits.push(kids[j]); } }`,
+    `    var at = steps[i][1] === 0 ? 0 : steps[i][1] - 1;`,
+    `    n = hits.length > at ? hits[at] : null;`,
+    `  }`,
+    `  if (n === null) { return ''; }`,
+    `  if (attr !== '') {`,
+    `    var all = n.attributes();`,
+    `    for (var k = 0; k < all.length(); k++) { if (all[k].localName() === attr) { return all[k].toString(); } }`,
+    `    return '';`,
+    `  }`,
+    `  var flat = function (x) {`,
+    `    if (x.hasSimpleContent()) { return x.toString(); }`,
+    `    var s = '';`,
+    `    var kids = x.children();`,
+    `    for (var i = 0; i < kids.length(); i++) {`,
+    `      if (kids[i].nodeKind() === 'text') { s += kids[i].toString(); }`,
+    `      else if (kids[i].nodeKind() === 'element') { s += flat(kids[i]); }`,
+    `    }`,
+    `    return s;`,
+    `  };`,
+    `  return flat(n);`,
+    `}`,
+    ret,
+  ].join("\n");
 }
 
 // ---------------------------------------------------------------------------
@@ -1088,6 +1345,8 @@ export function emitBridgelink(spec: Spec): string {
     record: used.sources.has("sameAs"),
     counts: spec.blocks.some((b) => b.continuesNumbering),
     blocks: 0,
+    src: sourceFormat(spec),
+    tgt: targetFormat(spec),
   };
   const tables = referencedTables(spec);
   const empties = emptyTables(spec).filter((t) => tables.includes(t));
@@ -1163,6 +1422,7 @@ export function emitBridgelink(spec: Spec): string {
   if (used.sources.has("lookup")) out.push(LOOKUP_RUNTIME);
   if (used.steps.has("stripDelims") || used.steps.has("stripChars")) out.push(STRIP_RUNTIME);
   if (used.steps.has("defaultTo")) out.push(DEFAULT_RUNTIME);
+  if (st.src === "xml" || st.tgt === "xml") out.push(XML_RUNTIME);
   if (spec.blocks.some((b) => b.wholeSegment)) out.push(SEED_RUNTIME);
   if (spec.blocks.some((b) => b.repeat?.select?.kind === "highest")) out.push(RANK_RUNTIME);
   if (st.record) out.push(SAMEAS_RUNTIME);
@@ -1187,12 +1447,32 @@ export function emitBridgelink(spec: Spec): string {
     `var benchComp = benchDelims.charAt(1);`,
     `var benchSub = benchDelims.charAt(4);`,
   );
+  if (st.src === "xml" || st.tgt === "xml") {
+    // The channel sets the default namespace to the inbound document's before
+    // this step runs. Elements built here would inherit it and deliver an
+    // xmlns the bench never writes, so it is reset for the step. Measured: a
+    // default-namespace order came out as <Order xmlns="urn:..."> without it.
+    // E4X syntax, not plain JavaScript: the one line the parse gate in
+    // spec.test.ts knows to skip.
+    out.push(``, `default xml namespace = '';`);
+  }
+  if (st.src === "xml") {
+    // An XML source has no MSH, so the delimiters above are the HL7 defaults,
+    // used only if the target is HL7. Every XML read starts from the document
+    // element, and only when it is the one the spec's paths name.
+    const root = rootOf([spec.gate.path]);
+    out.push(
+      ``,
+      `// The document element every XML path starts from, when it is <${root}>.`,
+      `// Anything else reads as empty, which the gate refuses before this step.`,
+      `var benchXDoc = msg.localName() === ${js(root)} ? msg : null;`,
+    );
+  }
 
   if (used.sources.has("event")) {
     // The gate lives in the source filter, but the target event still has to be
     // stamped. One chain here keeps the step correct for every trigger the
     // filter lets through, and empty for anything it should not have.
-    const p = parsePath(spec.gate.path);
     const unlisted =
       spec.gate.enabled === false
         ? "benchTrigger"
@@ -1201,8 +1481,7 @@ export function emitBridgelink(spec: Spec): string {
       ``,
       `// The target trigger event. The unlisted branch has to say the same thing`,
       `// the bench says, or the two disagree on exactly the message nobody tested.`,
-      `var benchTrigger = benchGet(benchSeg(msg, ${js(p.segment)}), ${js(p.segment)}, ` +
-        `${p.field}, ${p.repeat}, ${p.component}, ${p.subcomponent});`,
+      `var benchTrigger = ${readDoc(spec.gate.path)};`,
       `var benchEvent = ${unlisted};`,
     );
     for (const [trigger, event] of Object.entries(spec.gate.permit)) {
@@ -1215,7 +1494,9 @@ export function emitBridgelink(spec: Spec): string {
     `// The outbound message, built fresh. This is what create='new' means on the`,
     `// IRIS side: block order below IS the delivered segment order, and anything`,
     `// the sender sent that no block names is gone on purpose.`,
-    `var out = new XML('<HL7Message/>');`,
+    st.tgt === "xml"
+      ? `var out = new XML(${js(`<${rootOf(spec.blocks.map((b) => b.id))}/>`)});`
+      : `var out = new XML('<HL7Message/>');`,
   );
 
   let repeatIndex = 0;
@@ -1233,11 +1514,26 @@ export function emitBridgelink(spec: Spec): string {
     `// require a template that this step does not otherwise need, write whichever`,
     `// one this channel actually has. Replacing children rather than the root`,
     `// keeps the <HL7Message> wrapper the serializer expects.`,
-    `if (typeof tmp !== 'undefined' && tmp !== null) {`,
-    `  tmp.setChildren(out.children());`,
-    `} else {`,
-    `  msg.setChildren(out.children());`,
-    `}`,
+    ...(st.src === "hl7v2" && st.tgt === "hl7v2"
+      ? [
+          `if (typeof tmp !== 'undefined' && tmp !== null) {`,
+          `  tmp.setChildren(out.children());`,
+          `} else {`,
+          `  msg.setChildren(out.children());`,
+          `}`,
+        ]
+      : [
+          // A different document element, or a different format: the wrapper
+          // cannot be kept, because it is the thing that changes. Replaced
+          // whole, so no attribute of the inbound root rides along.
+          `// The delivered document has its own document element, so it replaces`,
+          `// the message whole rather than donating its children.`,
+          `if (typeof tmp !== 'undefined' && tmp !== null) {`,
+          `  tmp = out;`,
+          `} else {`,
+          `  msg = out;`,
+          `}`,
+        ]),
     ``,
   );
 

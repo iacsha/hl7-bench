@@ -51,7 +51,7 @@ import { join, resolve, relative, isAbsolute, dirname, basename } from "node:pat
 import { Message } from "./hl7";
 import {
   SOURCE_KINDS, STEP_KINDS, SELECT_KINDS, FOLD_KINDS, KEY_SOURCE_KINDS,
-  emptyTables, validate, type Spec,
+  emptyTables, validate, sourceFormat, targetFormat, type Spec,
 } from "./spec";
 import { endOfObject, rewriteTransform } from "./serialize";
 import { attachComments, extractComments, specLiteral, stripComments } from "./speccomments";
@@ -194,6 +194,27 @@ function derive(spec: Spec, raw: string) {
     msg = new Message(raw);
   } catch {
     msg = null;
+  }
+  // The IRIS emitters and the trace speak HL7 v2 only. Said in the pane rather
+  // than shown as a path error three frames deep.
+  const xml = sourceFormat(spec) === "xml" || targetFormat(spec) === "xml";
+  const hl7Only = "(This spec reads or writes XML. The IRIS emitters and the mapping document are HL7 v2 only for now;\n" +
+    " the BridgeLink tab has the channel's filter and step, and Message out runs the bench.)";
+  if (xml) {
+    return {
+      iris: hl7Only,
+      routing: "",
+      filter: "",
+      process: hl7Only,
+      bridgelink: spec.bridgelink
+        ? attempt(() =>
+            `SOURCE FILTER (one JavaScript rule)\n\n${filterCondition(spec)}\n\n${"-".repeat(64)}\n\n` +
+              `TRANSFORMER (one JavaScript step)\n\n${emitBridgelink(spec)}`)
+        : "",
+      trace: hl7Only,
+      inventory: "",
+      emptyTables: emptyTables(spec),
+    };
   }
   return {
     iris: attempt(() => emitIris(spec)),

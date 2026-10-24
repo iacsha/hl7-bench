@@ -41,7 +41,10 @@
 process.env.HL7_BENCH_NOTES = "off";
 
 import { Message } from "./hl7";
-import { transform } from "./specfile";
+import { transform, spec } from "./specfile";
+import { runText } from "./run";
+import { canonicalXml } from "./xml";
+import { sourceFormat, targetFormat } from "./spec";
 import { fieldReport } from "./compare";
 import { logEvent } from "./log";
 import { readdirSync, readFileSync, existsSync } from "node:fs";
@@ -65,18 +68,23 @@ interface Case {
 
 const cases: Case[] = [];
 
+// .xml beside .hl7, for an interface that reads or writes XML. The input and
+// want extensions are each the format of their own side, so an HL7-to-XML case
+// is <name>.in.hl7 with <name>.want.xml.
 for (const f of files) {
-  if (f.endsWith(".in.hl7")) {
-    const name = f.slice(0, -".in.hl7".length);
-    const want = `${name}.want.hl7`;
-    if (!files.includes(want)) {
-      console.error(`SKIP  ${name}  -- has ${f} but no ${want}`);
-      continue;
-    }
-    cases.push({ name, input: f, want });
-  } else if (f.endsWith(".reject.hl7")) {
-    cases.push({ name: f.slice(0, -".reject.hl7".length), input: f, want: null });
+  const m = /^(.+)\.(in|reject)\.(hl7|xml)$/.exec(f);
+  if (!m) continue;
+  const name = m[1];
+  if (m[2] === "reject") {
+    cases.push({ name, input: f, want: null });
+    continue;
   }
+  const want = [`${name}.want.hl7`, `${name}.want.xml`].find((w) => files.includes(w));
+  if (!want) {
+    console.error(`SKIP  ${name}  -- has ${f} but no ${name}.want.hl7 or .want.xml`);
+    continue;
+  }
+  cases.push({ name, input: f, want });
 }
 
 const chosen = filter ? cases.filter((c) => c.name.toLowerCase().includes(filter)) : cases;
@@ -95,7 +103,46 @@ function segments(raw: string): string[] {
   return raw.split(/\r\n|\r|\n/).map((l) => l.trimEnd()).filter((l) => l.length > 0);
 }
 
+/** The want file's lines and the output's, in the target format's comparison form. */
+function compareLines(text: string): string[] {
+  return targetFormat(spec) === "xml" ? canonicalXml(text).split("\n") : segments(text);
+}
+
+/** A spec with XML on either side: run as text, compared line by canonical line. */
+function runAsText(c: Case): boolean {
+  const raw = readFileSync(join(DIR, c.input), "utf8");
+  let text: string;
+  try {
+    text = runText(spec, raw).text;
+  } catch (e) {
+    const m = e instanceof Error ? e.message : String(e);
+    if (c.want === null) {
+      console.log(`PASS  ${c.name}  refused: ${m.slice(0, 58)}${m.length > 58 ? "..." : ""}`);
+      return true;
+    }
+    console.log(`FAIL  ${c.name}  threw: ${m}`);
+    return false;
+  }
+  if (c.want === null) {
+    console.log(`FAIL  ${c.name}  was NOT refused -- it transformed and would have been delivered`);
+    return false;
+  }
+  const got = compareLines(text);
+  const want = compareLines(readFileSync(join(DIR, c.want), "utf8"));
+  const bad: string[] = [];
+  for (let i = 0; i < Math.max(got.length, want.length); i++) {
+    if (got[i] !== want[i]) bad.push(`      line ${i + 1}\n        got  ${got[i] ?? "(absent)"}\n        want ${want[i] ?? "(absent)"}`);
+  }
+  if (bad.length === 0) {
+    console.log(`PASS  ${c.name}  ${got.length} lines identical`);
+    return true;
+  }
+  console.log(`FAIL  ${c.name}  ${bad.length} differing line(s):\n${bad.join("\n")}`);
+  return false;
+}
+
 function run(c: Case): boolean {
+  if (sourceFormat(spec) !== "hl7v2" || targetFormat(spec) !== "hl7v2") return runAsText(c);
   const msg = new Message(readFileSync(join(DIR, c.input), "utf8"));
 
   if (c.want === null) {

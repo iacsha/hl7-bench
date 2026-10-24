@@ -89,7 +89,7 @@ const VALUE_FLAGS = new Set([
 ]);
 
 /** What each tool will accept as a named input file. */
-const HL7 = [".hl7"];
+const HL7 = [".hl7", ".xml"];
 const DATA = [".csv", ".tsv", ".txt"];
 
 /**

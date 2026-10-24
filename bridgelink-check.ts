@@ -36,7 +36,9 @@ process.env.HL7_BENCH_NOTES = "off";
 import { readdirSync, readFileSync, existsSync } from "node:fs";
 import { join } from "node:path";
 import { Message } from "./hl7";
-import { runSpec } from "./run";
+import { runSpec, runText } from "./run";
+import { canonicalXml } from "./xml";
+import { sourceFormat, targetFormat } from "./spec";
 import { specPath } from "./specpath";
 import { emitChannel, channelId } from "./emit/channel";
 import { fieldReport } from "./compare";
@@ -60,23 +62,40 @@ function casesFromDir(dir: string): EngineCase[] {
   if (!existsSync(dir)) return [];
   const out: EngineCase[] = [];
   for (const f of readdirSync(dir).sort()) {
-    if (f.endsWith(".in.hl7")) out.push({ name: f.slice(0, -7), input: readFileSync(join(dir, f), "utf8") });
-    else if (f.endsWith(".reject.hl7")) {
-      out.push({ name: f.slice(0, -11), input: readFileSync(join(dir, f), "utf8"), reject: true });
-    }
+    const m = /^(.+)\.(in|reject)\.(hl7|xml)$/.exec(f);
+    if (!m) continue;
+    out.push({ name: m[1], input: readFileSync(join(dir, f), "utf8"), ...(m[2] === "reject" ? { reject: true } : {}) });
   }
   return out;
 }
 
-/** What the bench says should happen: delivered segments, or a refusal. */
-function benchSays(spec: Spec, raw: string): { refused: string } | { segments: string[]; msg: Message } {
-  const msg = new Message(raw);
+/**
+ * The lines to compare. HL7 by segment; XML in canonical form, so an engine
+ * that indents differently or adds a declaration still compares equal when the
+ * tree is the same.
+ */
+function lines(spec: Spec, text: string): string[] {
+  // Strict: a namespace the engine put on the delivered document is a real
+  // difference, and the receiver sees it. The bench never writes one.
+  return targetFormat(spec) === "xml" ? canonicalXml(text, true).split("\n") : segments(text);
+}
+
+/** What the bench says should happen: delivered lines, or a refusal. */
+function benchSays(spec: Spec, raw: string): { refused: string } | { segments: string[]; msg?: Message } {
+  if (sourceFormat(spec) === "hl7v2" && targetFormat(spec) === "hl7v2") {
+    const msg = new Message(raw);
+    try {
+      runSpec(spec, msg);
+    } catch (e) {
+      return { refused: (e as Error).message };
+    }
+    return { segments: segments(msg.toString()), msg };
+  }
   try {
-    runSpec(spec, msg);
+    return { segments: lines(spec, runText(spec, raw).text) };
   } catch (e) {
     return { refused: (e as Error).message };
   }
-  return { segments: segments(msg.toString()), msg };
 }
 
 async function main(): Promise<number> {
@@ -143,7 +162,14 @@ async function main(): Promise<number> {
         continue;
       }
 
-      const engine = segments(got.encoded);
+      let engine: string[];
+      try {
+        engine = lines(spec, got.encoded);
+      } catch (e) {
+        failed++;
+        console.log(`FAIL  ${c.name}  the engine's output does not parse: ${(e as Error).message}\n${indent(got.encoded, 6)}`);
+        continue;
+      }
       const bad: string[] = [];
       for (let i = 0; i < Math.max(engine.length, want.segments.length); i++) {
         if (engine[i] !== want.segments[i]) {
@@ -157,7 +183,7 @@ async function main(): Promise<number> {
       failed++;
       let fields: string[] = [];
       try {
-        fields = fieldReport(new Message(got.encoded), want.msg);
+        if (want.msg) fields = fieldReport(new Message(got.encoded), want.msg);
       } catch {
         fields = [];
       }

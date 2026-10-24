@@ -42,17 +42,15 @@ two profilers that will disagree about what counts as populated.
 
 ## Open
 
-### XML messages, not only HL7 v2
+### XML beyond the bench and BridgeLink
 
-Asked for 2026-10-24: a BridgeLink colleague's interfaces are HL7 and XML, and
-the tool should adapt to more than one format. Today every layer assumes HL7 v2:
-spec paths are `PID-5.1`, `hl7.ts` is the only reader, and the step reads the
-HL7 v2 XML shape. The shape that adapts is ONE message-model layer (read a path,
-write a path, enumerate occurrences) with HL7 v2 and XML behind it, so a later
-format is a new reader rather than a new tool. Unknowns: the path syntax for
-XML (an XPath subset is the obvious start), and what `repeat`, `wholeSegment`
-and the gate mean on a tree with no segments. Prove HL7 on a second engine
-first; that is done (below), so this is next.
+XML runs on the bench and on BridgeLink (Settled, below). Still HL7 only: the
+GUI form and Copy segments, `trace.ts` (the mapping document), `reads.ts`,
+and the IRIS emitters, which refuse an XML spec by name. IRIS has
+EnsLib.EDI.XML.Document and an XML DTL; nothing about it has been measured
+yet, which is the first unknown. Next format after XML: a new reader in the
+same message surface (get, all, seg on the message; get, set, clone on a
+record), not a new tool.
 
 ### `iris` optional for a BridgeLink-only spec
 
@@ -77,6 +75,25 @@ the channel. Not built until somebody needs to change a table without a deploy.
 ---
 
 ## Settled
+
+### XML messages, on the bench and in BridgeLink
+
+Asked for 2026-10-24: the BridgeLink side's interfaces are HL7 and XML. An XML
+path is absolute and starts with `/`, which no HL7 path does, so the gate path
+says what a spec reads and the block ids say what it writes. No new spec key,
+so nothing can disagree with it. `xml.ts` is the reader, printer, paths and
+records, behind the same surface `run.ts` already used on `hl7.ts`, so select,
+fold, skip, max, seeds and continued numbering each have one implementation for
+both formats. `runText` handles any format pair; `runSpec` keeps its in-place
+HL7 contract.
+
+Proven on BridgeLink 26.9.0 with namespaces compared strictly: XML to XML 5/5,
+HL7 to XML 3/3, XML to HL7 3/3, and every HL7 spec re-run unchanged. The engine
+showed three things about namespaces: Strip Namespaces leaves orphaned prefixes
+and the document stops parsing; with namespaces kept, `child()` misses them and
+built elements inherit the inbound default; and a copied seed carries its
+`xmlns`. The step matches local names, resets the default namespace, and
+rebuilds seeds.
 
 ### The BridgeLink step, proven in an engine
 

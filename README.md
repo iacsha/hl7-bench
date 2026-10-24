@@ -17,7 +17,8 @@ That is the whole interface. Anything that can spawn a process can drive it.
 Two engines from one spec: an IRIS DTL or business process, and a BridgeLink or
 Mirth channel (source filter, Rhino transformer step, or the whole channel for
 Import Channel). The BridgeLink side is proven in a running engine by
-`bridgelink-check.ts`; start at [BRIDGELINK.md](BRIDGELINK.md).
+`bridgelink-check.ts`, for HL7 v2 and for XML in either direction; start at
+[BRIDGELINK.md](BRIDGELINK.md).
 
 ```mermaid
 flowchart LR

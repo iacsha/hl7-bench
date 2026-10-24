@@ -218,6 +218,17 @@ export class Message {
     });
   }
 
+  /**
+   * A message from segments already built, for an HL7 target assembled from a
+   * source that was not HL7. Same object a parse produces, without the parse.
+   */
+  static of(segments: Segment[], delims: Delims): Message {
+    const m = Object.create(Message.prototype) as Message;
+    (m as { delims: Delims }).delims = delims;
+    (m as { segments: Segment[] }).segments = segments;
+    return m;
+  }
+
   /** First segment with this id, or undefined. */
   seg(id: string): Segment | undefined {
     return this.segments.find((s) => s.id === id);

@@ -1,3 +1,5 @@
+import { isXmlPath, parseXmlPath, underRecord, rootOf } from "./xml";
+
 /**
  * spec.ts -- the one authoring.
  *
@@ -971,6 +973,135 @@ export function fieldOf(path: string): string {
   return m[1];
 }
 
+// ---------------------------------------------------------------------------
+// Two message formats, told apart by the path
+//
+// An XML path is absolute and starts with "/"; an HL7 path never does. So a
+// spec says which format it reads by the syntax of its gate path, and which it
+// writes by the syntax of its block ids. Nothing else declares it, so nothing
+// else can disagree with it. See xml.ts for what an XML path and record are.
+// ---------------------------------------------------------------------------
+
+export type Format = "hl7v2" | "xml";
+
+export function formatOf(path: string): Format {
+  return isXmlPath(path) ? "xml" : "hl7v2";
+}
+
+/** What the spec reads: the format of its gate path. */
+export function sourceFormat(spec: Spec): Format {
+  return formatOf(spec.gate.path);
+}
+
+/** What the spec writes: the format of its first block. HL7 for a spec with none. */
+export function targetFormat(spec: Spec): Format {
+  return spec.blocks.length > 0 ? formatOf(spec.blocks[0].id) : "hl7v2";
+}
+
+/**
+ * Whether a path belongs to a record: the scoping question every repeat and
+ * every block asks. A segment id on the HL7 side, a path prefix on the XML side.
+ */
+export function inRecord(path: string, record: string): boolean {
+  if (isXmlPath(path) !== isXmlPath(record)) return false;
+  return isXmlPath(path) ? underRecord(path, record) : segmentOf(path) === record;
+}
+
+/** Throws, naming the path, when it is not a valid path of either format. */
+export function checkPath(path: string): void {
+  if (isXmlPath(path)) parseXmlPath(path);
+  else segmentOf(path);
+}
+
+/** Every path the spec READS, gate included: all must be the source format. */
+function readPaths(spec: Spec): string[] {
+  const out = [spec.gate.path, ...(spec.gate.require ?? []).map((r) => r.path)];
+  for (const b of spec.blocks) {
+    const r = b.repeat;
+    if (r) out.push(r.over, ...[r.skipWhenEmpty, r.select?.path, r.fold?.path].filter((p): p is string => !!p));
+    for (const row of b.rows) {
+      out.push(...sourcePathsOf(row.from));
+      if (row.from.kind === "fromFirst" || row.from.kind === "fromWhere") out.push(row.from.segment);
+      if (row.from.kind === "lookup" && row.from.from &&
+          (row.from.from.kind === "fromFirst" || row.from.from.kind === "fromWhere")) {
+        out.push(row.from.from.segment);
+      }
+    }
+  }
+  return out;
+}
+
+/**
+ * The XML half of validate(): which format each side is, and what the XML side
+ * cannot say. Empty for a spec that is HL7 on both sides, so every HL7 spec
+ * validates exactly as it did before XML existed.
+ */
+function formatProblems(spec: Spec): string[] {
+  const src = sourceFormat(spec);
+  const tgt = targetFormat(spec);
+  const problems: string[] = [];
+
+  for (const p of readPaths(spec)) {
+    if (formatOf(p) !== src) {
+      problems.push(
+        `${p}: the gate reads ${src === "xml" ? "XML" : "HL7"} (${spec.gate.path}), so every source path must too. ` +
+          `One message is one format.`,
+      );
+    }
+  }
+  for (const b of spec.blocks) {
+    if (formatOf(b.id) !== tgt) {
+      problems.push(`${b.id}: blocks mix XML and HL7 targets. One delivered message is one format.`);
+      continue;
+    }
+    if (tgt !== "xml") continue;
+    try {
+      if (parseXmlPath(b.id).attr !== undefined) {
+        problems.push(`${b.id}: a block delivers an element; an attribute is written by a row under it.`);
+      }
+    } catch (e) {
+      problems.push(`${b.id}: ${(e as Error).message}`);
+    }
+  }
+  if (src === "hl7v2" && tgt === "hl7v2") return problems;
+
+  if (tgt === "xml") {
+    try {
+      rootOf([...spec.blocks.map((b) => b.id), ...spec.blocks.flatMap((b) => b.rows.map((r) => r.target))]);
+    } catch (e) {
+      problems.push(`${(e as Error).message}. A delivered document has one document element.`);
+    }
+  }
+  for (const b of spec.blocks) {
+    if (b.bundle !== undefined) {
+      problems.push(`${b.id}: bundle is HL7 only. An XML record already carries its children.`);
+    }
+    if (b.wholeSegment && src !== tgt) {
+      problems.push(
+        `${b.id}: wholeSegment copies a source record as it is, so source and target must be ` +
+          `the same format. Enumerate the fields instead.`,
+      );
+    }
+    if (b.repeat && src === "xml") {
+      try {
+        if (parseXmlPath(b.repeat.over).attr !== undefined) {
+          problems.push(`${b.id}: repeat.over ${b.repeat.over} names an attribute; a repeat walks elements.`);
+        }
+      } catch { /* reported as a path problem */ }
+    }
+    for (const row of b.rows) {
+      const kinds = [row.from.kind, row.from.kind === "lookup" ? row.from.from?.kind : undefined];
+      if (src === "xml" && kinds.includes("pickRepeat")) {
+        problems.push(
+          `${row.target}: pickRepeat scans the ~ repetitions of an HL7 field. In XML a repetition ` +
+            `is an element: use fromWhere on its record instead.`,
+        );
+      }
+    }
+  }
+  return problems;
+}
+
 /** A short human description of a source, for the trace's SOURCE column. */
 export function describeSource(from: Source): string {
   switch (from.kind) {
@@ -1114,7 +1245,14 @@ export type Engine = "iris" | "bridgelink";
  * (engine-neutral) must never be made to demand a channel name to move a message.
  */
 function engineProblems(spec: Spec, engine: Engine): string[] {
-  if (engine !== "bridgelink") return [];
+  if (engine === "iris") {
+    return sourceFormat(spec) === "xml" || targetFormat(spec) === "xml"
+      ? [
+          `This spec reads or writes XML, and the IRIS emitters write HL7 v2 DTLs and processes ` +
+            `only. Emit it for BridgeLink, or see ROADMAP.md for IRIS XML.`,
+        ]
+      : [];
+  }
   if (bundledBlocks(spec).length > 0) {
     return [
       `BridgeLink does not emit a bundle yet (${bundledBlocks(spec).join(", ")}). ` +
@@ -1153,6 +1291,7 @@ export function validate(spec: Spec, engine?: Engine): string[] {
   const problems: string[] = [];
 
   if (engine) problems.push(...engineProblems(spec, engine));
+  problems.push(...formatProblems(spec));
 
   if (Object.keys(spec.gate.permit).length === 0) {
     problems.push("gate.permit is empty, so this interface would refuse every message");
@@ -1626,7 +1765,8 @@ export function validate(spec: Spec, engine?: Engine): string[] {
     // either way. Usually a leftover from a copied block.
     if (rep?.skipWhenEmpty) {
       try {
-        if (segmentOf(rep.skipWhenEmpty) !== rep.over) {
+        checkPath(rep.skipWhenEmpty);
+        if (!inRecord(rep.skipWhenEmpty, rep.over)) {
           problems.push(
             `${block.id}: repeat.skipWhenEmpty is "${rep.skipWhenEmpty}", which is not a ${rep.over} ` +
               `path. It is read off the current ${rep.over}, so it resolves to nothing on every ` +
@@ -1658,7 +1798,8 @@ export function validate(spec: Spec, engine?: Engine): string[] {
     ] as const) {
       if (path === undefined) continue;
       try {
-        if (segmentOf(path) !== rep!.over) {
+        checkPath(path);
+        if (!inRecord(path, rep!.over)) {
           problems.push(
             `${block.id}: repeat.${what} reads ${path}, but the repeat walks ${rep!.over}`,
           );
@@ -1673,12 +1814,17 @@ export function validate(spec: Spec, engine?: Engine): string[] {
     for (const row of block.rows) {
       let targetSeg: string;
       try {
-        targetSeg = segmentOf(row.target);
+        checkPath(row.target);
+        targetSeg = isXmlPath(row.target) ? row.target : segmentOf(row.target);
       } catch (e) {
         problems.push(String((e as Error).message));
         continue;
       }
-      if (targetSeg !== block.id && !(block.bundle ?? []).includes(targetSeg)) {
+      if (isXmlPath(row.target)) {
+        if (!inRecord(row.target, block.id)) {
+          problems.push(`${row.target} is in the ${block.id} block but is not under it`);
+        }
+      } else if (targetSeg !== block.id && !(block.bundle ?? []).includes(targetSeg)) {
         problems.push(
           `${row.target} is in the ${block.id} block but targets ${targetSeg}` +
             (block.repeat ? `. If ${targetSeg} travels with each ${block.id}, list it in bundle.` : ""),
@@ -1687,7 +1833,7 @@ export function validate(spec: Spec, engine?: Engine): string[] {
 
       for (const p of sourcePathsOf(row.from)) {
         try {
-          segmentOf(p);
+          checkPath(p);
         } catch (e) {
           problems.push(`${row.target}: ${(e as Error).message}`);
         }
@@ -1706,6 +1852,8 @@ export function validate(spec: Spec, engine?: Engine): string[] {
       // the generated DTL.
       if (row.from.kind === "copy" || row.from.kind === "firstOf") {
         for (const p of sourcePathsOf(row.from)) {
+          // An IRIS-only divergence, and IRIS never sees an XML spec.
+          if (isXmlPath(p)) continue;
           let ps: string;
           try { ps = segmentOf(p); } catch { continue; }
           if (!repeated.has(ps)) continue;
@@ -1789,7 +1937,7 @@ export function thinSegmentRisks(spec: Spec): string[] {
   for (const block of spec.blocks) {
     if (block.id === "MSH" || block.wholeSegment) continue;
     for (const row of block.rows) {
-      if (row.from.kind !== "counter") continue;
+      if (row.from.kind !== "counter" || isXmlPath(row.target)) continue;
       const named = NO_SET_ID[segmentOf(row.target)];
       if (named && fieldOf(row.target) === "1") {
         out.push(

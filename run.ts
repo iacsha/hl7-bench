@@ -16,24 +16,34 @@
  */
 
 import { Message, Segment, type Delims } from "./hl7";
+import { XmlMessage, XmlRecord, XmlBuilder, blankRecord, isXmlPath, rootOf } from "./xml";
 import { logEvent } from "./log";
 import {
   validate, segmentOf, fieldOf, describeSelect, describeFold, seedGuarded, DATALESS,
+  inRecord, sourceFormat, targetFormat,
   type Spec, type Source, type Step, type Row, type Block,
   type Repeat, type Select, type Fold, type Engine,
 } from "./spec";
 
 // ---------------------------------------------------------------------------
 
+/**
+ * A message of either format, and one of its records. The runner uses only
+ * the surface both share -- get, all, seg and delims on the message; id, get,
+ * set and clone on a record -- so every stage below has one implementation.
+ */
+export type Doc = Message | XmlMessage;
+export type Rec = Segment | XmlRecord;
+
 export interface Ctx {
-  msg: Message;
+  msg: Doc;
   /** The target trigger event the gate resolved to. */
   event: string;
   tables: Record<string, Record<string, string>>;
   /** Source segment id being walked, when inside a repeat. */
   repeatOver?: string;
   /** The current source occurrence, when inside a repeat. */
-  current?: Segment;
+  current?: Rec;
   /**
    * A bundle's companions for the current occurrence, by segment id: the IN2
    * that travels with THIS IN1. A listed id with no entry is a companion this
@@ -91,10 +101,10 @@ export interface RunResult {
  * wrong file.
  */
 export function readPath(ctx: Ctx, path: string): string {
-  if (ctx.current && ctx.repeatOver && segmentOf(path) === ctx.repeatOver) {
+  if (ctx.current && ctx.repeatOver && inRecord(path, ctx.repeatOver)) {
     return ctx.current.get(path);
   }
-  if (ctx.companions?.ids.includes(segmentOf(path))) {
+  if (ctx.companions && !isXmlPath(path) && ctx.companions.ids.includes(segmentOf(path))) {
     return ctx.companions.found.get(segmentOf(path))?.get(path) ?? "";
   }
   return ctx.msg.get(path);
@@ -108,10 +118,11 @@ export function readPath(ctx: Ctx, path: string): string {
  * in the output and they are completely different problems: the first is a
  * sender question, the second is usually a wrong path or a wrong DocType.
  */
-export function segFor(ctx: Ctx, path: string): Segment | undefined {
-  if (ctx.current && ctx.repeatOver && segmentOf(path) === ctx.repeatOver) return ctx.current;
+export function segFor(ctx: Ctx, path: string): Rec | undefined {
+  if (ctx.current && ctx.repeatOver && inRecord(path, ctx.repeatOver)) return ctx.current;
+  if (isXmlPath(path)) return (ctx.msg as XmlMessage).seg(path);
   if (ctx.companions?.ids.includes(segmentOf(path))) return ctx.companions.found.get(segmentOf(path));
-  return ctx.msg.seg(segmentOf(path));
+  return (ctx.msg as Message).seg(segmentOf(path));
 }
 
 /**
@@ -192,7 +203,8 @@ function resolveSource(ctx: Ctx, from: Source): { raw: string; todo?: string; no
       return { raw: ctx.event };
 
     case "pickRepeat": {
-      const seg = segFor(ctx, from.path);
+      // HL7 only: validate() refuses it on an XML source.
+      const seg = segFor(ctx, from.path) as Segment | undefined;
       if (!seg) return { raw: "" };
       const id = segmentOf(from.path);
       const f = fieldNumber(from.path);
@@ -307,7 +319,8 @@ export function resolve(ctx: Ctx, row: Row): Resolved & { note?: string } {
  * delimiters. Building MSH like every other segment produces a header that
  * parses back wrong.
  */
-export function blankSegment(id: string, d: Delims): Segment {
+export function blankSegment(id: string, d: Delims): Rec {
+  if (isXmlPath(id)) return blankRecord(id);
   return id === "MSH"
     ? new Segment("MSH", ["MSH", d.comp + d.rep + d.esc + d.sub], d)
     : new Segment(id, [id], d);
@@ -325,7 +338,7 @@ export function blankSegment(id: string, d: Delims): Segment {
  * DTL does too -- `source.{PV2}` on an absent segment is "" and the assign
  * creates the segment anyway.
  */
-export function seedSource(ctx: Ctx, block: Block): Segment | undefined {
+export function seedSource(ctx: Ctx, block: Block): Rec | undefined {
   return ctx.current ?? ctx.msg.seg(block.id);
 }
 
@@ -336,7 +349,7 @@ export function seedSource(ctx: Ctx, block: Block): Segment | undefined {
  * `clone()` rather than a rebuild through `getField`, because MSH numbers its
  * fields one off from its own array and a rebuild from outside gets MSH wrong.
  */
-export function startSegment(ctx: Ctx, block: Block): Segment {
+export function startSegment(ctx: Ctx, block: Block): Rec {
   if (!block.wholeSegment) return blankSegment(block.id, ctx.msg.delims);
   const src = seedSource(ctx, block);
   return src ? src.clone() : blankSegment(block.id, ctx.msg.delims);
@@ -372,7 +385,7 @@ function rank(a: string, b: string): number {
 }
 
 /** The occurrences a `select` keeps. */
-function selected(segs: Segment[], sel: Select): Segment[] {
+function selected(segs: Rec[], sel: Select): Rec[] {
   switch (sel.kind) {
     case "equals":
       return segs.filter((s) => s.get(sel.path) === sel.value);
@@ -394,11 +407,11 @@ function selected(segs: Segment[], sel: Select): Segment[] {
  * Clones before writing. `walk` is shared with `trace.ts`, which describes a
  * message and must not change it.
  */
-function folded(segs: Segment[], f: Fold): Segment[] {
+function folded(segs: Rec[], f: Fold): Rec[] {
   switch (f.kind) {
     case "continuation": {
-      const out: Segment[] = [];
-      let held: Segment | undefined;
+      const out: Rec[] = [];
+      let held: Rec | undefined;
       for (const s of segs) {
         if (held !== undefined && s.get(f.path).startsWith(" ")) {
           held.set(f.path, held.get(f.path) + f.join + s.get(f.path));
@@ -415,11 +428,11 @@ function folded(segs: Segment[], f: Fold): Segment[] {
 
 /** Every intermediate state of a repeat, so both callers read the same numbers. */
 interface Stages {
-  all: Segment[];
-  afterSkip: Segment[];
-  afterSelect: Segment[];
-  afterFold: Segment[];
-  delivered: Segment[];
+  all: Rec[];
+  afterSkip: Rec[];
+  afterSelect: Rec[];
+  afterFold: Rec[];
+  delivered: Rec[];
 }
 
 /**
@@ -430,8 +443,8 @@ interface Stages {
  * note loop would be a second place for the skip rule and the max cap to live,
  * which is the thing `walk`'s header promises does not happen.
  */
-function stages(msg: Message, r: Repeat): Stages {
-  const all = msg.all(r.over);
+function stages(msg: Doc, r: Repeat): Stages {
+  const all: Rec[] = msg.all(r.over);
   const placeholders = r.skipValues ?? [];
   const afterSkip = r.skipWhenEmpty
     ? all.filter((s) => {
@@ -445,11 +458,11 @@ function stages(msg: Message, r: Repeat): Stages {
   return { all, afterSkip, afterSelect, afterFold, delivered };
 }
 
-function occurrences(msg: Message, block: Block): Segment[] {
+function occurrences(msg: Doc, block: Block): Rec[] {
   return stages(msg, block.repeat!).delivered;
 }
 
-function fill(ctx: Ctx, rows: Row[], out: Segment, result: RunResult): void {
+function fill(ctx: Ctx, rows: Row[], out: Rec, result: RunResult): void {
   for (const row of rows) {
     const { value, todo, note } = resolve(ctx, row);
     const label = row.label ?? row.target;
@@ -486,7 +499,7 @@ function shown(seg: string, field: string): string {
  * than be delivered as something else. In IRIS the same decision belongs in
  * the routing rule, so an unhandled event never reaches the transform at all.
  */
-export function gate(spec: Spec, msg: Message): { trigger: string; event: string } {
+export function gate(spec: Spec, msg: Doc): { trigger: string; event: string } {
   const verdict = explainGate(spec, msg);
   const refused = verdict.clauses.find((c) => !c.ok);
   if (refused) throw new Error(refused.why);
@@ -526,7 +539,7 @@ export interface GateVerdict {
  * Key presence uses hasOwn, not `in` or indexing, on the permit table as well:
  * a trigger that happens to be "constructor" is not a permitted event.
  */
-export function explainGate(spec: Spec, msg: Message): GateVerdict {
+export function explainGate(spec: Spec, msg: Doc): GateVerdict {
   const trigger = msg.get(spec.gate.path);
   const permitted = Object.hasOwn(spec.gate.permit, trigger);
   const event = permitted ? spec.gate.permit[trigger] : undefined;
@@ -616,7 +629,7 @@ function oneEdit(a: string, b: string): boolean {
  */
 export function walk(
   spec: Spec,
-  msg: Message,
+  msg: Doc,
   event: string,
   visit: (block: Block, ctx: Ctx) => void,
 ): void {
@@ -639,7 +652,9 @@ export function walk(
     const ids = block.bundle ?? [];
     for (const current of occurrences(msg, block)) {
       ordinal++;
-      const companions = ids.length ? { ids, found: companionsOf(msg, current, ids) } : undefined;
+      const companions = ids.length
+        ? { ids, found: companionsOf(msg as Message, current as Segment, ids) }
+        : undefined;
       visit(block, { msg, event, tables, ordinal, repeatOver: block.repeat.over, current, companions, written });
     }
     delivered.set(block.id, ordinal);
@@ -663,7 +678,8 @@ export function assertRunnable(spec: Spec, engine?: Engine): void {
  * the missing list and the notes together: `bench.ts` and `check.ts` both go
  * through `transform()`, which returns nothing.
  */
-export function runSpec(spec: Spec, msg: Message): RunResult {
+/** The whole run, either format in and out: the delivered records, in order. */
+function runCore(spec: Spec, msg: Doc): { result: RunResult; out: Rec[] } {
   assertRunnable(spec);
 
   let event: string;
@@ -682,7 +698,7 @@ export function runSpec(spec: Spec, msg: Message): RunResult {
   }
 
   const result: RunResult = { event, missing: [], notes: [], assigned: 0 };
-  const out: Segment[] = [];
+  const out: Rec[] = [];
 
   walk(spec, msg, event, (block, ctx) => {
     // A wholeSegment block whose seed finds nothing delivers NO segment.
@@ -715,12 +731,12 @@ export function runSpec(spec: Spec, msg: Message): RunResult {
       );
     }
     const seg = startSegment(ctx, block);
-    const own = block.rows.filter((r) => segmentOf(r.target) === block.id);
+    const own = block.rows.filter((r) => inRecord(r.target, block.id));
     fill(ctx, own, seg, result);
     // Per message: every source-reading row came out empty, so what is left
     // is a set id or a constant. The spec-level check cannot see this, since
     // the block does map source fields; this sender just did not fill them.
-    if (block.id !== "MSH" && !block.wholeSegment) {
+    if (block.id !== "MSH" && !block.wholeSegment && !isXmlPath(block.id)) {
       const sourced = own.filter((r) => !DATALESS.has(r.from.kind));
       const filled = own.filter((r) => seg.get(r.target) !== "");
       if (sourced.length > 0 && filled.length > 0 && filled.every((r) => DATALESS.has(r.from.kind))) {
@@ -792,24 +808,69 @@ export function runSpec(spec: Spec, msg: Message): RunResult {
   // The same note raised by three rows reading the same fallback is one
   // finding, not three. Repeated verbatim it stops being read at all.
   result.notes = [...new Set(result.notes)];
+  return { result, out };
+}
 
-  // Swap the delivered segments in. Same move the imperative transform made,
-  // and the reason `create='new'` is the DTL default: block order above IS the
-  // output segment order, stated rather than implied.
-  msg.segments.splice(0, msg.segments.length, ...out);
-
+function logRun(spec: Spec, result: RunResult, delivered: number): void {
   logEvent(
     "run",
     {
       spec: spec.name,
       event: result.event,
-      segments: out.length,
+      segments: delivered,
       fields: result.assigned,
       missing: result.missing.length,
       result: result.missing.length > 0 ? "missing-required" : "ok",
     },
     result.notes,
   );
+}
 
+/**
+ * Run a spec against an HL7 message, replacing its segments with the delivered
+ * ones. The bench contract every HL7 caller already uses, unchanged.
+ *
+ * HL7 to HL7 only: a message cannot become another format in place. A spec
+ * that reads or writes XML runs through `runText`, and saying so here beats a
+ * TypeError three frames down.
+ */
+export function runSpec(spec: Spec, msg: Message): RunResult {
+  if (sourceFormat(spec) !== "hl7v2" || targetFormat(spec) !== "hl7v2") {
+    throw new Error(`Spec "${spec.name}" reads or writes XML; run it with runText(spec, raw).`);
+  }
+  const { result, out } = runCore(spec, msg);
+  // Swap the delivered segments in. Same move the imperative transform made,
+  // and the reason `create='new'` is the DTL default: block order above IS the
+  // output segment order, stated rather than implied.
+  msg.segments.splice(0, msg.segments.length, ...(out as Segment[]));
+  logRun(spec, result, out.length);
   return result;
+}
+
+/** The input parsed as the format the spec reads. */
+export function parseFor(spec: Spec, raw: string): Doc {
+  return sourceFormat(spec) === "xml" ? XmlMessage.parse(raw) : new Message(raw);
+}
+
+/**
+ * Any format in, any format out, as text. What the bench, check.ts and the
+ * engine harness run when a spec is not HL7 on both sides.
+ *
+ * The delivered records become the output in block order: segments joined for
+ * HL7, records placed under their parent elements for XML, each parent made
+ * once, the first time a record needs it.
+ */
+export function runText(spec: Spec, raw: string): { text: string; doc: Doc; result: RunResult } {
+  const src = parseFor(spec, raw);
+  const { result, out } = runCore(spec, src);
+  let doc: Doc;
+  if (targetFormat(spec) === "xml") {
+    const b = new XmlBuilder(rootOf(spec.blocks.map((x) => x.id)));
+    for (const rec of out) b.place(rec as XmlRecord);
+    doc = b.message();
+  } else {
+    doc = Message.of(out as Segment[], src.delims);
+  }
+  logRun(spec, result, out.length);
+  return { text: doc.toString(), doc, result };
 }
