@@ -184,9 +184,13 @@ const RESOURCES = `<resourceIds class="linked-hash-map">
   </entry>
 </resourceIds>`;
 
-function sourceProperties(v: string, o: ChannelOptions): { props: string; transport: string } {
+function sourceProperties(v: string, o: ChannelOptions, src: Format = "hl7v2"): { props: string; transport: string } {
+  // A sender on MLLP waits for an ACK. Generated once the destinations have
+  // completed, so AA means delivered, not merely received. HL7 sources only:
+  // there is no HL7 ACK to generate for an XML message.
+  const response = o.listenPort !== undefined && src === "hl7v2" ? "Auto-generate (Destinations completed)" : "None";
   const common = `<sourceConnectorProperties version="${v}">
-    <responseVariable>None</responseVariable>
+    <responseVariable>${response}</responseVariable>
     <respondAfterProcessing>true</respondAfterProcessing>
     <processBatch>false</processBatch>
     <firstResponse>false</firstResponse>
@@ -313,7 +317,7 @@ export function emitChannel(spec: Spec, o: ChannelOptions): string {
   const rules = spec.gate.enabled === false ? "" : jsRule(v, "hl7-bench gate", gate);
   const src = sourceFormat(spec);
   const tgt = targetFormat(spec);
-  const srcConn = sourceProperties(v, o);
+  const srcConn = sourceProperties(v, o, src);
   const dst = destinationProperties(v, o);
   const description =
     o.description ??

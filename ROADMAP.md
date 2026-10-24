@@ -70,6 +70,13 @@ the channel. Not built until somebody needs to change a table without a deploy.
 
 ## Settled
 
+### The channel's connectors, proven over MLLP
+
+`bridgelink-check.ts --mllp` deploys the channel with its MLLP listener and
+MLLP sender and runs the cases over the wire, to a receiver the harness runs
+and ACKs. All 18 conformance cases agree (2026-10-24, BridgeLink 26.9.0). An
+HL7 listener ACKs on "Destinations completed", so AA means delivered.
+
 ### `bundle` on BridgeLink
 
 Each occurrence finds its companions as following siblings in the HL7 v2 XML,

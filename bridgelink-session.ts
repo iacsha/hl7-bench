@@ -204,18 +204,35 @@ export async function processMessage(s: Session, id: string, raw: string, timeou
   const until = Date.now() + timeoutMs;
   while (Date.now() < until) {
     const r = await call(s, "GET", `/channels/${id}/messages/${mid}?includeContent=true`);
-    if (r.status === 200 && /<processed>true<\/processed>/.test(r.text)) {
-      const src = /<entry>\s*<int>0<\/int>\s*<connectorMessage>([\s\S]*?)<\/connectorMessage>/.exec(r.text)?.[1] ?? "";
-      const status = /<status>([^<]+)<\/status>/.exec(src)?.[1] ?? "UNKNOWN";
-      return {
-        status,
-        encoded: sourceContent(r.text, "ENCODED"),
-        error: sourceContent(r.text, "PROCESSING_ERROR"),
-      };
-    }
+    if (r.status === 200 && /<processed>true<\/processed>/.test(r.text)) return processed(r.text);
     await Bun.sleep(300);
   }
   throw new Error(`message ${mid} on channel ${id} was not processed within ${timeoutMs / 1000}s`);
+}
+
+/** The source connector's outcome, off one message's XML. */
+function processed(text: string): Processed {
+  const src = /<entry>\s*<int>0<\/int>\s*<connectorMessage>([\s\S]*?)<\/connectorMessage>/.exec(text)?.[1] ?? "";
+  const status = /<status>([^<]+)<\/status>/.exec(src)?.[1] ?? "UNKNOWN";
+  return {
+    status,
+    encoded: sourceContent(text, "ENCODED"),
+    error: sourceContent(text, "PROCESSING_ERROR") || (/<processingError>([\s\S]*?)<\/processingError>/.exec(src)?.[1] ?? ""),
+  };
+}
+
+/**
+ * The newest message on the channel, once processed: what an MLLP send turned
+ * into, since a send over the wire returns an ACK and not a message id.
+ */
+export async function latestMessage(s: Session, id: string, timeoutMs = 10000): Promise<Processed | null> {
+  const until = Date.now() + timeoutMs;
+  while (Date.now() < until) {
+    const r = await call(s, "GET", `/channels/${id}/messages?limit=1&includeContent=true`);
+    if (r.status === 200 && /<processed>true<\/processed>/.test(r.text)) return processed(r.text);
+    await Bun.sleep(300);
+  }
+  return null;
 }
 
 /** Clear the harness channel's stored messages, so the lab does not fill up. */

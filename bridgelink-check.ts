@@ -6,6 +6,8 @@
  *   bun bridgelink-check.ts           every case
  *   bun bridgelink-check.ts a01       only cases whose name contains "a01"
  *   bun bridgelink-check.ts --keep    leave the channel deployed afterwards
+ *   bun bridgelink-check.ts --mllp    over the wire: MLLP into the channel's
+ *                                     listener, MLLP out to a receiver here
  *
  * The spec is the active one (HL7_BENCH_TRANSFORM), the same as every other
  * tool. The cases are the spec module's exported `cases` when it has them, and
@@ -29,6 +31,15 @@
  * else on the server is touched.
  *
  * Connection settings are in bridgelink-session.ts.
+ *
+ * --MLLP
+ *
+ * The REST path proves the step. It does not prove the connectors a real
+ * channel uses, so --mllp deploys the channel with an MLLP listener on
+ * BRIDGELINK_MLLP_PORT (default 16661) and an MLLP sender to
+ * BRIDGELINK_MLLP_RETURN, a host:port on THIS machine as the server sees it,
+ * where the harness listens, ACKs, and compares what arrives. A message the
+ * gate refuses never arrives; the API says what became of it.
  */
 
 process.env.HL7_BENCH_NOTES = "off";
@@ -43,6 +54,7 @@ import { specPath } from "./specpath";
 import { emitChannel, channelId } from "./emit/channel";
 import { fieldReport } from "./compare";
 import * as bl from "./bridgelink-session";
+import * as mllp from "./mllp";
 import type { Spec } from "./spec";
 
 /** One message to send. `reject` means the gate must refuse it. */
@@ -101,6 +113,7 @@ function benchSays(spec: Spec, raw: string): { refused: string } | { segments: s
 async function main(): Promise<number> {
   const args = process.argv.slice(2);
   const keep = args.includes("--keep");
+  const wire = args.includes("--mllp");
   const filter = args.find((a) => !a.startsWith("--"))?.toLowerCase();
 
   const mod = await import(specPath);
@@ -120,6 +133,24 @@ async function main(): Promise<number> {
   const s = await bl.connect();
   const version = await bl.serverVersion(s);
   const id = channelId(CHANNEL);
+
+  let listen: number | undefined;
+  let ret: { host: string; port: number } | undefined;
+  let rx: ReturnType<typeof mllp.receiver> | undefined;
+  if (wire) {
+    listen = Number(process.env.BRIDGELINK_MLLP_PORT ?? 16661);
+    const m = /^(.+):(\d+)$/.exec(process.env.BRIDGELINK_MLLP_RETURN?.trim() ?? "");
+    if (!m) {
+      console.error(
+        `--mllp needs BRIDGELINK_MLLP_RETURN=host:port: this machine as the server reaches it, ` +
+          `where the channel's sender delivers and the harness listens.`,
+      );
+      return 2;
+    }
+    ret = { host: m[1], port: Number(m[2]) };
+    rx = mllp.receiver(ret.port);
+  }
+
   await bl.putChannel(
     s,
     id,
@@ -128,16 +159,31 @@ async function main(): Promise<number> {
       name: CHANNEL,
       version,
       description: `Scratch channel for bridgelink-check.ts, spec "${spec.name}". Safe to delete.`,
+      ...(wire ? { listenPort: listen, sendTo: ret } : {}),
     }),
   );
   await bl.deploy(s, id);
-  console.log(`BridgeLink ${version} at ${s.base}, channel "${CHANNEL}", spec "${spec.name}"\n`);
+  console.log(
+    `BridgeLink ${version} at ${s.base}, channel "${CHANNEL}", spec "${spec.name}"` +
+      (wire ? `, over MLLP: in on :${listen}, out to ${ret!.host}:${ret!.port}` : "") + "\n",
+  );
+  const engineHost = new URL(s.base).hostname;
+
+  /** One case through the channel: the REST path, or the wire. */
+  const through = async (raw: string): Promise<bl.Processed> => {
+    if (!wire) return bl.processMessage(s, id, raw);
+    const reply = await mllp.send(engineHost, listen!, raw);
+    const arrived = await rx!.next(reply.includes("MSA|AA") ? 10000 : 2500);
+    if (arrived !== null) return { status: "SENT", encoded: arrived, error: "" };
+    const p = await bl.latestMessage(s, id);
+    return p ?? { status: "ERROR", encoded: "", error: `no reply, no delivery and no message on the channel (ACK: ${reply || "none"})` };
+  };
 
   let failed = 0;
   try {
     for (const c of chosen) {
       const want = benchSays(spec, c.input);
-      const got = await bl.processMessage(s, id, c.input);
+      const got = await through(c.input);
 
       if (got.status === "ERROR") {
         failed++;
@@ -190,7 +236,13 @@ async function main(): Promise<number> {
       const head = fields.length ? `\n    fields:\n${fields.map((l) => `      ${l}`).join("\n")}\n    lines:` : "";
       console.log(`FAIL  ${c.name}  ${bad.length} differing line(s):${head}\n${bad.join("\n")}`);
     }
+    const extra = rx?.drain() ?? [];
+    if (extra.length > 0) {
+      failed++;
+      console.log(`FAIL  the receiver got ${extra.length} message(s) nobody sent for: a duplicate delivery`);
+    }
   } finally {
+    rx?.close();
     await bl.clearMessages(s, id);
     if (!keep) await bl.undeploy(s, id);
   }

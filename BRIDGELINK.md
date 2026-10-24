@@ -22,8 +22,11 @@ deployed channel and compared line for line with the bench's own output:
 | `bridgelink:channel` file stamped 4.5.0, imported into 26.9.0 | imported, deployed, transformed |
 | Same channel with an MLLP listener and an MLLP sender | deployed, STARTED |
 
-Not yet proven: an older Mirth (3.x or 4.x) in the engine, and messages sent
-over MLLP rather than through the API.
+Over the wire as well: `--mllp` runs every case through the channel's own
+MLLP listener and its MLLP sender, to a receiver the harness runs. All 18
+conformance cases (HL7, XML and the bundle) agree that way too.
+
+Not yet proven: an older Mirth (3.x or 4.x) in the engine.
 
 ## Setup
 
@@ -101,6 +104,18 @@ BRIDGELINK_TLS_INSECURE=1
   file.
 - `BRIDGELINK_TLS_INSECURE=1` accepts the self-signed certificate every
   install ships with. It's opt-in on purpose.
+
+Over MLLP instead of the API, add `--mllp` and say where this machine can be
+reached from the server:
+
+```
+BRIDGELINK_MLLP_PORT=16661                   the channel's listener, on the server
+BRIDGELINK_MLLP_RETURN=this-machine:16662    where the channel sends, and the harness listens
+```
+
+A listener on an HL7 source ACKs once its destinations have completed, so an
+AA means the message was delivered, not only received. The emitted channel
+does the same when `bridgelink.listenPort` is set.
 
 Cases are the spec module's exported `cases` when it has them, `messages\`
 otherwise: `<name>.in.hl7` to transform, `<name>.reject.hl7` for the gate to
