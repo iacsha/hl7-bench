@@ -237,6 +237,7 @@ input.md { width: 116px; }
         <button data-tab="output" class="on">Message out</button>
         <button data-tab="iris">ObjectScript</button>
         <button data-tab="process">Process class</button>
+        <button data-tab="bridgelink">BridgeLink</button>
         <button data-tab="mapping">Mapping</button>
         <button data-tab="inventory">Inventory</button>
         <button data-tab="source">transform.ts</button>
@@ -248,6 +249,7 @@ input.md { width: 116px; }
       </div>
       <div class="tabpane" id="tab-iris"><pre class="mono" id="iris"></pre></div>
       <div class="tabpane" id="tab-process"><pre class="mono" id="process"></pre></div>
+      <div class="tabpane" id="tab-bridgelink"><pre class="mono" id="bridgelink"></pre></div>
       <div class="tabpane" id="tab-mapping"><pre class="mono" id="mapping"></pre></div>
       <div class="tabpane" id="tab-inventory"><pre class="mono" id="inventory"></pre></div>
       <div class="tabpane" id="tab-source"><pre class="mono" id="source"></pre></div>
@@ -1679,6 +1681,12 @@ function showDerived(res) {
     $("process").textContent = res.process ||
       "(This spec has no iris.process. Set its class name and the config item it sends to\n" +
       " under IRIS on the left, and the business process class appears here.)";
+  }
+  if (res.bridgelink !== undefined) {
+    $("bridgelink").textContent = res.bridgelink ||
+      "(This spec has no bridgelink key. Add bridgelink: { channelName: \"...\" } to the spec\n" +
+      " and the channel's source filter and transformer step appear here.\n" +
+      " bun emit.ts bridgelink:channel writes the whole channel for Import Channel.)";
   }
   if (res.trace !== undefined) $("mapping").textContent = res.trace;
   if (res.inventory !== undefined) $("inventory").textContent = res.inventory || "(this spec has no sourceInventory)";

@@ -314,6 +314,21 @@ describe("a half-filled process block is refused by name", () => {
   });
 });
 
+// The second engine gets the same treatment: read-only, generated, beside the other.
+describe("the BridgeLink step has a tab", () => {
+  const js = moduleSource();
+
+  test("a tab button and a pane, named so the generic switcher pairs them", () => {
+    expect(html).toContain(`<button data-tab="bridgelink">BridgeLink</button>`);
+    expect(html).toContain(`<div class="tabpane" id="tab-bridgelink"><pre class="mono" id="bridgelink"></pre></div>`);
+  });
+
+  test("the pane is filled from the preview, and says what to set when there is no channel", () => {
+    expect(js).toContain(`$("bridgelink").textContent = res.bridgelink ||`);
+    expect(js).toContain("This spec has no bridgelink key");
+  });
+});
+
 // `bun emit.ts process` wrote the class and the GUI could not show it.
 describe("the process class has a tab", () => {
   const js = moduleSource();

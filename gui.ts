@@ -58,6 +58,7 @@ import { attachComments, extractComments, specLiteral, stripComments } from "./s
 import { trace, inventory } from "./trace";
 import { emitIris, filterExpression, routingCondition } from "./emit/iris";
 import { emitProcess } from "./emit/process";
+import { emitBridgelink, filterCondition } from "./emit/bridgelink";
 import { logAuthoring } from "./log";
 import { discardDraft, draftPath, readDraft, writeDraft } from "./draft";
 import { specPath } from "./specpath";
@@ -201,6 +202,13 @@ function derive(spec: Spec, raw: string) {
     // Empty, not an error, when the spec has no iris.process: the pane says
     // what to set rather than showing the throw emitProcess uses for the CLI.
     process: spec.iris?.process ? attempt(() => emitProcess(spec)) : "",
+    // Same rule for the other engine: empty until the spec names a channel.
+    // Filter first, because it is the half people forget to paste.
+    bridgelink: spec.bridgelink
+      ? attempt(() =>
+          `SOURCE FILTER (one JavaScript rule)\n\n${filterCondition(spec)}\n\n${"-".repeat(64)}\n\n` +
+            `TRANSFORMER (one JavaScript step)\n\n${emitBridgelink(spec)}`)
+      : "",
     trace: msg ? attempt(() => trace(spec, msg!)) : "(the message did not parse)",
     inventory: msg ? attempt(() => inventory(spec, msg!)) : "",
     emptyTables: emptyTables(spec),
