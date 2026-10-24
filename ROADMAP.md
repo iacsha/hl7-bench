@@ -44,9 +44,10 @@ two profilers that will disagree about what counts as populated.
 
 ### XML beyond the bench and BridgeLink
 
-XML runs on the bench and on BridgeLink (Settled, below). Still HL7 only: the
-GUI form and Copy segments, `trace.ts` (the mapping document), `reads.ts`,
-and the IRIS emitters, which refuse an XML spec by name. IRIS has
+XML runs on the bench, on BridgeLink, in the mapping document and in the GUI
+(Settled, below). Still HL7 only: the GUI's Copy segments helper and field
+highlighting, `reads.ts` (the empty-read report), and the IRIS emitters,
+which refuse an XML spec by name. IRIS has
 EnsLib.EDI.XML.Document and an XML DTL; nothing about it has been measured
 yet, which is the first unknown. Next format after XML: a new reader in the
 same message surface (get, all, seg on the message; get, set, clone on a
