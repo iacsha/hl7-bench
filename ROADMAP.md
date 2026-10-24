@@ -42,11 +42,56 @@ two profilers that will disagree about what counts as populated.
 
 ## Open
 
-Nothing open. Add the next thing here when real work turns it up.
+### XML messages, not only HL7 v2
+
+Asked for 2026-10-24: a BridgeLink colleague's interfaces are HL7 and XML, and
+the tool should adapt to more than one format. Today every layer assumes HL7 v2:
+spec paths are `PID-5.1`, `hl7.ts` is the only reader, and the step reads the
+HL7 v2 XML shape. The shape that adapts is ONE message-model layer (read a path,
+write a path, enumerate occurrences) with HL7 v2 and XML behind it, so a later
+format is a new reader rather than a new tool. Unknowns: the path syntax for
+XML (an XPath subset is the obvious start), and what `repeat`, `wholeSegment`
+and the gate mean on a tree with no segments. Prove HL7 on a second engine
+first; that is done (below), so this is next.
+
+### `iris` optional for a BridgeLink-only spec
+
+A BridgeLink-only spec still carries `iris: { sourceDocType, targetDocType }`,
+two lines nothing on that side reads. Making the key optional touches every IRIS
+emitter, the serializer, schemacheck and the GUI, in a repo with no typechecker
+to catch the one that was missed. Deferred, not refused: the two lines are
+documented in BRIDGELINK.md.
+
+### `bundle` on BridgeLink
+
+Refused by name. In the HL7 v2 XML a companion is a following sibling, so the
+bench's "companions up to the next segment outside the bundle" reads directly;
+nothing is unknown, it is just not built.
+
+### Lookup tables outside the step
+
+The step inlines its tables, so a table change is a channel redeploy. A code
+template library (`bridgelink:tables`) would let a table change without touching
+the channel. Not built until somebody needs to change a table without a deploy.
 
 ---
 
 ## Settled
+
+### The BridgeLink step, proven in an engine
+
+`bridgelink-check.ts` deploys a scratch channel over the REST API, sends every
+case, and diffs the engine against the bench. `conformance/spec.ts` is the
+whole vocabulary on synthetic messages. On BridgeLink 26.9.0 (2026-10-24):
+conformance 5/5, six site specs 9/9, the emitted channel imported and deployed
+in both connector forms. Before this, eight of twelve specs crashed the
+emitter, and `wholeSegment` was emitted and silently ignored.
+
+Three things only the engine showed: the parser nests every field in `.1`, so
+the gate's bare `toString()` compared markup and filtered everything; the
+multi-line filter leaked out of the step's header comment as code ("invalid
+return" at deploy); and a composite written whole then patched by component
+landed two places right until writes were split on the separators.
 
 ### `HL7_BENCH_TRANSFORM`
 

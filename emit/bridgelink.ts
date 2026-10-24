@@ -118,11 +118,14 @@ function benchAll(root, id) {
 /**
  * One level down, or the node itself when that level was never separated out.
  *
- * THE E4X TRAP THIS EXISTS FOR. A field carrying no component separator has no
- * <PID.3.1> child under it: the value sits in <PID.3> directly. Reading .1 off
- * it the obvious way returns EMPTY, and empty is indistinguishable from a field
- * the sender left blank. Index 1 with no child means the parent's own text IS
- * that first piece. Any other index with no child is genuinely absent.
+ * THE E4X TRAP THIS EXISTS FOR. A one-piece field can arrive either way: as
+ * <PID.8><PID.8.1>F</PID.8.1></PID.8>, which is what the BridgeLink 26.9.0
+ * non-strict parser produced for every field when measured (2026-10-24), or as
+ * <PID.8>F</PID.8> with no child, which a segment this step built or seeded can
+ * hold. Reading .1 off the second the obvious way returns EMPTY, and empty is
+ * indistinguishable from a field the sender left blank. Index 1 with no child
+ * means the parent's own text IS that first piece. Any other index with no
+ * child is genuinely absent.
  */
 function benchDown(node, name, index) {
   var kids = node.child(name);

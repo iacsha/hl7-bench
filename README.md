@@ -14,6 +14,11 @@ stderr  -> diagnostics    exit 0  =  success
 
 That is the whole interface. Anything that can spawn a process can drive it.
 
+Two engines from one spec: an IRIS DTL or business process, and a BridgeLink or
+Mirth channel (source filter, Rhino transformer step, or the whole channel for
+Import Channel). The BridgeLink side is proven in a running engine by
+`bridgelink-check.ts`; start at [BRIDGELINK.md](BRIDGELINK.md).
+
 ```mermaid
 flowchart LR
     SPEC[("Spec &mdash; the mapping, as data")]
@@ -85,9 +90,10 @@ spec in the middle as a form, and on the right the transformed message with
 changed fields highlighted, the generated ObjectScript, the mapping document,
 the source inventory, and the `transform.ts` that is about to be written.
 
-The middle column is the spec, not code. There is no JavaScript pane, because
-the artifact you are after is ObjectScript and typing one language to produce
-another is the thing this design removes. Every kind in `spec.ts` has a form,
+The middle column is the spec, not code. There is no JavaScript to type,
+because typing one language to produce another is the thing this design
+removes. The BridgeLink tab on the right is generated, like the ObjectScript
+one, and read-only for the same reason. Every kind in `spec.ts` has a form,
 and the right column recomputes as you type without touching disk, so the
 ObjectScript tab answers "what does this become in IRIS" while you are still
 deciding what the interface does.
