@@ -56,6 +56,7 @@ import {
 import { endOfObject, rewriteTransform } from "./serialize";
 import { attachComments, extractComments, specLiteral, stripComments } from "./speccomments";
 import { trace, inventory } from "./trace";
+import { parseFor, type Doc } from "./run";
 import { emitIris, filterExpression, routingCondition } from "./emit/iris";
 import { emitProcess } from "./emit/process";
 import { emitBridgelink, filterCondition } from "./emit/bridgelink";
@@ -198,9 +199,15 @@ function derive(spec: Spec, raw: string) {
   // The IRIS emitters and the trace speak HL7 v2 only. Said in the pane rather
   // than shown as a path error three frames deep.
   const xml = sourceFormat(spec) === "xml" || targetFormat(spec) === "xml";
-  const hl7Only = "(This spec reads or writes XML. The IRIS emitters and the mapping document are HL7 v2 only for now;\n" +
+  const hl7Only = "(This spec reads or writes XML. The IRIS emitters are HL7 v2 only for now;\n" +
     " the BridgeLink tab has the channel's filter and step, and Message out runs the bench.)";
   if (xml) {
+    let doc: Doc | null = null;
+    try {
+      doc = parseFor(spec, raw);
+    } catch {
+      doc = null;
+    }
     return {
       iris: hl7Only,
       routing: "",
@@ -211,8 +218,8 @@ function derive(spec: Spec, raw: string) {
             `SOURCE FILTER (one JavaScript rule)\n\n${filterCondition(spec)}\n\n${"-".repeat(64)}\n\n` +
               `TRANSFORMER (one JavaScript step)\n\n${emitBridgelink(spec)}`)
         : "",
-      trace: hl7Only,
-      inventory: "",
+      trace: doc ? attempt(() => trace(spec, doc!)) : "(the message did not parse as the format this spec reads)",
+      inventory: doc ? attempt(() => inventory(spec, doc!)) : "",
       emptyTables: emptyTables(spec),
     };
   }

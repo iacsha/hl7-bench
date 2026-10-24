@@ -314,6 +314,19 @@ describe("a half-filled process block is refused by name", () => {
   });
 });
 
+// An XML spec: checked in a real browser on 2026-10-24 (Interceptor, lab).
+describe("an XML spec in the page", () => {
+  const js = moduleSource();
+
+  test("XML output is shown as a document, not as an HL7 diff of zero fields", () => {
+    expect(js).toContain("field highlighting is HL7 only");
+  });
+
+  test("no empty routing header above the IRIS notice", () => {
+    expect(js).toContain(`$("iris").textContent = res.routing`);
+  });
+});
+
 // The second engine gets the same treatment: read-only, generated, beside the other.
 describe("the BridgeLink step has a tab", () => {
   const js = moduleSource();

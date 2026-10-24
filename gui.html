@@ -1674,8 +1674,10 @@ function showDerived(res) {
         res.emptyTables.map((n) => `  - ${n}: returns the unmapped branch for EVERY message`).join("\n")
       : "";
     const filter = res.filter ? `\n\nFILTER EXPRESSION (over pRequest; parens and quotes checked)\n  ${res.filter}` : "";
-    $("iris").textContent =
-      `ROUTING RULE CONDITION\n  ${res.routing}${filter}\n\n${"-".repeat(64)}\n\n${res.iris}${empties}`;
+    // No routing rule for a spec IRIS does not emit: the pane says why instead.
+    $("iris").textContent = res.routing
+      ? `ROUTING RULE CONDITION\n  ${res.routing}${filter}\n\n${"-".repeat(64)}\n\n${res.iris}${empties}`
+      : `${res.iris}${empties}`;
   }
   if (res.process !== undefined) {
     $("process").textContent = res.process ||
@@ -1769,9 +1771,19 @@ async function run() {
     }
 
     lastOutput = res.stdout;
-    const changed = renderDiff($("message").value, res.stdout);
     $("diag").textContent = res.stderr.trim() || "(no diagnostics)";
     $("diag").className = "diag quiet";
+    // Field highlighting compares HL7 fields. A document out (or in) has none,
+    // and "0 fields changed" on an XML delivery reads as nothing happened.
+    if (res.stdout.trimStart().startsWith("<") || $("message").value.trimStart().startsWith("<")) {
+      const pre = document.createElement("pre");
+      pre.className = "mono";
+      pre.textContent = res.stdout;
+      $("output").replaceChildren(pre);
+      setStatus(`ok, XML delivered (field highlighting is HL7 only), ${res.ms} ms`, "ok");
+      return;
+    }
+    const changed = renderDiff($("message").value, res.stdout);
     setStatus(`ok, ${changed} field${changed === 1 ? "" : "s"} changed, ${res.ms} ms`, "ok");
   } catch (e) {
     lastOutput = "";
