@@ -257,3 +257,20 @@ describe("the BridgeLink step for each direction", () => {
     expect(emitChannel(x2x.spec, { id: "x" })).toContain("<stripNamespaces>false</stripNamespaces>");
   });
 });
+
+// ---------------------------------------------------------------------------
+
+describe("the mapping document over XML", () => {
+  test("every row is listed against its XML target, with the source that fed it", async () => {
+    const { trace } = await import("./trace");
+    const { parseFor } = await import("./run");
+    const doc = trace(x2x.spec, parseFor(x2x.spec, x2x.cases[0].input));
+    expect(doc).toContain("GATE:  /Order/Header/Type");
+    expect(doc).toMatch(/\/Order\/Person\/@mrn \*\s+\/Order\/Patient\/Mrn\s+MRN1/);
+    expect(doc).toContain("/Order/Kin/Person  --  2 of 2");
+    // A seeded record on one line, counted in elements, not "undefined field(s)".
+    expect(doc).toContain(`<Items><Item code="A">one</Item><Item code="B">two</Item></Items>`);
+    expect(doc).toContain("2 element(s) and 0 attribute(s) passed through");
+    expect(doc).not.toContain("undefined");
+  });
+});

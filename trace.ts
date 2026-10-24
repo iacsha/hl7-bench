@@ -18,9 +18,8 @@
  * the same statement.
  */
 
-import { Message } from "./hl7";
 import { describeRequire, describeSource, emptyTables, sourcePathsOf, type Spec } from "./spec";
-import { assertRunnable, gate, resolve, seedSource, walk, type Ctx } from "./run";
+import { assertRunnable, gate, parseFor, resolve, seedSource, walk, type Ctx, type Doc } from "./run";
 import { sheetName, toCsv, toXlsx, type Sheet } from "./sheet";
 import { readdirSync } from "node:fs";
 import { basename, join } from "node:path";
@@ -45,6 +44,22 @@ function table(headers: string[], rows: string[][]): string {
 /** Blank cells read as "nothing came through", which is the useful reading. */
 const show = (v: string) => (v === "" ? "" : v);
 
+/**
+ * A seeded record in one cell, and how much of it went through unnamed. A
+ * segment counts its fields; an XML record its child elements and attributes,
+ * on one line, so the table stays a table.
+ */
+function seedCells(src: ReturnType<typeof seedSource>): { raw: string; passed: string } {
+  if (!src) return { raw: "", passed: "(no source segment)" };
+  if ("fieldCount" in src) return { raw: src.toString(), passed: `${src.fieldCount} field(s) passed through` };
+  const el = src.el;
+  const kids = el.kids.filter((k) => typeof k !== "string").length;
+  return {
+    raw: src.toString().replace(/\n\s*/g, ""),
+    passed: `${kids} element(s) and ${el.attrs.length} attribute(s) passed through`,
+  };
+}
+
 // ---------------------------------------------------------------------------
 // The delivered trace
 // ---------------------------------------------------------------------------
@@ -61,7 +76,7 @@ export interface TraceOptions {
  * came out empty is listed at the bottom, all of them, not the first one. An
  * operator who has to resubmit once per missing field stops reporting them.
  */
-export function trace(spec: Spec, msg: Message, opts: TraceOptions = {}): string {
+export function trace(spec: Spec, msg: Doc, opts: TraceOptions = {}): string {
   assertRunnable(spec);
   const { trigger, event } = gate(spec, msg);
   const showEmpty = opts.showEmpty ?? true;
@@ -106,9 +121,9 @@ export function trace(spec: Spec, msg: Message, opts: TraceOptions = {}): string
         block.id,
         "(whole segment)",
         `${block.id} copied whole`,
-        show(src ? src.toString() : ""),
+        show(seedCells(src).raw),
         "",
-        src ? `${src.fieldCount} field(s) passed through` : "(no source segment)",
+        seedCells(src).passed,
       ]);
     }
 
@@ -179,7 +194,7 @@ export function trace(spec: Spec, msg: Message, opts: TraceOptions = {}): string
  * definition and only the layout differs. `inventory()` already coexists with
  * `trace()` on the same terms.
  */
-export function grid(spec: Spec, msg: Message, opts: TraceOptions = {}): Sheet[] {
+export function grid(spec: Spec, msg: Doc, opts: TraceOptions = {}): Sheet[] {
   assertRunnable(spec);
   const { trigger, event } = gate(spec, msg);
   const showEmpty = opts.showEmpty ?? true;
@@ -210,8 +225,8 @@ export function grid(spec: Spec, msg: Message, opts: TraceOptions = {}): Sheet[]
       const src = seedSource(ctx, block);
       rows.push([
         block.id, occurrence, block.group ?? "", "(whole segment)", "",
-        "", `${block.id} copied whole`, show(src ? src.toString() : ""), "",
-        src ? `${src.fieldCount} field(s) passed through` : "(no source segment)",
+        "", `${block.id} copied whole`, show(seedCells(src).raw), "",
+        seedCells(src).passed,
         block.note ?? "",
       ]);
     }
@@ -265,7 +280,7 @@ export function grid(spec: Spec, msg: Message, opts: TraceOptions = {}): Sheet[]
 /** One message going into a combined workbook, and the name it is known by. */
 export interface Named {
   name: string;
-  msg: Message;
+  msg: Doc;
 }
 
 /**
@@ -466,7 +481,7 @@ const OVERVIEW_CELL = 120;
 export function goldenFiles(dir: string, filter?: string): string[] {
   const f = filter?.toLowerCase();
   return readdirSync(dir)
-    .filter((n) => n.endsWith(".in.hl7") || n.endsWith(".reject.hl7"))
+    .filter((n) => /\.(in|reject)\.(hl7|xml)$/i.test(n))
     .filter((n) => !f || n.toLowerCase().includes(f))
     .sort()
     .map((n) => join(dir, n));
@@ -474,7 +489,7 @@ export function goldenFiles(dir: string, filter?: string): string[] {
 
 /** `messages/adt-a08b.in.hl7` is known as `adt-a08b`. */
 export function caseName(path: string): string {
-  return basename(path).replace(/\.(in|reject)\.hl7$/i, "").replace(/\.hl7$/i, "");
+  return basename(path).replace(/\.(in|reject)\.(hl7|xml)$/i, "").replace(/\.(hl7|xml)$/i, "");
 }
 
 // ---------------------------------------------------------------------------
@@ -488,7 +503,7 @@ export function caseName(path: string): string {
  * MAPPED column says which target rows read it. An inventory item nothing reads
  * is a real finding: either the receiver does not want it, or you missed it.
  */
-export function inventory(spec: Spec, msg: Message): string {
+export function inventory(spec: Spec, msg: Doc): string {
   if (!spec.sourceInventory?.length) return "";
 
   // Which target rows read each source path, gathered from the spec itself so
@@ -566,7 +581,7 @@ if (import.meta.main) {
     let files = named;
     if (gi !== -1) {
       const next = argv[gi + 1];
-      const filter = next && !next.startsWith("-") && !next.toLowerCase().endsWith(".hl7") ? next : undefined;
+      const filter = next && !next.startsWith("-") && !/\.(hl7|xml)$/i.test(next) ? next : undefined;
       const { existsSync } = await import("node:fs");
       if (!existsSync("messages")) {
         process.stderr.write("trace: --goldens reads messages\\, and there is no messages\\ folder here.\n");
@@ -580,7 +595,7 @@ if (import.meta.main) {
     }
     const { decodeText } = await import("./input");
     const { readFileSync } = await import("node:fs");
-    const inputs = files.map((f) => ({ name: caseName(f), msg: new Message(decodeText(readFileSync(f)).text) }));
+    const inputs = files.map((f) => ({ name: caseName(f), msg: parseFor(spec, decodeText(readFileSync(f)).text) }));
     let sheets: Sheet[];
     try {
       sheets = combinedGrid(spec, inputs);
@@ -609,7 +624,8 @@ if (import.meta.main) {
 
   const { logEvent } = await import("./log");
 
-  const m = new Message(raw);
+  // The format the spec reads, so an XML interface gets its document too.
+  const m = parseFor(spec, raw);
 
   // A spreadsheet for the people who review this, text for the people who
   // diff it. Same walk, same resolution, two renderers.
@@ -642,7 +658,7 @@ if (import.meta.main) {
   logEvent("trace", {
     spec: spec.name,
     source,
-    segments: m.segments.length,
+    segments: "segments" in m ? m.segments.length : m.root.kids.length,
     chars: doc.length + inv.length,
     result: "ok",
   });
