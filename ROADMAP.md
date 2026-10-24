@@ -62,9 +62,17 @@ documented in BRIDGELINK.md.
 
 ### Lookup tables outside the step
 
-The step inlines its tables, so a table change is a channel redeploy. A code
-template library (`bridgelink:tables`) would let a table change without touching
-the channel. Not built until somebody needs to change a table without a deploy.
+The step inlines its tables, so a table change is a channel redeploy. The
+code-template idea this entry used to propose is REFUTED, measured on
+BridgeLink 26.9.0 (2026-10-24): a step calling a template function returned
+v1, the template was changed to v2 through the API, and the next message still
+got v1 until the channel was redeployed. A template moves the table to one
+shared place and still costs the redeploy. What would not: reading the table at
+run time from somewhere the step does not own -- a file or database the
+deploy script or a small loader channel puts in the global map, refreshed on a
+timer. That is a site decision (where tables live, who edits them), so it waits
+for a site that needs it. Unknown: whether a reload under load can race a
+message mid-lookup.
 
 ---
 
