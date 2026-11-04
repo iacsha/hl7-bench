@@ -27,6 +27,20 @@ the whole design: one spec, six readers.
 
 ---
 
+## Every command on one page
+
+```powershell
+bun home.ts
+```
+
+Open http://127.0.0.1:7316. Pick a tool, choose the files from this folder,
+and click Run. The output streams into the page, and the exact command is shown
+with a Copy button, so the commands in this sheet are the ones it runs. The
+spec editor and the overlay page start from there too, with a link and a Stop.
+Ctrl+C on `home.ts` stops everything it started.
+
+---
+
 ## Changing a class somebody else wrote
 
 No spec involved. See OVERLAY.md.

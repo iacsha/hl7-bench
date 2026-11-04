@@ -36,7 +36,8 @@ their class  +  your changes  ->  their class with one marked block added
 bun overlay.ts gui .\OrigClass.cls messages\real.hl7 --doctype Vendor:ADT_A01
 ```
 
-Open http://127.0.0.1:7318.
+Open http://127.0.0.1:7318. (Or start `bun home.ts`, choose **Overlay page**,
+and use the link it shows.)
 
 1. **+ add change.** In *write field*, put the field you're filling (`PV2-3`). In
    *value from*, choose where the value comes from (*copy a field*: `DG1-3`).
