@@ -287,7 +287,24 @@ export function runIris(
   fail(toolName, lines);
 }
 
+/**
+ * A long-running page must not die because IRIS said no.
+ *
+ * A CLI reports and exits; that is right for `engine.ts`. A server that called
+ * `process.exit` here vanished: on 2026-11-04 the overlay page read the schema
+ * at startup, the password script was blocked, and the page simply was not
+ * there. Servers call this once, and every failure below becomes a thrown
+ * IrisError their request handlers already catch and show.
+ */
+let failuresThrow = false;
+export function irisFailuresThrow(on = true): void {
+  failuresThrow = on;
+}
+
+export class IrisError extends Error {}
+
 function fail(toolName: string, lines: string[]): never {
+  if (failuresThrow) throw new IrisError(`${toolName}: ${lines.join("\n")}`);
   process.stderr.write(`${toolName}: ${lines.join("\n")}\n`);
   process.exit(2);
   throw new Error("unreachable");

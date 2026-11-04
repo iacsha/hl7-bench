@@ -59,6 +59,8 @@ button.btn:disabled { opacity: .5; cursor: default; }
 pre.out { font: 12.5px/1.5 var(--mono); background: var(--bg); border: 1px solid var(--line); border-radius: 6px; padding: 10px; margin: 10px 0 0; max-height: 62vh; overflow: auto; white-space: pre; tab-size: 4; min-height: 60px; }
 pre.out:empty::before { content: "Output appears here."; color: var(--muted); }
 .link { color: var(--accent); font-weight: 600; }
+.open { display: flex; flex-wrap: wrap; gap: 10px 16px; align-items: center; justify-content: space-between; background: var(--ok-bg); color: var(--ok-ink); border-radius: 8px; padding: 12px 14px; margin-top: 10px; }
+a.btn { text-decoration: none; display: inline-block; font-size: 15px; padding: 9px 18px; border-radius: 6px; background: var(--accent); color: var(--accent-ink); }
 </style>
 </head>
 <body>
@@ -147,6 +149,7 @@ function select(id) {
   $("form").onsubmit = (e) => { e.preventDefault(); run(); };
   $("problems").innerHTML = ""; $("exit").innerHTML = ""; $("out").textContent = "";
   $("cmdbox").hidden = true; $("t-link").innerHTML = "";
+  $("run").textContent = current.server ? "Start" : "Run";
   syncServerControls();
 }
 
@@ -203,7 +206,7 @@ async function run() {
         out.textContent = text;
         out.scrollTop = out.scrollHeight;
         const m = /(https?:\/\/127\.0\.0\.1:\d+)/.exec(line);
-        if (tool.server && m) $("t-link").innerHTML = `running at <a class="link" href="${m[1]}" target="_blank" rel="noopener">${m[1]}</a>`;
+        if (tool.server && m) showOpen(tool, m[1]);
       }
       if (tool.server) refreshServers();
     }
@@ -238,10 +241,19 @@ async function refreshServers() {
   syncServerControls();
 }
 
+/**
+ * A server tool's page is somewhere else. Say so in a way nobody can miss:
+ * on 2026-11-04 the overlay's "+ add change" was looked for on this page.
+ */
+function showOpen(tool, url) {
+  $("t-link").innerHTML = "";
+  $("problems").innerHTML = `<div class="open"><div><b>${esc(tool.title)} is running on its own page.</b> Your work happens there, not here.</div><a class="btn primary" href="${url}" target="_blank" rel="noopener">Open ${esc(tool.title)} &rarr; ${url}</a></div>`;
+}
+
 function syncServerControls() {
   if (!current || !current.server) return;
   const s = servers.find((x) => x.tool === current.id);
-  if (s && s.url) $("t-link").innerHTML = `running at <a class="link" href="${s.url}" target="_blank" rel="noopener">${s.url}</a>`;
+  if (s && s.url) showOpen(current, s.url);
 }
 
 $("run").onclick = run;

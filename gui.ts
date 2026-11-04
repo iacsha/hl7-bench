@@ -65,6 +65,7 @@ import { discardDraft, draftPath, readDraft, writeDraft } from "./draft";
 import { specPath } from "./specpath";
 import { decodeText } from "./input";
 import { runSource, engineLabel } from "./engine-core";
+import { irisFailuresThrow } from "./iris-session";
 import { importClass, specModule } from "./import-cls";
 import { parseCsv, toTable } from "./tables";
 import { pathToFileURL } from "node:url";
@@ -281,6 +282,9 @@ function backupOnce() {
   backedUp = true;
   console.log(`saved a copy of your hand-written transform to ${basename(BACKUP)}`);
 }
+
+// A Run in the script tab that IRIS refuses is an error in the pane, not a dead page.
+irisFailuresThrow();
 
 const server = Bun.serve({
   hostname: "127.0.0.1",

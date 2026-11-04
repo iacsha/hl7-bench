@@ -21,6 +21,10 @@ import { existsSync, writeFileSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
 
 import { engineLabel } from "./engine-core";
+import { irisFailuresThrow } from "./iris-session";
+
+// Show IRIS failures in the page; never exit the server over one.
+irisFailuresThrow();
 import { allowed } from "./home-tools";
 import { describe, type Overlay, type SchemaMap } from "./overlay-core";
 import { evaluate, explainRun, loadSchema, openSession, readText, writeOverlay, type Session } from "./overlay";

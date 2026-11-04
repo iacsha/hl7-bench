@@ -76,6 +76,7 @@ details summary { cursor: pointer; color: var(--muted); font-size: 13px; }
   <span class="kv">engine <b id="h-engine">…</b></span>
 </header>
 
+<div id="schemabad" hidden style="margin:12px 20px 0;padding:10px 12px;border-radius:6px;background:var(--bad-bg);color:var(--bad-ink);white-space:pre-wrap"></div>
 <main>
   <div>
     <div class="actions">
@@ -349,8 +350,10 @@ async function load(refresh) {
   overlay = overlay || state.overlay;
   $("h-class").textContent = state.base.file;
   $("doctype").value = overlay.docType;
-  $("h-schema").textContent = state.schema.note;
+  $("h-schema").textContent = state.schema.ok ? state.schema.note : "not loaded (see below)";
   $("h-schema").style.color = state.schema.ok ? "" : "var(--bad-ink)";
+  $("schemabad").hidden = state.schema.ok;
+  $("schemabad").textContent = state.schema.ok ? "" : "The schema could not be read, so nothing can run yet. " + state.schema.note + "  Fix that, then click reload next to schema above.";
   $("h-engine").textContent = state.engine;
   $("msgfile").textContent = state.message.file;
   if (!$("message").value) $("message").value = state.message.text;

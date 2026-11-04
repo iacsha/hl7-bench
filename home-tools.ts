@@ -71,7 +71,7 @@ export const TOOLS: Tool[] = [
   // ---- a class somebody else wrote ----------------------------------------
   {
     id: "overlay-gui", group: "Change an existing class", title: "Overlay page",
-    does: "Add changes to their class in a form, run before and after in IRIS, save the modified class.",
+    does: "Add changes to their class in a form, run before and after in IRIS, save the modified class. Opens on its own page (127.0.0.1:7318).",
     script: "overlay.ts", fixed: ["gui"], server: true,
     args: [CLASS, MESSAGE, { ...DOCTYPE, help: "Needed the first time; remembered in the changes file after that." }],
   },
@@ -96,7 +96,7 @@ export const TOOLS: Tool[] = [
   // ---- an interface you are building ---------------------------------------
   {
     id: "gui", group: "Build an interface from a spec", title: "Spec editor page",
-    does: "Edit the spec in a form with the message, the output and the generated class side by side.",
+    does: "Edit the spec in a form with the message, the output and the generated class side by side. Opens on its own page (127.0.0.1:7317).",
     script: "gui.ts", server: true,
     args: [{ ...MESSAGE, required: false }],
   },
