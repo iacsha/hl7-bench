@@ -115,3 +115,13 @@ describe("allowed", () => {
     expect(allowed(req("127.0.0.1:7316", "POST", "1"), 7316)).toBe(true);
   });
 });
+
+describe("allowed, the beacon case", () => {
+  const { allowed } = require("./home-tools") as typeof import("./home-tools");
+  const post = (h: Record<string, string>) => new Request("http://127.0.0.1:7317/draft", { method: "POST", headers: { host: "127.0.0.1:7317", ...h } });
+  test("same-origin Sec-Fetch-Site passes; cross-site does not", () => {
+    expect(allowed(post({ "sec-fetch-site": "same-origin" }), 7317)).toBe(true);
+    expect(allowed(post({ "sec-fetch-site": "cross-site" }), 7317)).toBe(false);
+    expect(allowed(post({ "sec-fetch-site": "same-site" }), 7317)).toBe(false);
+  });
+});

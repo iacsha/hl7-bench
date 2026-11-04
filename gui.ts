@@ -68,6 +68,7 @@ import { runSource, engineLabel } from "./engine-core";
 import { importClass, specModule } from "./import-cls";
 import { parseCsv, toTable } from "./tables";
 import { pathToFileURL } from "node:url";
+import { allowed } from "./home-tools";
 
 const DIR = import.meta.dir;
 const PORT = Number(process.env.BENCH_PORT ?? 7317);
@@ -285,6 +286,11 @@ const server = Bun.serve({
   hostname: "127.0.0.1",
   port: PORT,
   async fetch(req) {
+    // Loopback Host only, and a POST must carry x-hl7-bench (or the browser's
+    // Sec-Fetch-Site: same-origin, for the tab-close beacon). Without this, a
+    // page on another site could save a class or overwrite the spec here, and
+    // with DNS rebinding read the message pane. See allowed() in home-tools.ts.
+    if (!allowed(req, server.port)) return new Response("Forbidden", { status: 403 });
     const url = new URL(req.url);
 
     if (url.pathname === "/") {

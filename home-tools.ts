@@ -267,7 +267,9 @@ export function serverUrl(line: string): string | undefined {
 
 /**
  * True when a request may be served: the Host header names this machine's
- * loopback on this port, and a POST carries `x-hl7-bench: 1`.
+ * loopback on this port, and a POST carries `x-hl7-bench: 1` -- or, for the one
+ * request that cannot carry a custom header (a sendBeacon on tab close), the
+ * browser's own `Sec-Fetch-Site: same-origin`, which a page cannot set.
  *
  * Binding to 127.0.0.1 is not enough on its own. A page on another site can
  * POST to it blind (a text/plain body still parses as JSON here), and with DNS
@@ -278,6 +280,10 @@ export function serverUrl(line: string): string | undefined {
 export function allowed(req: Request, port: number): boolean {
   const host = (req.headers.get("host") ?? "").toLowerCase();
   if (host !== `127.0.0.1:${port}` && host !== `localhost:${port}` && host !== `[::1]:${port}`) return false;
-  if (req.method !== "GET" && req.method !== "HEAD" && req.headers.get("x-hl7-bench") !== "1") return false;
+  if (req.method !== "GET" && req.method !== "HEAD") {
+    if (req.headers.get("x-hl7-bench") === "1") return true;
+    if (req.headers.get("sec-fetch-site") === "same-origin") return true;
+    return false;
+  }
   return true;
 }

@@ -273,6 +273,18 @@ input.md { width: 116px; }
 <div id="tip" class="tip"></div>
 
 <script type="module">
+// Every request from this page says it came from this page. The server refuses
+// a POST without it (see allowed() in home-tools.ts), which is what stops a
+// page on another site from writing to the spec. One wrapper, so no call can
+// forget it.
+{
+  const plain = window.fetch.bind(window);
+  window.fetch = (input, init = {}) => {
+    const headers = new Headers(init.headers || {});
+    headers.set("x-hl7-bench", "1");
+    return plain(input, { ...init, headers });
+  };
+}
 import { Message } from "./hl7.js";
 
 const $ = (id) => document.getElementById(id);
