@@ -27,6 +27,20 @@ the whole design: one spec, six readers.
 
 ---
 
+## Changing a class somebody else wrote
+
+No spec involved. See OVERLAY.md.
+
+| You want | Run |
+|---|---|
+| Add a change in a form, see the message before and after | `bun overlay.ts gui .\Their.cls messages\real.hl7 --doctype Vendor:ADT_A01` |
+| Same, no page | `bun overlay.ts .\Their.cls messages\real.hl7 --run` |
+| Write the modified class | `bun overlay.ts .\Their.cls messages\real.hl7 -o .\Their.modified.cls` (or Save in the page) |
+| No IRIS on this box | add `--schema map.txt` (a pasted `zw ^EnsHL7.Schema(...,"map")`) |
+| Just run their class as it is | `bun engine.ts messages\real.hl7 --script .\Their.cls --doctype Vendor:ADT_A01` |
+
+---
+
 ## By question
 
 | You are asking | Run |

@@ -71,6 +71,39 @@ message mid-lookup.
 
 ## Settled
 
+### Change a class somebody else wrote: the overlay
+
+Asked for on 2026-11-04 by the person the bench is for, after an afternoon of
+it not fitting: "take an existing class, load it, make modifications in the
+GUI, and have the tool spit out the modified message and class changes".
+`import-cls.ts` read the real class (clone, utility-class filter, send) as
+0 blocks, and `emit.ts` would have replaced it with the bench's own shape.
+
+`overlay.ts` (CLI and `gui` on :7318) leaves the class as written and owns
+one marked region above the send. Changes are data
+(`<Class>.changes.local.json`) in the spec's source and step vocabulary,
+generated through the same `sourceCode`/`stepCode`. Paths are indexed from
+the DocType's structure map, read off the engine or a pasted `zw` dump, so a
+repeating DG1 reads `DG1(1)` instead of empty. Run compiles base and modified
+whole (the hosted path) and lists every field that moved. Proven on the IRIS lab
+against a clone-and-patch class: DG1-3 to PV2-3, no PV2, no DG1, pre-admit,
+fromFirst past an empty DG1, grouped IN1, steps, lookup. OVERLAY.md.
+
+Not done, on purpose: changes inside their logic (a branch, the filter).
+The region goes above the send, which is every "add a field" request seen so
+far. Unknown: whether a class that builds a NEW message of a different
+DocType before sending reads right with source paths taken off `pRequest`.
+
+### `engine.ts --script`: write failures and "no target message"
+
+Both found on the work PC, 2026-11-04. An unchecked `%Save()` into a missing
+IRIS_LAB_DIR surfaced as `ERROR #5012 ... does not exist` under "That is a
+compile error"; every scratch write now checks both statuses, a preflight
+`DirectoryExists` runs first, and the failure says IRIS_LAB_DIR. And a class
+that sends `tRequest` and never sets `tTarget` reported "no target message /
+the gate filtered it" when nothing was filtered; such a class now runs whole
+(hosted) automatically, in the CLI and the GUI's script tab, and says why.
+
 ### `iris` optional
 
 A spec aimed only at BridgeLink leaves the key out. validate() checks it

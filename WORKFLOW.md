@@ -8,6 +8,10 @@ person or a chat window.
 `METHOD.md` is the doctrine, the five questions and the traps. This file is the
 button-pressing. Read METHOD.md once, keep this one open while you work.
 
+**Changing a class that already exists, rather than building one?** Read
+`OVERLAY.md` instead. `bun overlay.ts gui Their.cls msg.hl7` adds your changes
+to their class as one marked block and shows the message before and after.
+
 One thing to know before you start: **nothing here figures out the mapping for
 you.** Steps 1 through 5 are you deciding what the interface does, as a spec,
 where the loop is fast and a golden file can prove you right. Step 6 prints the

@@ -67,6 +67,7 @@ import { Message } from "./hl7";
 import { spec } from "./specfile";
 import { readMessage, outArg, deliverText, decodeText } from "./input";
 import { NAMESPACE, REMOTE, runIris, engineLabel } from "./iris-session";
+import { labDirCheck, sendsWithoutTarget, writeThrough, writeFailedText, WRITE_FAILED } from "./engine-core";
 import { classMethodsOf, type Carried } from "./scratch";
 import { HOST_CLASS, hostClass, hostedCall, instanceCalls, renamedClass } from "./hosted";
 
@@ -338,15 +339,8 @@ const runCall = (): string =>
 
 /** Write one class into the engine and compile it, halting with ERR| if it fails. */
 function loadClass(name: string, text: string): string[] {
-  const literal = text
-    .split(/\r?\n/)
-    .map((l) => `do sf.WriteLine(${osLiteral(l)})`)
-    .join("\n");
   return [
-    `set sf=##class(%Stream.FileCharacter).%New()`,
-    `set sc=sf.LinkToFile("${REMOTE}/${name}.cls")`,
-    literal,
-    `do sf.%Save()`,
+    ...writeThrough(`${REMOTE}/${name}.cls`, text, "sf", cleanup),
     `set sc=$system.OBJ.Load("${REMOTE}/${name}.cls","ck-d")`,
     `if '$system.Status.IsOK(sc) { write "ERR|",$system.Status.GetErrorText(sc),! halt }`,
     `if '##class(%Dictionary.CompiledClass).%ExistsId("${name}") { write "ERR|${name} did not compile",! ${cleanup.join(" ")} halt }`,
@@ -382,7 +376,11 @@ function buildScratch(): string[] {
   process.stderr.write(`\n  read ${scriptFile} as ${extracted.found}\n`);
 
   const calls = instanceCalls(bodyRaw, extracted.body);
-  if (calls.length > 0 || argv.includes("--host")) {
+  // A class that sends something other than tTarget always reads, lifted, as
+  // "no target message" -- indistinguishable from a filtered event. Run it
+  // whole so the dispatch itself is what gets judged.
+  const sentVar = extracted.found === "a method body" ? undefined : sendsWithoutTarget(extracted.body);
+  if (calls.length > 0 || sentVar || argv.includes("--host")) {
     if (extracted.found === "a method body") {
       die(2, `--host runs a class WHOLE, and ${scriptFile} is a method body, not a class.`);
     }
@@ -391,7 +389,9 @@ function buildScratch(): string[] {
     }
     hosted = true;
     process.stderr.write(
-      calls.length > 0
+      sentVar && !argv.includes("--host") && calls.length === 0
+        ? `  ${methodName} sends ${sentVar} and never sets tTarget, so the class runs WHOLE\n`
+        : calls.length > 0
         ? `  ${methodName} calls ${calls.map((c) => `..${c}`).join(", ")}, an instance method, so the class runs WHOLE\n`
         : `  --host: the class runs WHOLE\n`,
     );
@@ -422,16 +422,8 @@ function buildScratch(): string[] {
     process.stderr.write(`  carried along from the class: ${carried.names.join(", ")}\n`);
   }
 
-  const literal = scratchClass(prepared.body, docType, carried.text)
-    .split(/\r?\n/)
-    .map((l) => `do sf.WriteLine(${osLiteral(l)})`)
-    .join("\n");
-
   return [
-    `set sf=##class(%Stream.FileCharacter).%New()`,
-    `set sc=sf.LinkToFile("${REMOTE}/HL7Bench.Scratch.cls")`,
-    literal,
-    `do sf.%Save()`,
+    ...writeThrough(`${REMOTE}/HL7Bench.Scratch.cls`, scratchClass(prepared.body, docType, carried.text), "sf", cleanup),
     // `$system.Status.IsOK` and not `$$$ISERR`. This is a piped TERMINAL
     // session, and a session has no include file: a `$$$` macro here is not a
     // macro, it is a syntax error, and the session carries on past it.
@@ -441,7 +433,7 @@ function buildScratch(): string[] {
   ];
 }
 
-const scratchSetup = scriptFile ? buildScratch() : [];
+const scratchSetup = scriptFile ? [labDirCheck(), ...buildScratch()] : [];
 
 
 // ---------------------------------------------------------------------------
@@ -530,8 +522,13 @@ if (checkMode) {
     `halt`,
   ].join("\n");
 
-  const { out } = runIris("engine", script, (o) => o.includes("CASE|"));
+  const { out } = runIris("engine", script, (o) => o.includes("CASE|") || o.includes("WRITEFAIL|") || o.includes("ERR|"));
   const raw = out.split(/\r?\n/).map((l) => l.replace(/\r+$/, ""));
+  const setupFailed = raw.filter((l) => l.startsWith("WRITEFAIL|") || l.startsWith("ERR|"));
+  if (setupFailed.length > 0 && !raw.some((l) => l.startsWith("CASE|"))) {
+    const wf = setupFailed.filter((l) => l.startsWith("WRITEFAIL|")).map((l) => l.slice(10));
+    die(1, wf.length > 0 ? writeFailedText(wf.join("\n  ")) : `The engine refused before it could run anything.\n  ${setupFailed.map((l) => l.slice(4)).join("\n  ")}`);
+  }
 
   let failed = 0;
   let current: string | null = null;
@@ -625,7 +622,7 @@ function osLiteral(s: string): string {
 
 // ---------------------------------------------------------------------------
 
-const { out } = runIris("engine", objectScript, (o) => o.includes("OUT|") || o.includes("ERR|") || o.includes("NONE|"));
+const { out } = runIris("engine", objectScript, (o) => o.includes("OUT|") || o.includes("ERR|") || o.includes("NONE|") || o.includes("WRITEFAIL|"));
 
 const lines = out.split(/\r?\n/);
 const marked = (tag: string) =>
@@ -641,6 +638,9 @@ const marked = (tag: string) =>
     // a comparison that quietly trims it would hide a real difference in the
     // one tool whose whole job is to find them.
     .map((l) => l.slice(tag.length + 1).replace(/\r+$/, ""));
+
+const writeFailed = marked(WRITE_FAILED);
+if (writeFailed.length > 0) die(1, writeFailedText(writeFailed.join("\n  ")));
 
 const err = marked("ERR");
 if (err.length > 0) {

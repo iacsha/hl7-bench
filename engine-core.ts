@@ -21,6 +21,7 @@
  */
 
 import { NAMESPACE, REMOTE, runIris, engineLabel } from "./iris-session";
+import { HOST_CLASS, hostClass, hostedCall, renamedClass } from "./hosted";
 
 export { engineLabel };
 
@@ -135,14 +136,67 @@ export function scratchClass(body: string): string {
   ].join("\n");
 }
 
-/** Write a text file into the engine, line by line, through the session. */
-function writeThrough(remotePath: string, text: string, handle: string): string[] {
+/**
+ * The marker a failed write is reported under. Its own tag, not ERR, so the
+ * caller can say "IRIS_LAB_DIR" instead of "compile error".
+ *
+ * Found on a work PC, 2026-11-04: IRIS_LAB_DIR named a folder that did not
+ * exist, `%Save()` failed, nothing checked it, and the next line reported
+ * `ERROR #5012: File '...\HL7Bench.Scratch.cls' does not exist` under "That is
+ * a compile error in the code you gave --script". The class was fine. The
+ * folder was missing.
+ */
+export const WRITE_FAILED = "WRITEFAIL";
+
+/** Halt early, with a sentence, when the engine cannot see IRIS_LAB_DIR at all. */
+export function labDirCheck(): string {
+  return (
+    `if '##class(%File).DirectoryExists(${osLiteral(REMOTE)}) ` +
+    `{ write "${WRITE_FAILED}|",${osLiteral(`the engine cannot see ${REMOTE} (IRIS_LAB_DIR). It is read on the IRIS side, so it must exist where IRIS runs and be writable by the account IRIS runs as.`)},! halt }`
+  );
+}
+
+/**
+ * Write a text file into the engine, line by line, through the session.
+ *
+ * Both statuses are checked. An unchecked `%Save()` is how a missing folder
+ * turned into a misleading compile error; see WRITE_FAILED.
+ */
+export function writeThrough(remotePath: string, text: string, handle: string, cleanup: string[] = []): string[] {
+  const fail = (what: string) =>
+    `if '$system.Status.IsOK(sc) { write "${WRITE_FAILED}|${what} ${remotePath}: ",$system.Status.GetErrorText(sc),! ${cleanup.join(" ")} halt }`;
   return [
     `set ${handle}=##class(%Stream.FileCharacter).%New()`,
     `set sc=${handle}.LinkToFile("${remotePath}")`,
+    fail("could not open"),
     ...text.split(/\r\n|\r|\n/).map((l) => `do ${handle}.WriteLine(${osLiteral(l)})`),
-    `do ${handle}.%Save()`,
+    `set sc=${handle}.%Save()`,
+    fail("could not write"),
   ];
+}
+
+/** The sentence a WRITEFAIL line becomes, wherever it surfaces. */
+export function writeFailedText(detail: string): string {
+  return (
+    `The engine could not write its scratch file, so nothing ran.\n  ${detail}\n\n` +
+    `This is not a problem with the class or the message. IRIS_LAB_DIR (${REMOTE}) must be a ` +
+    `folder that exists on the machine IRIS runs on and that the IRIS service account can write to.`
+  );
+}
+
+/**
+ * True when a whole class should run hosted rather than lifted, because the
+ * method never assigns `tTarget` but does dispatch something.
+ *
+ * Lifted, such a class always reports "no target message", which reads exactly
+ * like a gate that filtered the event. A clone-and-patch process that sends
+ * `tRequest` hit this on 2026-11-04. Hosted, the dispatch itself is captured,
+ * whatever the variable is called. Returns the variable sent, or undefined.
+ */
+export function sendsWithoutTarget(body: string): string | undefined {
+  if (/\btTarget\b/.test(body)) return undefined;
+  const m = /\.\.SendRequest(?:Async|Sync)\(\s*[^,]+,\s*([\w%.]+)/.exec(body);
+  return m?.[1];
 }
 
 export const SCRATCH_CLS = `${REMOTE}/HL7Bench.Scratch.cls`;
@@ -192,12 +246,28 @@ export function runSource(opts: {
     return { segments: null, removed: [], found: "", status: "", error: extracted.error, engine };
   }
 
+  // A whole class that sends something other than tTarget cannot be judged
+  // lifted. Run it whole instead, and say so.
+  const sent = extracted.found !== "a method body" ? sendsWithoutTarget(extracted.body) : undefined;
+  if (sent) {
+    const r = runHosted({ source: opts.source, message: opts.message, docType: opts.docType, keepScratch: opts.keepScratch });
+    return {
+      segments: r.segments,
+      removed: [],
+      found: `${extracted.found}; it sends ${sent} and never sets tTarget, so it ran WHOLE with the dispatch captured`,
+      status: r.status,
+      error: r.error,
+      engine,
+    };
+  }
+
   const prepared = prepareBody(extracted.body, extracted.firstLine);
   const cleanup = cleanupLines(opts.keepScratch);
 
   const script = [
     `zn "${NAMESPACE}"`,
-    ...writeThrough(SCRATCH_CLS, scratchClass(prepared.body), "sf"),
+    labDirCheck(),
+    ...writeThrough(SCRATCH_CLS, scratchClass(prepared.body), "sf", cleanup),
     // `$system.Status.IsOK`, never `$$$ISERR`. A piped session has no include
     // file, so a `$$$` macro here is a syntax error the session walks past --
     // which once turned a failed compile into "no target message", a wrong
@@ -205,7 +275,7 @@ export function runSource(opts: {
     `set sc=$system.OBJ.Load("${SCRATCH_CLS}","ck-d")`,
     `if '$system.Status.IsOK(sc) { write "ERR|",$system.Status.GetErrorText(sc),! ${cleanup.join(" ")} halt }`,
     `if '##class(%Dictionary.CompiledClass).%ExistsId("HL7Bench.Scratch") { write "ERR|HL7Bench.Scratch did not compile",! ${cleanup.join(" ")} halt }`,
-    ...writeThrough(SCRATCH_MSG, opts.message, "mf"),
+    ...writeThrough(SCRATCH_MSG, opts.message, "mf", cleanup),
     `set st=##class(%Stream.FileCharacter).%New(), sc=st.LinkToFile("${SCRATCH_MSG}")`,
     `set src=##class(EnsLib.HL7.Message).ImportFromLibraryStream(st,.sc)`,
     `if '$IsObject($G(src)) { write "ERR|the engine could not read the message back",! ${cleanup.join(" ")} halt }`,
@@ -220,7 +290,7 @@ export function runSource(opts: {
 
   let out: string;
   try {
-    out = runIris("engine", script, (o) => /(?:OUT|ERR|NONE|STATUS)\|/.test(o)).out;
+    out = runIris("engine", script, (o) => /(?:OUT|ERR|NONE|STATUS|WRITEFAIL)\|/.test(o)).out;
   } catch (e) {
     return {
       segments: null,
@@ -240,12 +310,139 @@ export function runSource(opts: {
   const marked = (tag: string) =>
     lines.filter((l) => l.startsWith(tag + "|")).map((l) => l.slice(tag.length + 1));
 
-  const err = marked("ERR");
   const base = { removed: prepared.removed, found: extracted.found, engine };
+  const wf = marked(WRITE_FAILED);
+  if (wf.length > 0) return { ...base, segments: null, status: "", error: writeFailedText(wf.join("\n  ")) };
+  const err = marked("ERR");
   if (err.length > 0) return { ...base, segments: null, status: "", error: err.join("\n") };
 
   const status = marked("STATUS")[0] ?? "";
   if (lines.some((l) => l.startsWith("NONE|"))) return { ...base, segments: null, status };
 
   return { ...base, segments: marked("OUT"), status };
+}
+
+// ---------------------------------------------------------------------------
+// A whole class, run as it will deploy
+// ---------------------------------------------------------------------------
+
+export type HostedResult = {
+  /** What the class sent, or null when it sent nothing (filtered, or failed). */
+  segments: string[] | null;
+  /** The config item it addressed. */
+  sentTo: string;
+  /** How many times it called SendRequestAsync. Only the last is captured. */
+  sends: number;
+  /** The status OnRequest returned, as text. Empty when it returned OK. */
+  status: string;
+  error?: string;
+  engine: string;
+};
+
+/**
+ * Compile a whole business process under a scratch name and run one message
+ * through its real OnRequest, with SendRequestAsync captured. See hosted.ts.
+ *
+ * The library form of `engine.ts --host`, for the GUI and the overlay. Nothing
+ * in the class is removed or rewritten except its name.
+ */
+export function runHosted(opts: {
+  source: string;
+  message: string;
+  docType: string;
+  keepScratch?: boolean;
+}): HostedResult {
+  const engine = engineLabel();
+  let whole: string;
+  try {
+    whole = renamedClass(opts.source, "HL7Bench.Scratch");
+  } catch (e) {
+    return { segments: null, sentTo: "", sends: 0, status: "", engine, error: e instanceof Error ? e.message : String(e) };
+  }
+  const hostFile = `${REMOTE}/${HOST_CLASS}.cls`;
+  const cleanup = opts.keepScratch
+    ? [`write "KEPT|${SCRATCH_CLS} left in place",!`]
+    : [
+        `do $system.OBJ.Delete("${HOST_CLASS}","-d")`,
+        `do ##class(%File).Delete("${hostFile}")`,
+        ...cleanupLines(false),
+      ];
+  const compile = (file: string, name: string) => [
+    `set sc=$system.OBJ.Load("${file}","ck-d")`,
+    `if '$system.Status.IsOK(sc) { write "ERR|",$system.Status.GetErrorText(sc),! ${cleanup.join(" ")} halt }`,
+    `if '##class(%Dictionary.CompiledClass).%ExistsId("${name}") { write "ERR|${name} did not compile",! ${cleanup.join(" ")} halt }`,
+  ];
+
+  const script = [
+    `zn "${NAMESPACE}"`,
+    labDirCheck(),
+    ...writeThrough(SCRATCH_CLS, whole, "sf", cleanup),
+    ...compile(SCRATCH_CLS, "HL7Bench.Scratch"),
+    ...writeThrough(hostFile, hostClass("HL7Bench.Scratch"), "hf", cleanup),
+    ...compile(hostFile, HOST_CLASS),
+    ...writeThrough(SCRATCH_MSG, opts.message, "mf", cleanup),
+    `set st=##class(%Stream.FileCharacter).%New(), sc=st.LinkToFile("${SCRATCH_MSG}")`,
+    `set src=##class(EnsLib.HL7.Message).ImportFromLibraryStream(st,.sc)`,
+    `if '$IsObject($G(src)) { write "ERR|the engine could not read the message back",! ${cleanup.join(" ")} halt }`,
+    `do src.PokeDocType(${osLiteral(opts.docType)})`,
+    hostedCall("src", "tgt"),
+    `write "STATUS|",$system.Status.GetErrorText(tsc),!`,
+    `if '$IsObject($G(tgt)) { write "NONE|",! ${cleanup.join(" ")} halt }`,
+    `for i=1:1:tgt.SegCount { write "OUT|",tgt.GetSegmentAt(i).OutputToString(),! }`,
+    ...cleanup,
+    `halt`,
+  ].join("\n");
+
+  let out: string;
+  try {
+    out = runIris("engine", script, (o) => /(?:OUT|ERR|NONE|STATUS|WRITEFAIL|SENT)\|/.test(o)).out;
+  } catch (e) {
+    return { segments: null, sentTo: "", sends: 0, status: "", engine, error: e instanceof Error ? e.message : String(e) };
+  }
+  const lines = out.split(/\r?\n/).map((l) => l.replace(/\r+$/, ""));
+  const marked = (tag: string) => lines.filter((l) => l.startsWith(tag + "|")).map((l) => l.slice(tag.length + 1));
+
+  const base = { sentTo: "", sends: 0, engine };
+  const wf = marked(WRITE_FAILED);
+  if (wf.length > 0) return { ...base, segments: null, status: "", error: writeFailedText(wf.join("\n  ")) };
+  const err = marked("ERR");
+  if (err.length > 0) return { ...base, segments: null, status: "", error: err.join("\n") };
+
+  const [sendsText = "0", sentTo = ""] = (marked("SENT")[0] ?? "0|").split("|");
+  const status = marked("STATUS")[0] ?? "";
+  const sends = Number(sendsText) || 0;
+  if (marked("NONE").length > 0) return { segments: null, sentTo, sends, status, engine };
+  return { segments: marked("OUT"), sentTo, sends, status, engine };
+}
+
+// ---------------------------------------------------------------------------
+// The schema the engine will navigate with
+// ---------------------------------------------------------------------------
+
+/**
+ * The structure map of one DocType, read off the engine: the same rows
+ * `zw ^EnsHL7.Schema(<category>,"MS",<structure>,"map")` prints, keys only
+ * ("PID", "DG1()", "IN1grp().IN1"). Empty when the namespace does not have the
+ * category, which is the case that matters: every path would read empty.
+ */
+export function schemaMapFromEngine(docType: string): { keys: string[]; error?: string } {
+  const [cat, struct] = docType.split(":");
+  if (!cat || !struct) return { keys: [], error: `"${docType}" is not a DocType. Expected <category>:<structure>, e.g. 2.3:ADT_A01.` };
+  const script = [
+    `zn "${NAMESPACE}"`,
+    `set k="" for { set k=$ORDER(^EnsHL7.Schema(${osLiteral(cat)},"MS",${osLiteral(struct)},"map",k)) quit:k=""  write "MAP|",k,! }`,
+    `write "DONE|",!`,
+    `halt`,
+  ].join("\n");
+  try {
+    const out = runIris("schema", script, (o) => /DONE\|/.test(o)).out;
+    const keys = out
+      .split(/\r?\n/)
+      .map((l) => l.replace(/\r+$/, ""))
+      .filter((l) => l.startsWith("MAP|"))
+      .map((l) => l.slice(4));
+    return { keys };
+  } catch (e) {
+    return { keys: [], error: e instanceof Error ? e.message : String(e) };
+  }
 }

@@ -1,0 +1,379 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>hl7-bench overlay</title>
+<style>
+:root {
+  --bg: #f6f7f9; --panel: #ffffff; --ink: #1d232b; --muted: #5b6573; --line: #d9dee5;
+  --accent: #2f6fdb; --add-bg: #e3f4e6; --add-ink: #145c2a; --del-bg: #fbe5e5; --warn-bg: #fff4d6; --warn-ink: #6b4b00;
+  --bad-bg: #fde8e8; --bad-ink: #8a1c1c; --chg: #ffe9a8;
+  --mono: ui-monospace, "Cascadia Mono", Consolas, Menlo, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #14171c; --panel: #1c2027; --ink: #e3e7ee; --muted: #9aa4b2; --line: #313844;
+    --accent: #6c9cf0; --add-bg: #173622; --add-ink: #9be0ae; --del-bg: #3a1d1d; --warn-bg: #3a3014; --warn-ink: #f0d58a;
+    --bad-bg: #3d1a1a; --bad-ink: #f3a3a3; --chg: #5a4a12;
+  }
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--ink); font: 14px/1.45 system-ui, "Segoe UI", sans-serif; }
+header { padding: 12px 20px; border-bottom: 1px solid var(--line); background: var(--panel); display: flex; flex-wrap: wrap; gap: 6px 24px; align-items: baseline; }
+header h1 { font-size: 16px; margin: 0 12px 0 0; }
+header .kv { color: var(--muted); font-size: 13px; }
+header .kv b { color: var(--ink); font-weight: 600; }
+header input { font: inherit; padding: 2px 6px; border: 1px solid var(--line); border-radius: 4px; background: var(--bg); color: var(--ink); width: 190px; }
+main { display: grid; grid-template-columns: minmax(360px, 440px) 1fr; gap: 16px; padding: 16px 20px; align-items: start; }
+@media (max-width: 980px) { main { grid-template-columns: 1fr; } }
+section { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 12px 14px; margin-bottom: 16px; min-width: 0; }
+h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); margin: 0 0 10px; display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+button { font: inherit; padding: 6px 12px; border-radius: 6px; border: 1px solid var(--line); background: var(--bg); color: var(--ink); cursor: pointer; }
+button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+button:disabled { opacity: .55; cursor: default; }
+button.link { border: none; background: none; color: var(--muted); padding: 2px 4px; }
+.actions { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 16px; }
+.change { border: 1px solid var(--line); border-radius: 6px; padding: 10px; margin-bottom: 10px; }
+.change .top { display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px; }
+.change .said { font-family: var(--mono); font-size: 12px; color: var(--muted); }
+.row { display: grid; grid-template-columns: 110px 1fr; gap: 6px; align-items: center; margin: 5px 0; }
+.row label { color: var(--muted); font-size: 12.5px; }
+.row input, .row select { font: 13px var(--mono); padding: 4px 6px; border: 1px solid var(--line); border-radius: 4px; background: var(--bg); color: var(--ink); width: 100%; }
+.checks { display: flex; flex-direction: column; gap: 3px; margin-top: 6px; font-size: 12.5px; color: var(--muted); }
+.hint { font-size: 12px; color: var(--muted); margin: 4px 0 0; }
+.msgs { list-style: none; padding: 0; margin: 0; }
+.msgs li { padding: 6px 8px; border-radius: 4px; margin-bottom: 4px; font-size: 13px; white-space: pre-wrap; }
+.msgs li.bad { background: var(--bad-bg); color: var(--bad-ink); }
+.msgs li.note { background: var(--warn-bg); color: var(--warn-ink); }
+.msgs li.ok { background: var(--add-bg); color: var(--add-ink); }
+pre.code { font: 12.5px/1.5 var(--mono); margin: 0; overflow: auto; max-height: 520px; background: var(--bg); border: 1px solid var(--line); border-radius: 6px; padding: 8px 0; tab-size: 4; }
+pre.code div { padding: 0 10px; white-space: pre; }
+pre.code div.add { background: var(--add-bg); color: var(--add-ink); }
+pre.code div.del { background: var(--del-bg); }
+pre.code div.n { color: var(--muted); text-align: center; font-style: italic; }
+textarea { width: 100%; min-height: 150px; font: 12.5px/1.45 var(--mono); background: var(--bg); color: var(--ink); border: 1px solid var(--line); border-radius: 6px; padding: 8px; white-space: pre; overflow: auto; }
+.cols { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+@media (max-width: 1300px) { .cols { grid-template-columns: 1fr; } }
+.msg div { padding: 0 10px; white-space: pre; }
+.msg span.chg { background: var(--chg); border-radius: 2px; }
+table { border-collapse: collapse; width: 100%; font-size: 13px; }
+th, td { text-align: left; padding: 5px 8px; border-bottom: 1px solid var(--line); vertical-align: top; }
+td.v { font-family: var(--mono); font-size: 12.5px; word-break: break-all; }
+.tabs { display: flex; gap: 4px; }
+.tabs button { padding: 3px 10px; font-size: 12.5px; }
+.tabs button.on { background: var(--accent); color: #fff; border-color: var(--accent); }
+.status { font-size: 13px; color: var(--muted); align-self: center; }
+details summary { cursor: pointer; color: var(--muted); font-size: 13px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>hl7-bench overlay</h1>
+  <span class="kv">class <b id="h-class">…</b></span>
+  <span class="kv">DocType <input id="doctype" spellcheck="false"></span>
+  <span class="kv">schema <b id="h-schema">…</b> <button class="link" id="reschema" title="Read the structure again">reload</button></span>
+  <span class="kv">engine <b id="h-engine">…</b></span>
+</header>
+
+<main>
+  <div>
+    <div class="actions">
+      <button class="primary" id="run">Run in IRIS</button>
+      <button id="save">Save</button>
+      <span class="status" id="status"></span>
+    </div>
+
+    <section>
+      <h2>Changes <button id="add">+ add change</button></h2>
+      <div id="changes"></div>
+      <p class="hint">Each change goes into the marked block just above the line that sends the message. Their code is not touched.</p>
+    </section>
+
+    <section>
+      <h2>What the new code does</h2>
+      <ul class="msgs" id="notes"></ul>
+    </section>
+
+    <section>
+      <h2>Message in <span class="hint" id="msgfile"></span></h2>
+      <textarea id="message" spellcheck="false"></textarea>
+      <p class="hint">Edit freely to try another case. Run uses what is here, not the file.</p>
+    </section>
+  </div>
+
+  <div>
+    <section>
+      <h2>Result <span class="status" id="runinfo"></span></h2>
+      <ul class="msgs" id="runmsgs"></ul>
+      <div id="fields"></div>
+      <div class="cols" style="margin-top:10px">
+        <div><h2>Sent before</h2><pre class="code msg" id="before"><div class="n">Run to see what their class sends.</div></pre></div>
+        <div><h2>Sent after</h2><pre class="code msg" id="after"><div class="n">Changed fields are highlighted.</div></pre></div>
+      </div>
+    </section>
+
+    <section>
+      <h2>Class <span class="tabs"><button id="t-changed" class="on">changes only</button><button id="t-full">whole class</button></span></h2>
+      <pre class="code" id="class"></pre>
+    </section>
+
+    <section>
+      <details>
+        <summary>Changes as JSON (what Save writes)</summary>
+        <textarea id="json" spellcheck="false" style="min-height:220px;margin-top:8px"></textarea>
+        <p class="hint">Edit here for anything the form does not show, then click away to apply.</p>
+      </details>
+    </section>
+  </div>
+</main>
+
+<datalist id="segs"></datalist>
+
+<script>
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+
+let state = null;      // server state
+let overlay = null;    // the changes being edited
+let last = null;       // last preview/run result
+let lastAfter = null;  // segments from the last successful run
+let view = "changed";
+
+// Every source kind the overlay accepts, with the inputs it needs.
+const KINDS = {
+  copy:       { label: "copy a field",               fields: [["path", "from field", "DG1-3"]] },
+  fromFirst:  { label: "first occurrence with a value", fields: [["segment", "segment", "DG1"], ["nonEmpty", "where has value", "DG1-3"], ["path", "read field", "DG1-3"]] },
+  fromWhere:  { label: "occurrence where field equals", fields: [["segment", "segment", "NK1"], ["where", "where field", "NK1-3"], ["equals", "equals", "EMC"], ["read", "read field", "NK1-2"]] },
+  literal:    { label: "fixed value",                fields: [["value", "value", "TEXT"]] },
+  firstOf:    { label: "first non-empty of",         fields: [["paths", "fields (comma)", "PV1-7, PV1-8"]] },
+  lookup:     { label: "lookup table",               fields: [["table", "table", "Facilities"], ["path", "key field", "PV1-3.4"], ["unmapped", "if not found", ""]] },
+  pickRepeat: { label: "repetition where component =", fields: [["path", "field", "PV1-7"], ["whereComponent", "component", "13"], ["equals", "equals", "NPI"], ["take", "take component", "1"]] },
+};
+
+function blank(kind) {
+  const f = { kind };
+  if (kind === "copy") f.path = "";
+  if (kind === "literal") f.value = "";
+  if (kind === "firstOf") f.paths = [];
+  if (kind === "fromFirst") Object.assign(f, { segment: "", nonEmpty: "", path: "" });
+  if (kind === "fromWhere") Object.assign(f, { segment: "", where: "", equals: "", read: "" });
+  if (kind === "lookup") Object.assign(f, { table: "", path: "", unmapped: { kind: "passthrough" } });
+  if (kind === "pickRepeat") Object.assign(f, { path: "", whereComponent: 1, equals: "", take: 1 });
+  return f;
+}
+
+// Steps as one line of text: "upper, truncate:10, defaultTo:NONE".
+function stepsToText(via) {
+  return (via || []).map((s) => {
+    if (s.kind === "truncate") return `truncate:${s.n}`;
+    if (s.kind === "defaultTo" || s.kind === "prefix") return `${s.kind}:${s.kind === "prefix" ? s.text : s.value}`;
+    if (s.kind === "stripChars") return `stripChars:${s.chars}`;
+    return s.kind;
+  }).join(", ");
+}
+function textToSteps(t) {
+  return t.split(",").map((x) => x.trim()).filter(Boolean).map((x) => {
+    const i = x.indexOf(":");
+    const k = i === -1 ? x : x.slice(0, i), v = i === -1 ? "" : x.slice(i + 1);
+    if (k === "truncate") return { kind: k, n: Number(v) || 0 };
+    if (k === "defaultTo") return { kind: k, value: v };
+    if (k === "prefix") return { kind: k, text: v };
+    if (k === "stripChars") return { kind: k, chars: v };
+    return { kind: k };
+  });
+}
+
+function unmappedText(u) {
+  if (!u) return "passthrough";
+  return u.kind === "constant" ? `constant:${u.value}` : u.kind;
+}
+function textToUnmapped(t) {
+  t = t.trim();
+  if (t.startsWith("constant:")) return { kind: "constant", value: t.slice(9) };
+  return { kind: t === "blank" ? "blank" : "passthrough" };
+}
+
+function renderChanges() {
+  const host = $("changes");
+  host.innerHTML = "";
+  if (overlay.changes.length === 0) {
+    host.innerHTML = `<p class="hint">No changes yet. Add one: the field to write, and where its value comes from.</p>`;
+  }
+  overlay.changes.forEach((c, n) => {
+    const card = document.createElement("div");
+    card.className = "change";
+    const kind = KINDS[c.from.kind] ? c.from.kind : "copy";
+    const said = (last && last.described && last.described[n]) || "";
+    card.innerHTML = `
+      <div class="top"><span class="said">${esc(said || `change ${n + 1}`)}</span><button class="link" data-del>remove</button></div>
+      <div class="row"><label>write field</label><input data-k="target" list="segs" placeholder="PV2-3" value="${esc(c.target || "")}"></div>
+      <div class="row"><label>value from</label><select data-k="kind">${Object.entries(KINDS).map(([k, v]) => `<option value="${k}" ${k === kind ? "selected" : ""}>${esc(v.label)}</option>`).join("")}</select></div>
+      ${KINDS[kind].fields.map(([f, label, ph]) => {
+        let v = c.from[f];
+        if (f === "paths") v = (v || []).join(", ");
+        if (f === "unmapped") v = unmappedText(v);
+        if (f === "take" && Array.isArray(v)) v = v.join(",");
+        return `<div class="row"><label>${esc(label)}</label><input data-f="${f}" placeholder="${esc(f === "unmapped" ? "passthrough | blank | constant:X" : ph)}" value="${esc(v ?? "")}"></div>`;
+      }).join("")}
+      <div class="row"><label>then</label><input data-k="via" placeholder="upper, truncate:10, defaultTo:X" value="${esc(stepsToText(c.via))}"></div>
+      <div class="row"><label>note</label><input data-k="note" placeholder="why (becomes a comment)" value="${esc(c.note || "")}"></div>
+      <div class="checks">
+        <label><input type="checkbox" data-k="write" ${c.ifEmpty === "write" ? "checked" : ""}> write even when the value is empty (blanks the field)</label>
+        <label><input type="checkbox" data-k="create" ${c.createSegment ? "checked" : ""}> create the segment if the message has none</label>
+      </div>`;
+    card.querySelector("[data-del]").onclick = () => { overlay.changes.splice(n, 1); changed(true); };
+    card.querySelectorAll("input,select").forEach((el) => {
+      el.addEventListener(el.tagName === "SELECT" || el.type === "checkbox" ? "change" : "input", () => {
+        const k = el.dataset.k, f = el.dataset.f;
+        if (k === "target") c.target = el.value.trim().toUpperCase();
+        else if (k === "kind") { c.from = blank(el.value); changed(true); return; }
+        else if (k === "via") { const s = textToSteps(el.value); if (s.length) c.via = s; else delete c.via; }
+        else if (k === "note") { if (el.value) c.note = el.value; else delete c.note; }
+        else if (k === "write") { if (el.checked) c.ifEmpty = "write"; else delete c.ifEmpty; }
+        else if (k === "create") { if (el.checked) c.createSegment = true; else delete c.createSegment; }
+        else if (f) {
+          let v = el.value;
+          if (f === "paths") c.from.paths = v.split(",").map((x) => x.trim().toUpperCase()).filter(Boolean);
+          else if (f === "unmapped") c.from.unmapped = textToUnmapped(v);
+          else if (f === "whereComponent") c.from[f] = Number(v) || 0;
+          else if (f === "take") c.from[f] = v === "whole" ? "whole" : v.includes(",") ? v.split(",").map(Number) : Number(v) || 1;
+          else if (["path", "nonEmpty", "where", "read", "segment"].includes(f)) c.from[f] = v.trim().toUpperCase();
+          else c.from[f] = v;
+        }
+        changed(false);
+      });
+    });
+    host.appendChild(card);
+  });
+}
+
+let timer = null;
+function changed(rerender) {
+  $("json").value = JSON.stringify(overlay, null, 2);
+  if (rerender) renderChanges();
+  lastAfter = null;
+  clearTimeout(timer);
+  timer = setTimeout(preview, 300);
+}
+
+async function post(path, extra = {}) {
+  const r = await fetch(path, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ overlay, message: $("message").value, ...extra }) });
+  return r.json();
+}
+
+function renderNotes(r) {
+  const ul = $("notes");
+  const items = [
+    ...(r.problems || []).map((p) => `<li class="bad">${esc(p)}</li>`),
+    ...(r.notes || []).map((p) => `<li class="note">${esc(p)}</li>`),
+  ];
+  ul.innerHTML = items.join("") || `<li class="ok">Nothing to report.</li>`;
+  document.querySelectorAll(".change .said").forEach((el, n) => { if (r.described && r.described[n]) el.textContent = r.described[n]; });
+}
+
+function renderClass() {
+  const pre = $("class");
+  if (!last || !last.classDiff) { pre.innerHTML = `<div class="n">${esc(last && last.problems && last.problems.length ? "Fix the problems on the left to see the class." : "…")}</div>`; return; }
+  const d = last.classDiff;
+  let rows = [];
+  if (view === "full") {
+    rows = d.map((x) => `<div class="${x.op === "+" ? "add" : x.op === "-" ? "del" : ""}">${esc(x.text) || " "}</div>`);
+  } else {
+    const keep = new Set();
+    d.forEach((x, i) => { if (x.op !== " ") for (let j = i - 3; j <= i + 3; j++) keep.add(j); });
+    let gap = false;
+    d.forEach((x, i) => {
+      if (!keep.has(i)) { if (!gap) rows.push(`<div class="n">...</div>`); gap = true; return; }
+      gap = false;
+      rows.push(`<div class="${x.op === "+" ? "add" : x.op === "-" ? "del" : ""}">${esc(x.text) || " "}</div>`);
+    });
+    if (!d.some((x) => x.op !== " ")) rows = [`<div class="n">No changes yet: the class is exactly the base.</div>`];
+  }
+  pre.innerHTML = rows.join("");
+}
+
+function renderMessage(el, segs, changedFields) {
+  if (!segs) { el.innerHTML = `<div class="n">Nothing was sent.</div>`; return; }
+  const occ = new Map();
+  el.innerHTML = segs.map((s) => {
+    const id = s.slice(0, 3);
+    const k = (occ.get(id) || 0) + 1; occ.set(id, k);
+    const hits = new Set((changedFields || []).filter((f) => f.segment === id && f.occurrence === k).map((f) => Number(f.field.split("-")[1])));
+    const added = (changedFields || []).some((f) => f.segment === id && f.occurrence === k && f.field === "(segment added)");
+    if (added) return `<div><span class="chg">${esc(s)}</span></div>`;
+    const off = id === "MSH" ? 1 : 0;
+    return `<div>${s.split("|").map((v, i) => (hits.has(i + off) ? `<span class="chg">${esc(v)}</span>` : esc(v))).join("|")}</div>`;
+  }).join("");
+}
+
+async function preview() {
+  last = await post("/preview");
+  renderNotes(last);
+  renderClass();
+}
+
+async function run() {
+  $("run").disabled = true;
+  $("status").textContent = "running both classes in IRIS…";
+  try {
+    last = await post("/run");
+    renderNotes(last);
+    renderClass();
+    $("runmsgs").innerHTML = (last.problems || []).map((p) => `<li class="bad">${esc(p)}</li>`).join("") +
+      (last.runNotes || []).map((p) => `<li class="bad">${esc(p)}</li>`).join("");
+    $("runinfo").textContent = last.ms ? `${(last.ms / 1000).toFixed(1)} s` + (last.after && last.after.sentTo ? ` · sent to ${last.after.sentTo}` : "") : "";
+    renderMessage($("before"), last.before && last.before.segments, null);
+    renderMessage($("after"), last.after && last.after.segments, last.fields);
+    lastAfter = last.after && last.after.segments;
+    const f = last.fields;
+    $("fields").innerHTML = !f ? "" : f.length === 0
+      ? `<ul class="msgs"><li class="note">No field changed on this message. If you expected one, check the source has a value here, and the target segment is present.</li></ul>`
+      : `<table><thead><tr><th>field</th><th>before</th><th>after</th></tr></thead><tbody>${f.map((x) =>
+          `<tr><td>${esc(x.segment)}${x.occurrence > 1 ? `(${x.occurrence})` : ""} ${esc(x.field)}</td><td class="v">${esc(x.before) || "<i>empty</i>"}</td><td class="v">${esc(x.after) || "<i>empty</i>"}</td></tr>`).join("")}</tbody></table>`;
+    $("status").textContent = "";
+  } catch (e) {
+    $("status").textContent = "run failed: " + e;
+  } finally {
+    $("run").disabled = false;
+  }
+}
+
+async function save() {
+  const r = await post("/save", { after: lastAfter || [] });
+  $("status").textContent = r.ok ? `saved: ${r.wrote.join(", ")}` + (lastAfter ? "" : " (Run first to also save the message)") : `not saved: ${r.error}`;
+}
+
+async function load(refresh) {
+  state = await (await fetch("/state" + (refresh ? "?refresh" : ""))).json();
+  overlay = overlay || state.overlay;
+  $("h-class").textContent = state.base.file;
+  $("doctype").value = overlay.docType;
+  $("h-schema").textContent = state.schema.note;
+  $("h-schema").style.color = state.schema.ok ? "" : "var(--bad-ink)";
+  $("h-engine").textContent = state.engine;
+  $("msgfile").textContent = state.message.file;
+  if (!$("message").value) $("message").value = state.message.text;
+  $("segs").innerHTML = state.schema.segments.map((s) => `<option value="${s}-">`).join("");
+  $("json").value = JSON.stringify(overlay, null, 2);
+  renderChanges();
+  preview();
+}
+
+$("add").onclick = () => { overlay.changes.push({ target: "", from: blank("copy") }); changed(true); };
+$("run").onclick = run;
+$("save").onclick = save;
+$("reschema").onclick = () => load(true);
+$("doctype").addEventListener("change", () => { overlay.docType = $("doctype").value.trim(); changed(false); setTimeout(() => load(true), 400); });
+$("t-changed").onclick = () => { view = "changed"; $("t-changed").classList.add("on"); $("t-full").classList.remove("on"); renderClass(); };
+$("t-full").onclick = () => { view = "full"; $("t-full").classList.add("on"); $("t-changed").classList.remove("on"); renderClass(); };
+$("json").addEventListener("change", () => {
+  try { const o = JSON.parse($("json").value); if (!Array.isArray(o.changes)) throw new Error("no changes array"); overlay = o; changed(true); }
+  catch (e) { $("status").textContent = "JSON not applied: " + e.message; }
+});
+$("message").addEventListener("input", () => { lastAfter = null; });
+
+load(false);
+</script>
+</body>
+</html>
