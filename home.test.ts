@@ -92,3 +92,26 @@ describe("registry", () => {
     expect(serverUrl("nothing here")).toBeUndefined();
   });
 });
+
+describe("allowed", () => {
+  const { allowed } = require("./home-tools") as typeof import("./home-tools");
+  const req = (host: string, method = "GET", hdr?: string) =>
+    new Request("http://127.0.0.1:7316/x", { method, headers: { host, ...(hdr ? { "x-hl7-bench": hdr } : {}) } });
+
+  test("loopback hosts on this port pass a GET", () => {
+    expect(allowed(req("127.0.0.1:7316"), 7316)).toBe(true);
+    expect(allowed(req("localhost:7316"), 7316)).toBe(true);
+  });
+
+  test("a rebound hostname, another port, or no host is refused", () => {
+    expect(allowed(req("evil.example:7316"), 7316)).toBe(false);
+    expect(allowed(req("127.0.0.1:7317"), 7316)).toBe(false);
+    expect(allowed(req("10.0.0.10:7316"), 7316)).toBe(false);
+  });
+
+  test("a POST needs the header", () => {
+    expect(allowed(req("127.0.0.1:7316", "POST"), 7316)).toBe(false);
+    expect(allowed(req("127.0.0.1:7316", "POST", "0"), 7316)).toBe(false);
+    expect(allowed(req("127.0.0.1:7316", "POST", "1"), 7316)).toBe(true);
+  });
+});

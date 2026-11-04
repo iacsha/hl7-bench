@@ -19,7 +19,7 @@
 import { existsSync, readdirSync, statSync } from "node:fs";
 import { extname, join, relative, resolve, sep } from "node:path";
 
-import { TOOLS, build, serverUrl, toolById, type Values } from "./home-tools";
+import { TOOLS, allowed, build, serverUrl, toolById, type Values } from "./home-tools";
 
 const BENCH = import.meta.dir;
 const ROOT = process.cwd();
@@ -143,20 +143,13 @@ function start(toolId: string, values: Values): Response {
 const json = (v: unknown, status = 200) =>
   new Response(JSON.stringify(v), { status, headers: { "content-type": "application/json; charset=utf-8" } });
 
-/**
- * A POST must carry this header. A form on another site cannot set it without
- * a CORS preflight, and nothing here answers OPTIONS, so a page you happen to
- * have open elsewhere cannot start a command on this one.
- */
-const GUARD = "x-hl7-bench";
-
 const server = Bun.serve({
   hostname: "127.0.0.1",
   port: PORT,
   idleTimeout: 0,
   async fetch(req) {
     const url = new URL(req.url);
-    if (req.method === "POST" && req.headers.get(GUARD) !== "1") return new Response("Forbidden", { status: 403 });
+    if (!allowed(req, server.port)) return new Response("Forbidden", { status: 403 });
 
     if (url.pathname === "/") {
       return new Response(Bun.file(join(BENCH, "home.html")), { headers: { "content-type": "text/html; charset=utf-8" } });

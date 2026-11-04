@@ -21,6 +21,7 @@ import { existsSync, writeFileSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
 
 import { engineLabel } from "./engine-core";
+import { allowed } from "./home-tools";
 import { describe, type Overlay, type SchemaMap } from "./overlay-core";
 import { evaluate, explainRun, loadSchema, openSession, readText, writeOverlay, type Session } from "./overlay";
 
@@ -85,6 +86,9 @@ const server = Bun.serve({
   hostname: "127.0.0.1",
   port: PORT,
   async fetch(req) {
+    // See allowed(): loopback Host only, and a header on every POST, so another
+    // site open in the browser can neither write a class here nor read a message.
+    if (!allowed(req, server.port)) return new Response("Forbidden", { status: 403 });
     const url = new URL(req.url);
 
     if (url.pathname === "/") {

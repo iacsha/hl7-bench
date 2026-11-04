@@ -260,3 +260,24 @@ export function toolById(id: string): Tool | undefined {
 export function serverUrl(line: string): string | undefined {
   return /(https?:\/\/127\.0\.0\.1:\d+)/.exec(line)?.[1];
 }
+
+// ---------------------------------------------------------------------------
+// Who may talk to a local page
+// ---------------------------------------------------------------------------
+
+/**
+ * True when a request may be served: the Host header names this machine's
+ * loopback on this port, and a POST carries `x-hl7-bench: 1`.
+ *
+ * Binding to 127.0.0.1 is not enough on its own. A page on another site can
+ * POST to it blind (a text/plain body still parses as JSON here), and with DNS
+ * rebinding it can READ the answers, which on this bench are message contents.
+ * The header forces a CORS preflight nobody answers; the Host check defeats the
+ * rebinding, because the attacker's hostname is what the browser sends.
+ */
+export function allowed(req: Request, port: number): boolean {
+  const host = (req.headers.get("host") ?? "").toLowerCase();
+  if (host !== `127.0.0.1:${port}` && host !== `localhost:${port}` && host !== `[::1]:${port}`) return false;
+  if (req.method !== "GET" && req.method !== "HEAD" && req.headers.get("x-hl7-bench") !== "1") return false;
+  return true;
+}

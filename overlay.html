@@ -258,7 +258,7 @@ function changed(rerender) {
 }
 
 async function post(path, extra = {}) {
-  const r = await fetch(path, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ overlay, message: $("message").value, ...extra }) });
+  const r = await fetch(path, { method: "POST", headers: { "content-type": "application/json", "x-hl7-bench": "1" }, body: JSON.stringify({ overlay, message: $("message").value, ...extra }) });
   return r.json();
 }
 
